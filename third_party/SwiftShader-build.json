@@ -1,0 +1,15 @@
+{
+  "upstream": "https://github.com/google/swiftshader",
+  "source_commit": "cddb5c91b23ff70a1f607ea31610aa0d7f4b5ad5",
+  "source_zip_sha256": "6d1e0f0b373979429ab15adc706087d6c447190bb18946de5192690bcc460033",
+  "ndk": "27.2.12479018",
+  "cmake": "3.22.1",
+  "android_min_api": 29,
+  "reactor": "LLVM 10",
+  "adapter": "scripts/build_swiftshader.py",
+  "source_files_modified": false,
+  "libraries": {
+    "arm64-v8a": "abd7c2b15ca7a6e6f58975c5daa8ea640e28dea15bb67e701c12bbc8b132c094",
+    "x86_64": "f8a218107953437448cf042aa557eb8fc0b76d9d7435ebc3804227e8239beed0"
+  }
+}

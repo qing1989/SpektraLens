@@ -1,0 +1,11 @@
+Bundled demo image: Fronalpstock big.jpg
+Author: Hannes Röst
+Source: https://commons.wikimedia.org/wiki/File:Fronalpstock_big.jpg
+License selected: Creative Commons Attribution-ShareAlike 3.0 Unported
+https://creativecommons.org/licenses/by-sa/3.0/
+
+The bundled file is the 1280px Wikimedia thumbnail, without further image changes.
+The app's live simulated previews and exported versions are modified versions
+of this image. When redistributing those demo outputs, retain the attribution
+and apply CC BY-SA 3.0 (or a compatible license). This applies to the demo
+photograph and its adaptations, not to the user's own photographs.

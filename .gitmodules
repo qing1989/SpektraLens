@@ -1,0 +1,3 @@
+[submodule "SpektraLab"]
+	path = SpektraLab
+	url = https://github.com/JamesQiu2005/SpektraLab.git

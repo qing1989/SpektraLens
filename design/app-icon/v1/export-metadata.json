@@ -1,0 +1,25 @@
+{
+  "adaptiveLayerDp" : 108,
+  "artworkDiameterDp" : 60,
+  "background" : "#111113",
+  "densities" : [
+    "mdpi",
+    "hdpi",
+    "xhdpi",
+    "xxhdpi",
+    "xxxhdpi"
+  ],
+  "safeZoneDiameterDp" : 66,
+  "source" : "film-s-source.png",
+  "sourceAlphaBounds" : [
+    293,
+    146,
+    932,
+    1132
+  ],
+  "sourcePixels" : [
+    1254,
+    1254
+  ],
+  "transparentPixels" : 1132701
+}
