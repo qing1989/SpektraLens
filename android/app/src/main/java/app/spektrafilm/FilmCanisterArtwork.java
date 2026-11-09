@@ -77,13 +77,28 @@ final class FilmCanisterArtwork {
 
     c.save();
     c.clipPath(label);
-    fill(mix(coat, BLACK, .42f));
+    fill(mix(coat, BLACK, .48f));
     c.drawRect(0, DIVIDER, WIDTH, HEIGHT, p);
     fill(coat);
     c.drawRect(0, 0, WIDTH, DIVIDER, p);
+    // 材质：顶部受光、底部收暗的极缓纵向渐变，加上沿上边缘的一道 1 像素内高光。
+    // 纯色平涂像色卡，加了这两层才有"一块有厚度的材料"的观感——不是纸纹，是层次。
+    p.setShader(
+        new LinearGradient(
+            0, 0, 0, DIVIDER,
+            new int[] {withAlpha(WHITE, .13f), withAlpha(WHITE, .02f), withAlpha(BLACK, .10f)},
+            new float[] {0f, .42f, 1f},
+            Shader.TileMode.CLAMP));
+    c.drawRect(0, 0, WIDTH, DIVIDER, p);
+    p.setShader(null);
+    fill(withAlpha(WHITE, .16f));
+    c.drawRect(0, 0, WIDTH, 1.1f, p);
+
     // Paper edge catching the light, then the accent rule that ties the family names together.
-    fill(withAlpha(mix(coat, WHITE, .26f), .5f));
-    c.drawRect(0, DIVIDER - .8f, WIDTH, DIVIDER + .85f, p);
+    fill(withAlpha(mix(coat, WHITE, .30f), .55f));
+    c.drawRect(0, DIVIDER - .9f, WIDTH, DIVIDER, p);
+    fill(withAlpha(BLACK, .22f));
+    c.drawRect(0, DIVIDER, WIDTH, DIVIDER + .9f, p);
     int push = stock.optInt("push");
     fill(accent);
     // 有 push 角标时把标线收短，把右下角完整让给角标，避免两者叠在一起。
@@ -100,8 +115,8 @@ final class FilmCanisterArtwork {
       fill(inkOf(accent));
       centered("+" + push, 74, 69.8f, 11, 26);
     } else {
-      fill(withAlpha(ink, .38f));
-      tracked(maker(id), 50, 68.4f, 6.4f, 2f, 60);
+      fill(withAlpha(ink, .50f));
+      tracked(maker(id), 50, 69, 8f, 1.6f, 62);
     }
     c.restore();
 
@@ -113,12 +128,14 @@ final class FilmCanisterArtwork {
     c.drawRoundRect(rect, RADIUS - .4f, RADIUS - .4f, p);
     p.setStyle(Paint.Style.FILL);
 
-    fill(withAlpha(ink, .58f));
-    tracked(stock.optString("family", "FILM"), 50, 24, 7.6f, 2.4f, 74);
+    fill(withAlpha(ink, .72f));
+    // 画布 100 单位缩到 63dp 才显示，7.6 的那行落到屏幕上只有 4.8sp；提到 10.5 之后约 6.6sp，
+    // 字母间距相应收到 1.8，长名字（EKTACHROME）才不会被压得过小。
+    tracked(stock.optString("family", "FILM"), 50, 22, 10.5f, 1.8f, 76);
 
     fill(ink);
     p.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
-    centered(stock.optString("mark", "35"), 50, 49, 27, 78);
+    centered(stock.optString("mark", "35"), 50, 49, 28, 78);
   }
 
   /** Shrinks horizontally rather than wrapping, then centres on {@code centerX}. */
