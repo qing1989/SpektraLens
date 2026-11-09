@@ -1150,7 +1150,7 @@ public final class MainActivity extends Activity {
       TextView meterLabel = text("测光", AppStyle.TYPE_LABEL, MUTED);
       add(editor, meterLabel, -1, 22);
       LinearLayout meters = horizontal();
-      String[] meterNames = {"自定义", "均衡", "中央主体", "保护高光", "保护阴影"};
+      String[] meterNames = {"关闭", "均衡", "中央主体", "保护高光", "保护阴影"};
       String[] meterIds = {"custom", "balanced", "center", "protect_highlights", "protect_shadows"};
       String activeMeter = meterState();
       for (int i = 0; i < meterNames.length; i++) {
@@ -1693,7 +1693,7 @@ public final class MainActivity extends Activity {
     }
   }
 
-  /** 面板上那个「测光」药丸当前该亮哪一档；关闭测光就是「自定义」。 */
+  /** 面板上那个「测光」药丸当前该亮哪一档；auto_exposure 关闭就是「关闭」。 */
   private String meterState() {
     if (!settings.optBoolean("auto_exposure", false)) return "custom";
     return settings.optString("auto_exposure_method", "balanced");
