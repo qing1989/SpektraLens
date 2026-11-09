@@ -120,13 +120,13 @@ final class GallerySheet extends Dialog {
     view.setPadding(dp(12), 0, dp(12), 0);
     view.setOnClickListener(v -> run.run());
     view.setFocusable(true);
-    AppStyle.action(view, color, Color.TRANSPARENT, AppStyle.R_ACTION);
+    AppStyle.action(view, color, Color.TRANSPARENT, AppStyle.R_MEDIUM);
     return view;
   }
 
   private void build() {
     LinearLayout root = column();
-    AppStyle.surface(root, AppStyle.SURFACE, 26);
+    AppStyle.surface(root, AppStyle.SURFACE, AppStyle.R_LARGE);
     PanelHandle grab = new PanelHandle(getContext());
     grab.setContentDescription("上拉展开图库，下拉收起");
     grab.setFocusable(true);

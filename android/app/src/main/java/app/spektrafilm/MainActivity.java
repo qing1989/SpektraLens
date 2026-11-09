@@ -426,7 +426,7 @@ public final class MainActivity extends Activity {
             : background == ACCENT
                 ? ACCENT
                 : background == AppStyle.SELECTED ? AppStyle.SELECTED : AppStyle.CONTROL,
-        AppStyle.R_ACTION);
+        AppStyle.R_MEDIUM);
     v.setMinHeight(dp(44));
     controls.add(v);
     return v;
@@ -565,7 +565,7 @@ public final class MainActivity extends Activity {
         v -> {
           photo.resetZoom();
         });
-    AppStyle.surface(statusRow, AppStyle.withAlpha(AppStyle.SURFACE, .95f), AppStyle.R_CONTROL);
+    AppStyle.surface(statusRow, AppStyle.withAlpha(AppStyle.SURFACE, .95f), AppStyle.R_SMALL);
     FrameLayout.LayoutParams feedback = new FrameLayout.LayoutParams(-1, dp(28), Gravity.BOTTOM);
     feedback.setMargins(dp(12), 0, dp(12), dp(6));
     photoStage.addView(statusRow, feedback);
@@ -614,9 +614,9 @@ public final class MainActivity extends Activity {
     add(previewColumn, meta, -1, 44);
     tabRow = horizontal();
     tabRow.setPadding(dp(6), dp(4), dp(6), dp(4));
-    AppStyle.surface(tabRow, AppStyle.SURFACE, AppStyle.R_PILL);
+    AppStyle.surface(tabRow, AppStyle.SURFACE, AppStyle.R_LARGE);
     panel = vertical();
-    AppStyle.surface(panel, AppStyle.SURFACE, AppStyle.R_SHEET);
+    AppStyle.surface(panel, AppStyle.SURFACE, AppStyle.R_LARGE);
     LinearLayout.LayoutParams panelLayout = new LinearLayout.LayoutParams(-1, dp(panelHeight()));
     panelLayout.setMargins(dp(12), dp(4), dp(12), 0);
     toolsColumn.addView(panel, panelLayout);
@@ -727,7 +727,7 @@ public final class MainActivity extends Activity {
     panelHandle.setClickable(true);
     controls.add(panelHandle);
     View grip = new View(this);
-    grip.setBackground(box(AppStyle.GRIP, 2));
+    grip.setBackground(box(AppStyle.GRIP, AppStyle.R_SMALL));
     FrameLayout.LayoutParams gripLayout =
         new FrameLayout.LayoutParams(dp(30), dp(3), Gravity.CENTER);
     panelHandle.addView(grip, gripLayout);
@@ -809,7 +809,7 @@ public final class MainActivity extends Activity {
     add(content, head, -1, -2);
     gap(content, 24);
     FrameLayout hero = new FrameLayout(this);
-    AppStyle.surface(hero, AppStyle.SURFACE, AppStyle.R_CARD);
+    AppStyle.surface(hero, AppStyle.SURFACE, AppStyle.R_MEDIUM);
     hero.setClipToOutline(true);
     homeHero = new ImageView(this);
     homeHero.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -875,7 +875,7 @@ public final class MainActivity extends Activity {
         compareButton,
         comparing ? ACCENT : INK,
         comparing ? AppStyle.CONTROL : Color.TRANSPARENT,
-        AppStyle.R_ACTION);
+        AppStyle.R_MEDIUM);
   }
 
   private void buildPanel() {
@@ -1006,7 +1006,7 @@ public final class MainActivity extends Activity {
         iconBox.setPadding(inset, inset, inset, inset);
         iconBox.addView(badge, new FrameLayout.LayoutParams(-1, -1));
         GradientDrawable ring =
-            box(selected ? AppStyle.withAlpha(ACCENT, .12f) : Color.TRANSPARENT, 8);
+            box(selected ? AppStyle.withAlpha(ACCENT, .12f) : Color.TRANSPARENT, AppStyle.R_SMALL);
         if (selected) ring.setStroke(Math.max(1, dp(1.8f)), ACCENT);
         iconBox.setBackground(ring);
         add(card, iconBox, -1, iconHeight);
@@ -1071,7 +1071,7 @@ public final class MainActivity extends Activity {
       Stock stock = find(papers, settings.optString("print_stock"));
       LinearLayout material = horizontal();
       material.setPadding(dp(14), dp(10), dp(14), dp(10));
-      material.setBackground(box(AppStyle.CONTROL, AppStyle.R_CARD));
+      material.setBackground(box(AppStyle.CONTROL, AppStyle.R_MEDIUM));
       LinearLayout names = vertical();
       paperTitle = text(stock == null ? "" : shortName(stock.name), AppStyle.TYPE_TITLE, INK);
       paperTitle.setSingleLine(true);
@@ -1688,7 +1688,7 @@ public final class MainActivity extends Activity {
     value.setPadding(dp(4), 0, dp(4), 0);
     value.setAutoSizeTextTypeUniformWithConfiguration(
         8, 11, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
-    GradientDrawable valueBox = box(AppStyle.FIELD, AppStyle.R_CONTROL);
+    GradientDrawable valueBox = box(AppStyle.FIELD, AppStyle.R_SMALL);
     valueBox.setStroke(Math.max(1, dp(.6f)), AppStyle.OUTLINE);
     value.setBackground(valueBox);
     AdjustmentSeekBar bar = new AdjustmentSeekBar(this, sliderColors(key));
@@ -2924,7 +2924,7 @@ public final class MainActivity extends Activity {
     if (library.isEmpty()) {
       LinearLayout empty = vertical();
       empty.setPadding(dp(16), dp(15), dp(16), dp(15));
-      AppStyle.surface(empty, AppStyle.SURFACE, AppStyle.R_CARD);
+      AppStyle.surface(empty, AppStyle.SURFACE, AppStyle.R_MEDIUM);
       TextView title = text("你的第一张底片，还在等光。", AppStyle.TYPE_BODY, INK);
       add(empty, title, -1, 26);
       TextView detail = text("导入照片后，可在这里继续上次的编辑。", AppStyle.TYPE_MICRO, MUTED);
@@ -2938,7 +2938,7 @@ public final class MainActivity extends Activity {
       for (int k = i; k < Math.min(i + 2, library.size()); k++) {
         Frame frame = library.get(k);
         LinearLayout card = vertical();
-        AppStyle.surface(card, AppStyle.SURFACE, AppStyle.R_CARD);
+        AppStyle.surface(card, AppStyle.SURFACE, AppStyle.R_MEDIUM);
         card.setClipToOutline(true);
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);

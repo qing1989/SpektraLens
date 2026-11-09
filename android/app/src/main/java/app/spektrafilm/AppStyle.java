@@ -37,17 +37,15 @@ final class AppStyle {
   static final int TYPE_MICRO = 11, TYPE_LABEL = 12, TYPE_BODY = 13,
       TYPE_TITLE = 15, TYPE_HEADING = 18, TYPE_BRAND = 30;
 
-  // 圆角阶梯（面类）：小控件 10、卡片 22、面板与弹层 26、胶囊容器 28。
-  // 动作类不走阶梯，统一用 action() 的 R_ACTION 比例档，见下面。
-  static final float R_CONTROL = 10, R_CARD = 22, R_SHEET = 26, R_PILL = 28;
+  // 圆角只有三档，按用途分，和字号一样不许再插第四种：
+  //   R_SMALL  10 —— 输入框、值框、状态条、图标选中环
+  //   R_MEDIUM 16 —— 按钮、chip、卡片、胶片卡材质卡
+  //   R_LARGE  26 —— 面板、底部导航条、弹层、对话框
+  static final float R_SMALL = 10, R_MEDIUM = 16, R_LARGE = 26;
 
   // 触控基准：主操作 48、常规 44。低于 44 的只留给纯展示元素。
   static final int TOUCH_PRIMARY = 48, TOUCH_MIN = 44;
 
-  // 传给 action() 的三个档：R_ACTION 按高度比例（38→13、44→15、48→16），让大小按钮成同
-  // 一族；R_CAPSULE 是完整胶囊；给具体数值就是固定圆角。
-  // 注意与上面圆角阶梯里的 R_PILL = 28（胶囊容器的圆角）区分：那个是画形状用的数值。
-  static final float R_ACTION = -1f, R_CAPSULE = 999f;
 
   /** Same colour at a different opacity, for wells and overlays. */
   static int withAlpha(int color, float alpha) {
@@ -74,19 +72,17 @@ final class AppStyle {
 
   static void action(TextView view, int color, int fill, float radius) {
     Context context = view.getContext();
-    // 三种：R_CAPSULE 完整胶囊、R_ACTION 按高度比例、具体数值按该半径画。
-    boolean capsule = radius >= 100f;
     StateListDrawable states = new StateListDrawable();
     states.addState(
         new int[] {-android.R.attr.state_enabled},
         actionShape(
-            context, fill == Color.TRANSPARENT ? Color.TRANSPARENT : CONTROL, radius, capsule));
-    states.addState(new int[] {}, actionShape(context, fill, radius, capsule));
+            context, fill == Color.TRANSPARENT ? Color.TRANSPARENT : CONTROL, radius));
+    states.addState(new int[] {}, actionShape(context, fill, radius));
     view.setBackground(
         new RippleDrawable(
             ColorStateList.valueOf(0x24ffffff),
             states,
-            actionShape(context, Color.WHITE, radius, capsule)));
+            actionShape(context, Color.WHITE, radius)));
     view.setTextColor(
         new ColorStateList(
             new int[][] {new int[] {-android.R.attr.state_enabled}, new int[] {}},
@@ -100,7 +96,7 @@ final class AppStyle {
         (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
           ViewGroup.LayoutParams params = v.getLayoutParams();
           if (params == null || params.width != ViewGroup.LayoutParams.WRAP_CONTENT) return;
-          int minimum = Math.round(v.getHeight() / 2f);
+          int minimum = Math.round(v.getHeight() * .34f);
           if (v.getPaddingLeft() >= minimum && v.getPaddingRight() >= minimum) return;
           int horizontal = Math.max(minimum, Math.max(v.getPaddingLeft(), v.getPaddingRight()));
           v.setPadding(horizontal, v.getPaddingTop(), horizontal, v.getPaddingBottom());
@@ -109,22 +105,8 @@ final class AppStyle {
     view.setClickable(true);
   }
 
-  private static GradientDrawable actionShape(
-      Context context, int color, float radius, boolean capsule) {
-    if (!capsule && radius > 0) return shape(context, color, radius, false);
-    final boolean proportional = !capsule;
-    GradientDrawable drawable =
-        new GradientDrawable() {
-          @Override
-          protected void onBoundsChange(Rect bounds) {
-            super.onBoundsChange(bounds);
-            float shortSide = Math.min(bounds.width(), bounds.height());
-            // 胶囊取半高；比例档取短边的 0.33，这样 38/44/48 三种高度看起来是同一族圆角。
-            setCornerRadius(proportional ? shortSide * .33f : shortSide / 2f);
-          }
-        };
-    drawable.setColor(color);
-    return drawable;
+  private static GradientDrawable actionShape(Context context, int color, float radius) {
+    return shape(context, color, radius, false);
   }
 
   static void field(EditText input) {
@@ -132,14 +114,14 @@ final class AppStyle {
     input.setHintTextColor(MUTED);
     input.setTextSize(16);
     input.setPadding(dp(input.getContext(), 14), 0, dp(input.getContext(), 14), 0);
-    input.setBackground(shape(input.getContext(), FIELD, 14, true));
+    input.setBackground(shape(input.getContext(), FIELD, R_SMALL, true));
     input.setBackgroundTintList(null);
   }
 
   static void dialog(AlertDialog dialog) {
     Window window = dialog.getWindow();
     if (window == null) return;
-    window.setBackgroundDrawable(shape(dialog.getContext(), SURFACE, 26, true));
+    window.setBackgroundDrawable(shape(dialog.getContext(), SURFACE, R_LARGE, true));
     window.setDimAmount(.58f);
     View decor = window.getDecorView();
     // Style before the first frame without replacing the caller's validation listener.
@@ -171,7 +153,7 @@ final class AppStyle {
                   Button button = dialog.getButton(which);
                   if (button == null) continue;
                   boolean primary = which == AlertDialog.BUTTON_POSITIVE;
-                  action(button, primary ? BG : INK, primary ? ACCENT : Color.TRANSPARENT, 20);
+                  action(button, primary ? BG : INK, primary ? ACCENT : Color.TRANSPARENT, R_MEDIUM);
                   button.setAllCaps(false);
                   button.setTextSize(14);
                   button.setMinHeight(dp(dialog.getContext(), 44));
