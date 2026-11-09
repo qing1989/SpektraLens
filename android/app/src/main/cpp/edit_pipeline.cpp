@@ -12,6 +12,7 @@
 #include <fstream>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 #include <zlib.h>
 
 namespace mobile {
@@ -282,6 +283,112 @@ void text(Image16 &im, const std::string &value, int x, int y, int size, const f
         x += 6 * size;
     }
 }
+// ---- 日期背（quartz date）---------------------------------------------------
+// 真实日期背是一排 LED 段把日期曝光到底片上，光在乳剂里散射，所以数字边缘是软
+// 的、周围有一圈同色的晕。字形也不是字体，是七段数码管（廉价机型用点阵）。
+// 这里的几何照搬上游 overscan.cpp 的 seven_seg_polys：段宽 .52h、笔画 .14h、
+// 8° 斜切；光晕用掩膜做三层可分离模糊，颜色跟随面板里选的日期颜色。
+struct SegQuad {
+    float x[4], y[4];
+};
+
+void add_seven_seg(const std::string &value, float h, float x0, float baseline,
+                   std::vector<SegQuad> &out) {
+    static const char *kSeg[10] = {"abcdef", "bc", "abged", "abgcd", "fgbc",
+                                   "afgcd", "afgedc", "abc", "abcdefg", "abcdfg"};
+    const float w = .52f * h, th = .14f * h, gap = .6f * th;
+    const float skew = std::tan(8.f * pi / 180.f);
+    float x = x0;
+    auto box = [&](float bx, float up, float bw, float bh) {
+        SegQuad q;
+        const float px[4] = {bx, bx + bw, bx + bw, bx};
+        const float py[4] = {up, up, up + bh, up + bh};
+        for (int i = 0; i < 4; i++) {
+            q.x[i] = px[i] + skew * py[i];
+            q.y[i] = baseline - py[i];
+        }
+        out.push_back(q);
+    };
+    for (char ch : value) {
+        if (ch == ' ') {
+            x += .45f * h;
+            continue;
+        }
+        if (ch == '.' || ch == ',') {
+            box(x, 0, th, th);
+            x += .55f * h;
+            continue;
+        }
+        if (ch < '0' || ch > '9') {
+            x += .45f * h;
+            continue;
+        }
+        for (const char *seg = kSeg[ch - '0']; *seg; ++seg) {
+            switch (*seg) {
+                case 'a': box(x + gap, h - th, w - 2 * gap, th); break;
+                case 'g': box(x + gap, .5f * h - .5f * th, w - 2 * gap, th); break;
+                case 'd': box(x + gap, 0, w - 2 * gap, th); break;
+                case 'f': box(x, .5f * h + .3f * th, th, .5f * h - .9f * th); break;
+                case 'b': box(x + w - th, .5f * h + .3f * th, th, .5f * h - .9f * th); break;
+                case 'e': box(x, .6f * th, th, .5f * h - .9f * th); break;
+                case 'c': box(x + w - th, .6f * th, th, .5f * h - .9f * th); break;
+                default: break;
+            }
+        }
+        x += w + .28f * h;
+    }
+}
+
+float seven_seg_width(const std::string &value, float h) {
+    float x = 0;
+    for (char ch : value) {
+        if (ch == ' ') x += .45f * h;
+        else if (ch == '.' || ch == ',') x += .55f * h;
+        else if (ch >= '0' && ch <= '9') x += .8f * h;
+        else x += .45f * h;
+    }
+    return std::max(0.f, x - .28f * h);
+}
+
+bool inside(const SegQuad &q, float px, float py) {
+    int sign = 0;
+    for (int i = 0; i < 4; i++) {
+        int j = (i + 1) & 3;
+        float cross = (q.x[j] - q.x[i]) * (py - q.y[i]) - (q.y[j] - q.y[i]) * (px - q.x[i]);
+        if (std::fabs(cross) < 1e-6f) continue;
+        int s = cross > 0 ? 1 : -1;
+        if (sign == 0) sign = s;
+        else if (sign != s) return false;
+    }
+    return true;
+}
+
+void blur_axis(std::vector<float> &v, int w, int h, int r, bool horizontal) {
+    std::vector<float> src = v;
+    int n = horizontal ? w : h;
+    for (int y = 0; y < (horizontal ? h : w); y++) {
+        for (int i = 0; i < n; i++) {
+            float sum = 0;
+            int count = 0;
+            for (int k = -r; k <= r; k++) {
+                int j = i + k;
+                if (j < 0 || j >= n) continue;
+                sum += horizontal ? src[size_t(y) * w + j] : src[size_t(j) * w + y];
+                count++;
+            }
+            float value = count ? sum / float(count) : 0.f;
+            if (horizontal) v[size_t(y) * w + i] = value;
+            else v[size_t(i) * w + y] = value;
+        }
+    }
+}
+
+void blur(std::vector<float> &v, int w, int h, int r) {
+    if (r < 1) return;
+    blur_axis(v, w, h, r, true);
+    blur_axis(v, w, h, r, false);
+}
+
 void date(Image16 &im, const spk::Json &j, int ix, int iy, int iw, int ih) {
     if (!j.at("date_enabled").as_bool())
         return;
@@ -292,18 +399,76 @@ void date(Image16 &im, const spk::Json &j, int ix, int iy, int iw, int ih) {
     int size =
         std::max(1, int(std::lround(std::min(iw, ih) * .004f * num(j, "date_size", 1, .5, 3))));
     int inset = std::max(4, int(std::min(iw, ih) * .035f));
-    size = std::max(1, std::min(size, (iw - 2 * inset) / std::max(1, int(value.size()) * 6)));
-    int width = int(value.size()) * size * 6, height = size * 7;
+    float h = 7.f * size;
+    float w = seven_seg_width(value, h);
+    float avail = float(iw - 2 * inset);
+    if (w > avail && w > 1) {
+        h *= avail / w;
+        w = seven_seg_width(value, h);
+    }
     std::string corner = j.at("date_corner").as_string();
-    int x = corner.find("left") != std::string::npos ? ix + inset : ix + iw - inset - width;
-    int y = corner.find("top") != std::string::npos ? iy + inset : iy + ih - inset - height;
+    float left = corner.find("left") != std::string::npos;
+    float top = corner.find("top") != std::string::npos;
+    float x0 = left ? ix + inset : ix + iw - inset - w;
+    float baseline = top ? iy + inset + h : iy + ih - inset;
+
+    std::vector<SegQuad> quads;
+    add_seven_seg(value, h, x0, baseline, quads);
+    if (quads.empty()) return;
+
     float c[3] = {1, .40f, .08f};
     if (j.at("date_color").as_string() == "white")
         c[1] = c[2] = .94f;
-    float a = num(j, "date_intensity", 1, .1, 2) * .8f;
-    text(im, value, x - size, y, size, c, std::min(.2f, a * .16f));
-    text(im, value, x + size, y, size, c, std::min(.2f, a * .16f));
-    text(im, value, x, y, size, c, std::min(.96f, a));
+    float strength = num(j, "date_intensity", 1, .1, 2) * .8f;
+
+    // 掩膜：以水印为中心留出光晕的余量，2×2 超采样做抗锯齿。
+    // 缓冲要装得下最外层的光晕，否则边缘会被硬切出一道痕迹。
+    int pad = std::max(6, int(h * .85f));
+    int mw = int(std::ceil(w)) + pad * 2 + 2, mh = int(h) + pad * 2 + 2;
+    int ox = int(std::floor(x0)) - pad, oy = int(std::floor(baseline - h)) - pad;
+    std::vector<float> mask(size_t(mw) * mh, 0.f);
+    for (const SegQuad &q : quads) {
+        float minx = q.x[0], maxx = q.x[0], miny = q.y[0], maxy = q.y[0];
+        for (int i = 1; i < 4; i++) {
+            minx = std::min(minx, q.x[i]);
+            maxx = std::max(maxx, q.x[i]);
+            miny = std::min(miny, q.y[i]);
+            maxy = std::max(maxy, q.y[i]);
+        }
+        int px0 = std::max(0, int(std::floor(minx)) - ox), px1 = std::min(mw - 1, int(std::ceil(maxx)) - ox);
+        int py0 = std::max(0, int(std::floor(miny)) - oy), py1 = std::min(mh - 1, int(std::ceil(maxy)) - oy);
+        for (int py = py0; py <= py1; py++) {
+            for (int px = px0; px <= px1; px++) {
+                float fx = float(px + ox), fy = float(py + oy), cover = 0.f;
+                for (int sy = 0; sy < 2; sy++)
+                    for (int sx = 0; sx < 2; sx++)
+                        if (inside(q, fx + .25f + .5f * sx, fy + .25f + .5f * sy)) cover += .25f;
+                float &cell = mask[size_t(py) * mw + px];
+                cell = std::min(1.f, cell + cover);
+            }
+        }
+    }
+
+    // 三层模糊 ≈ 高斯：近晕贴着笔画，远晕铺开成一片暖光。
+    std::vector<float> glowA = mask, glowB = mask, glowC = mask;
+    blur(glowA, mw, mh, std::max(1, int(h * .10f)));
+    blur(glowB, mw, mh, std::max(2, int(h * .24f)));
+    blur(glowC, mw, mh, std::max(3, int(h * .50f)));
+
+    for (int py = 0; py < mh; py++) {
+        int y = oy + py;
+        if (y < 0 || y >= int(im.height)) continue;
+        for (int px = 0; px < mw; px++) {
+            int x = ox + px;
+            if (x < 0 || x >= int(im.width)) continue;
+            size_t i = size_t(py) * mw + px;
+            float alpha = mask[i] + glowA[i] * .55f + glowB[i] * .30f + glowC[i] * .22f;
+            alpha = std::min(.96f, sat(alpha) * strength);
+            if (alpha <= 0.002f) continue;
+            auto *p = &im.rgba[(size_t(y) * im.width + x) * 4];
+            for (int k = 0; k < 3; k++) p[k] = quant(p[k] / 65535.f * (1 - alpha) + c[k] * alpha);
+        }
+    }
 }
 void borders(Image16 &im, const FrameLayout &f, const spk::Json &j, uint32_t iw, uint32_t ih) {
     if (f.margin == 0)
