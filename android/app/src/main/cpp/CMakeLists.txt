@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22.1)
-project(spektra_android LANGUAGES C CXX)
+project(spektralens_android LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../..")
 set(ENGINE "${ROOT}/.tooling/android-engine-source/engine")

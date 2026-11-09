@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.content.ContentProvider;
@@ -20,7 +20,8 @@ public final class ShareProvider extends ContentProvider {
 
   private File file(Uri uri) throws FileNotFoundException {
     String name = uri.getLastPathSegment();
-    if (name == null || !name.matches("Spektra_[A-Za-z0-9_]+\\.(jpg|png|tiff)"))
+    // Keep earlier read grants working after the product rename; exports use SpektraLens.
+    if (name == null || !name.matches("(?:SpektraLens|Spektra)_[A-Za-z0-9_]+\\.(jpg|png|tiff)"))
       throw new FileNotFoundException();
     return new File(getContext().getCacheDir(), name);
   }

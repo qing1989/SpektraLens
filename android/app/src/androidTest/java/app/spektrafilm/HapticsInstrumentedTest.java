@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.app.Dialog;
@@ -17,6 +17,7 @@ public final class HapticsInstrumentedTest extends ActivityInstrumentationTestCa
 
   private final class TouchView extends View {
     int calls;
+    String events = "";
 
     TouchView() {
       super(getActivity());
@@ -27,6 +28,12 @@ public final class HapticsInstrumentedTest extends ActivityInstrumentationTestCa
       assertEquals(HapticFeedbackConstants.VIRTUAL_KEY, constant);
       calls++;
       return true;
+    }
+
+    public boolean onTouchEvent(MotionEvent event) {
+      events += MotionEvent.actionToString(event.getActionMasked()) + ":"
+          + (event.getEventTime() - event.getDownTime()) + "ms ";
+      return super.onTouchEvent(event);
     }
   }
 
@@ -39,6 +46,13 @@ public final class HapticsInstrumentedTest extends ActivityInstrumentationTestCa
     assertTrue(
         "Target window is laid out before injecting touch",
         view.getWidth() > 0 && view.hasWindowFocus());
+    // A newly focused window can still be moving in the compositor's activity transition.
+    // Wait before reading screen coordinates so the injected tap lands on this view.
+    try {
+      getInstrumentation().getUiAutomation().waitForIdle(500, 5000);
+    } catch (java.util.concurrent.TimeoutException error) {
+      throw new AssertionError("Window did not settle before injecting touch", error);
+    }
     int[] location = new int[2];
     view.getLocationOnScreen(location);
     float x = location[0] + view.getWidth() / 2f, y = location[1] + view.getHeight() / 2f;
@@ -77,7 +91,7 @@ public final class HapticsInstrumentedTest extends ActivityInstrumentationTestCa
             });
     getInstrumentation().waitForIdleSync();
     gesture(main[0], false);
-    assertEquals(1, main[0].calls);
+    assertEquals("Main-window touch events: " + main[0].events, 1, main[0].calls);
     gesture(main[0], true);
     assertEquals(1, main[0].calls);
     getInstrumentation()

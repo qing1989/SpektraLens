@@ -110,7 +110,7 @@ func label(_ text: String, _ x: Double, _ y: Double, _ size: Double, secondary: 
         .font: font, .foregroundColor: secondary ? NSColor(white: 0.60, alpha: 1) : NSColor(white: 0.94, alpha: 1)
     ])
 }
-label("SPEKTRA  /  光谱暗房", 76, 907, 38)
+label("SpektraLens", 76, 907, 38)
 label("01   光谱胶带 · Film S", 78, 858, 24, secondary: true)
 sheet.draw(icon(600, shape: .rounded), in: CGRect(x: 76, y: 150, width: 600, height: 600))
 sheet.draw(icon(280, shape: .circle), in: CGRect(x: 830, y: 470, width: 280, height: 280))

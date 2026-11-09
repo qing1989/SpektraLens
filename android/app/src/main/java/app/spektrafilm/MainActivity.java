@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.app.*;
@@ -19,11 +19,11 @@ import java.util.concurrent.*;
 import org.json.*;
 
 public final class MainActivity extends Activity {
-  static final int BG = 0xff000000,
-      INK = 0xfff2f2f4,
-      MUTED = 0xff98989f,
-      ACCENT = 0xffff7a1a,
-      LINE = 0xff262626;
+  static final int BG = AppStyle.BG,
+      INK = AppStyle.INK,
+      MUTED = AppStyle.MUTED,
+      ACCENT = AppStyle.ACCENT,
+      LINE = AppStyle.OUTLINE;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService importWorker = Executors.newFixedThreadPool(2);
   private PhotoImportJob activeImport;
@@ -33,7 +33,12 @@ public final class MainActivity extends Activity {
   private final ArrayList<Stock> films = new ArrayList<>(), papers = new ArrayList<>();
   private JSONObject settings = new JSONObject();
   private SharedPreferences prefs;
-  private LinearLayout root, editor, header;
+  private LinearLayout root, editor, header, statusRow, editorBody, previewColumn, toolsColumn;
+  private PanelHandle panelHandle;
+  private boolean panelExpanded;
+  private float panelDragY;
+  private int panelDragHeight;
+  private boolean panelDragging;
   private TextView status,
       filmTitle,
       filmSub,
@@ -120,7 +125,7 @@ public final class MainActivity extends Activity {
     loadLibrary();
     buildUI();
     updateStockLabels();
-    setStatus("正在准备 Spektra…", true);
+    setStatus("正在准备 " + getString(R.string.app_name) + "…", true);
     initializeRenderer();
     handleShare(getIntent());
   }
@@ -145,11 +150,8 @@ public final class MainActivity extends Activity {
             return;
           }
           try {
-            File resources = new File(getFilesDir(), "engine_267ee243_mobile_v3");
-            if (!new File(resources, ".ready").exists()) {
-              copyAssets("engine", resources);
-              new File(resources, ".ready").createNewFile();
-            }
+            File resources =
+                EngineResources.prepare(this, new File(getFilesDir(), "engine_267ee243_mobile_v3"));
             String capabilities =
                 next.start(resources.getAbsolutePath(), prefs.getString("engine_mode", "auto"));
             if (destroyed || boot != engineBootGeneration) {
@@ -157,7 +159,7 @@ public final class MainActivity extends Activity {
               return;
             }
             engine = 1;
-            android.util.Log.i("SpektraAndroid", "Engine ready: " + capabilities);
+            android.util.Log.i("SpektraLensAndroid", "Engine ready: " + capabilities);
             LoadedPhoto initial = null;
             String initialName = demoName();
             boolean demo = false;
@@ -176,7 +178,7 @@ public final class MainActivity extends Activity {
                             : restoreFrame.name)
                         : demoName();
               } catch (Throwable ex) {
-                android.util.Log.e("SpektraAndroid", "Restore failed; keeping original", ex);
+                android.util.Log.e("SpektraLensAndroid", "Restore failed; keeping original", ex);
                 initial = loadDemo();
                 demo = true;
               }
@@ -202,6 +204,7 @@ public final class MainActivity extends Activity {
                       adopt(first);
                       filename = name;
                       fileLabel.setText(filename);
+                      refreshStrip();
                       photo.images(source, null);
                       homeHero.setImageBitmap(source);
                     } else first.bitmap.recycle();
@@ -224,11 +227,11 @@ public final class MainActivity extends Activity {
                     prefs.edit().putString("last_engine_error", ex.toString()).apply();
                     return;
                   }
-                  setStatus("显影引擎启动未完成 · 可重试兼容模式", false);
+                  setStatus("显影引擎启动未完成 · 可重试兼容模式", false, true);
                   exportButton.setText("重启兼容显影");
                   exportButton.setEnabled(true);
                   exportButton.setOnClickListener(v -> restartRenderer());
-                  android.util.Log.e("SpektraAndroid", "Renderer initialization", ex);
+                  android.util.Log.e("SpektraLensAndroid", "Renderer initialization", ex);
                   prefs.edit().putString("last_engine_error", ex.toString()).apply();
                 });
           }
@@ -320,7 +323,8 @@ public final class MainActivity extends Activity {
     putDefault("halation_amount", 1);
     putDefault("film_format_mm", 36);
     putDefault("product_defaults", true);
-    putDefault("auto_exposure", true);
+    // Preserve the imported file's exposure until the user explicitly enables the meter.
+    putDefault("auto_exposure", false);
     putDefault("auto_exposure_method", "center_weighted");
     putDefault("glare_amount", 1);
     putDefault("dir_couplers_amount", 1);
@@ -377,6 +381,7 @@ public final class MainActivity extends Activity {
     v.setTextColor(color);
     v.setGravity(Gravity.CENTER_VERTICAL);
     v.setIncludeFontPadding(false);
+    v.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
     return v;
   }
 
@@ -390,23 +395,17 @@ public final class MainActivity extends Activity {
   private TextView button(String title, int color, int background) {
     TextView v = text(title, 13, color);
     v.setGravity(Gravity.CENTER);
-    v.setPadding(dp(14), dp(11), dp(14), dp(11));
-    android.graphics.drawable.StateListDrawable states =
-        new android.graphics.drawable.StateListDrawable();
-    int pressed =
+    v.setPadding(dp(14), dp(8), dp(14), dp(8));
+    AppStyle.action(
+        v,
+        color,
         background == BG
-            ? 0xff27272a
-            : Color.argb(
-                Color.alpha(background),
-                Math.min(255, Color.red(background) + 18),
-                Math.min(255, Color.green(background) + 18),
-                Math.min(255, Color.blue(background) + 18));
-    states.addState(new int[] {android.R.attr.state_pressed}, box(pressed, 22));
-    states.addState(new int[] {}, box(background == BG ? Color.TRANSPARENT : background, 22));
-    v.setBackground(states);
-    v.setMinHeight(dp(42));
-    v.setFocusable(true);
-    v.setClickable(true);
+            ? Color.TRANSPARENT
+            : background == ACCENT
+                ? ACCENT
+                : background == AppStyle.SELECTED ? AppStyle.SELECTED : AppStyle.CONTROL,
+        20);
+    v.setMinHeight(dp(44));
     controls.add(v);
     return v;
   }
@@ -472,26 +471,37 @@ public final class MainActivity extends Activity {
         });
     screens = new FrameLayout(this);
     add(root, screens, -1, -1);
+    screens.addOnLayoutChangeListener(
+        (v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
+          if (r - l != oldR - oldL || b - t != oldB - oldT) updateEditorLayout();
+        });
     flowingBackground = new FlowingBackgroundView(this);
     screens.addView(flowingBackground, new FrameLayout.LayoutParams(-1, -1));
     editorScreen = vertical();
     editorScreen.setBackgroundColor(BG);
     screens.addView(editorScreen, new FrameLayout.LayoutParams(-1, -1));
     header = horizontal();
-    header.setPadding(dp(12), dp(9), dp(16), dp(9));
+    header.setPadding(dp(12), dp(3), dp(12), dp(3));
+    FrameLayout toolbar = new FrameLayout(this);
+    add(header, toolbar, -1, 48);
     TextView back = button("返回", INK, BG);
     back.setTextSize(12);
     back.setPadding(0, 0, 0, 0);
     back.setSingleLine(true);
     back.setContentDescription("返回首页");
     back.setOnClickListener(v -> showHome());
-    add(header, back, 42, 44);
-    LinearLayout brand = vertical();
+    toolbar.addView(
+        back,
+        new FrameLayout.LayoutParams(dp(48), dp(44), Gravity.START | Gravity.CENTER_VERTICAL));
     TextView title = text("照片编辑", 14, INK);
     title.setGravity(Gravity.CENTER);
     title.setTypeface(null, Typeface.BOLD);
-    add(brand, title, -1, 40);
-    header.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
+    title.setSingleLine(true);
+    title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    FrameLayout.LayoutParams titleLayout = new FrameLayout.LayoutParams(-1, dp(40), Gravity.CENTER);
+    // Equal insets reserve the wider action on both sides, so the title stays on the screen axis.
+    titleLayout.leftMargin = titleLayout.rightMargin = dp(98);
+    toolbar.addView(title, titleLayout);
     exportButton = button("显影准备中…", 0xff101010, ACCENT);
     exportButton.setTextSize(11);
     exportButton.setPadding(dp(8), 0, dp(8), 0);
@@ -499,90 +509,209 @@ public final class MainActivity extends Activity {
     exportButton.setTypeface(null, Typeface.BOLD);
     exportButton.setOnClickListener(v -> exportOptions());
     exportButton.setEnabled(false);
-    add(header, exportButton, 94, 38);
+    toolbar.addView(
+        exportButton,
+        new FrameLayout.LayoutParams(dp(94), dp(38), Gravity.END | Gravity.CENTER_VERTICAL));
     add(editorScreen, header, -1, -2);
+    editorBody = new LinearLayout(this);
+    editorScreen.addView(editorBody, new LinearLayout.LayoutParams(-1, 0, 1));
+    previewColumn = vertical();
+    toolsColumn = vertical();
+    editorBody.addView(previewColumn);
+    editorBody.addView(toolsColumn);
+    FrameLayout photoStage = new FrameLayout(this);
+    previewColumn.addView(photoStage, new LinearLayout.LayoutParams(-1, 0, 1));
     photo = new PhotoView(this);
-    editorScreen.addView(photo, new LinearLayout.LayoutParams(-1, 0, 1));
-    LinearLayout statusRow = horizontal();
+    photoStage.addView(photo, new FrameLayout.LayoutParams(-1, -1));
+    statusRow = horizontal();
     statusRow.setPadding(dp(18), 0, dp(18), 0);
     progress = new ProgressBar(this);
     add(statusRow, progress, 12, 12);
     add(statusRow, new View(this), 7, 1);
     status = text("准备中", 10, MUTED);
-    statusRow.addView(status, new LinearLayout.LayoutParams(0, dp(25), 1));
+    status.setSingleLine(true);
+    status.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    statusRow.addView(status, new LinearLayout.LayoutParams(0, dp(26), 1));
     TextView zoom = button("适应画面", MUTED, BG);
     zoom.setPadding(0, 0, 0, 0);
     zoom.setMinHeight(0);
-    zoom.setTextSize(9);
+    zoom.setTextSize(11);
     zoom.setOnClickListener(
         v -> {
           photo.resetZoom();
         });
-    add(statusRow, zoom, 57, 25);
-    add(editorScreen, statusRow, -1, 25);
+    AppStyle.surface(statusRow, 0xf2222225, 14);
+    FrameLayout.LayoutParams feedback = new FrameLayout.LayoutParams(-1, dp(28), Gravity.BOTTOM);
+    feedback.setMargins(dp(12), 0, dp(12), dp(6));
+    photoStage.addView(statusRow, feedback);
+    statusRow.setVisibility(View.GONE);
     LinearLayout meta = horizontal();
-    meta.setPadding(dp(18), 0, dp(14), dp(6));
-    photoPickerButton = button("照片", INK, 0xff202023);
+    meta.setPadding(dp(12), 0, dp(12), 0);
+    photoPickerButton = button("照片", INK, BG);
     photoPickerButton.setTextSize(11);
     photoPickerButton.setPadding(0, 0, 0, 0);
     photoPickerButton.setMinHeight(0);
     photoPickerButton.setOnClickListener(v -> choosePhoto());
-    add(meta, photoPickerButton, 48, 33);
-    add(meta, new View(this), 8, 1);
+    add(meta, photoPickerButton, 48, 44);
     refreshStrip();
     fileLabel = text(filename, 10, MUTED);
     fileLabel.setSingleLine(true);
     fileLabel.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-    meta.addView(fileLabel, new LinearLayout.LayoutParams(0, dp(33), 1));
+    // Keep source details available without crowding the compact photo action bar.
+    fileLabel.setVisibility(View.GONE);
+    meta.addView(fileLabel, new LinearLayout.LayoutParams(0, dp(44), 1));
     undoButton = button("撤销", MUTED, BG);
     undoButton.setTextSize(11);
     undoButton.setPadding(0, 0, 0, 0);
     undoButton.setMinHeight(0);
     undoButton.setContentDescription("撤销");
     undoButton.setOnClickListener(v -> historyStep(false));
-    add(meta, undoButton, 36, 33);
+    add(meta, undoButton, 44, 44);
     redoButton = button("重做", MUTED, BG);
     redoButton.setTextSize(11);
     redoButton.setPadding(0, 0, 0, 0);
     redoButton.setMinHeight(0);
     redoButton.setContentDescription("重做");
     redoButton.setOnClickListener(v -> historyStep(true));
-    add(meta, redoButton, 36, 33);
-    compareButton = button("对比原图", INK, 0xff202023);
+    add(meta, redoButton, 44, 44);
+    meta.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
+    add(meta, zoom, 64, 44);
+    compareButton = button("对比原图", INK, BG);
     compareButton.setTextSize(11);
     compareButton.setMinHeight(0);
-    compareButton.setPadding(dp(10), 0, dp(10), 0);
+    compareButton.setPadding(dp(8), 0, dp(8), 0);
     compareButton.setOnClickListener(
         v -> {
           comparing = !comparing;
-          photo.compare(comparing);
-          compareButton.setText(comparing ? "结束对比" : "对比原图");
+          updateComparison();
         });
-    add(meta, compareButton, 73, 33);
-    add(editorScreen, meta, -1, 39);
-    rule(editorScreen);
+    add(meta, compareButton, 80, 44);
+    add(previewColumn, meta, -1, 44);
     tabRow = horizontal();
-    tabRow.setPadding(dp(6), dp(5), dp(6), dp(5));
-    tabRow.setBackground(box(0xff1c1c1f, 28));
+    tabRow.setPadding(dp(6), dp(4), dp(6), dp(4));
+    AppStyle.surface(tabRow, AppStyle.SURFACE, 28);
     panel = vertical();
-    panel.setBackgroundColor(0xff101012);
-    add(editorScreen, panel, -1, panelHeight());
+    AppStyle.surface(panel, AppStyle.SURFACE, 26);
+    LinearLayout.LayoutParams panelLayout = new LinearLayout.LayoutParams(-1, dp(panelHeight()));
+    panelLayout.setMargins(dp(12), dp(4), dp(12), 0);
+    toolsColumn.addView(panel, panelLayout);
     buildPanel();
-    rule(editorScreen);
-    LinearLayout.LayoutParams navigation = new LinearLayout.LayoutParams(-1, dp(54));
-    navigation.setMargins(dp(16), dp(8), dp(16), dp(10));
-    editorScreen.addView(tabRow, navigation);
+    LinearLayout.LayoutParams navigation = new LinearLayout.LayoutParams(-1, dp(56));
+    navigation.setMargins(dp(12), dp(10), dp(12), dp(10));
+    toolsColumn.addView(tabRow, navigation);
+    updateEditorLayout();
     buildHome();
     showHome();
     updateHistoryButtons();
   }
 
   private int panelHeight() {
+    return panelHeight(panelExpanded);
+  }
+
+  private boolean wideEditor() {
+    android.content.res.Configuration configuration = getResources().getConfiguration();
+    return configuration.screenWidthDp >= 600 && configuration.screenHeightDp < 500;
+  }
+
+  private boolean narrowControls() {
+    int width = getResources().getConfiguration().screenWidthDp;
+    if (wideEditor()) width = Math.round(width / 2.1f);
+    return width < 360;
+  }
+
+  private void updateEditorLayout() {
+    if (editorBody == null || panel == null) return;
+    boolean wide = wideEditor();
+    editorBody.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+    previewColumn.setLayoutParams(
+        wide
+            ? new LinearLayout.LayoutParams(0, -1, 1.1f)
+            : new LinearLayout.LayoutParams(-1, 0, 1));
+    toolsColumn.setLayoutParams(
+        wide ? new LinearLayout.LayoutParams(0, -1, 1) : new LinearLayout.LayoutParams(-1, -2));
+    updatePanelHeight();
+  }
+
+  private int panelHeight(boolean expanded) {
     int height =
-        (int)
-            (getResources().getDisplayMetrics().heightPixels
-                / getResources().getDisplayMetrics().density);
-    return Math.min(286, Math.max(160, (int) (height * .30)));
+        editorScreen != null && editorScreen.getHeight() > 0
+            ? Math.round(editorScreen.getHeight() / getResources().getDisplayMetrics().density)
+            : getResources().getConfiguration().screenHeightDp;
+    int limit = Math.max(96, height - 284);
+    return Math.min(limit, expanded ? Math.min(470, Math.round(height * .58f)) : 286);
+  }
+
+  private void updatePanelHeight() {
+    if (panel == null) return;
+    LinearLayout.LayoutParams layout = (LinearLayout.LayoutParams) panel.getLayoutParams();
+    layout.height = wideEditor() ? 0 : dp(panelHeight());
+    layout.weight = wideEditor() ? 1 : 0;
+    panel.requestLayout();
+    if (panelHandle != null) {
+      boolean available = !wideEditor() && panelHeight(true) > panelHeight(false) + 12;
+      panelHandle.setEnabled(available && !exporting);
+      panelHandle.setVisibility(available ? View.VISIBLE : View.GONE);
+      panelHandle.setContentDescription(panelExpanded ? "收起调节面板" : "展开调节面板");
+    }
+  }
+
+  private void addPanelHandle() {
+    panelHandle = new PanelHandle(this);
+    panelHandle.setContentDescription(panelExpanded ? "收起调节面板" : "展开调节面板");
+    panelHandle.setFocusable(true);
+    panelHandle.setClickable(true);
+    controls.add(panelHandle);
+    View grip = new View(this);
+    grip.setBackground(box(0xff74747e, 2));
+    FrameLayout.LayoutParams gripLayout =
+        new FrameLayout.LayoutParams(dp(30), dp(3), Gravity.CENTER);
+    panelHandle.addView(grip, gripLayout);
+    add(panel, panelHandle, -1, 26);
+    panelHandle.setOnClickListener(
+        v -> {
+          panelExpanded = !panelExpanded;
+          updatePanelHeight();
+        });
+    panelHandle.setOnTouchListener(
+        (v, event) -> {
+          if (!v.isEnabled()) return false;
+          if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            panelDragY = event.getRawY();
+            panelDragHeight = panel.getHeight();
+            panelDragging = false;
+            return true;
+          }
+          float delta = panelDragY - event.getRawY();
+          if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+            if (Math.abs(delta) > ViewConfiguration.get(this).getScaledTouchSlop())
+              panelDragging = true;
+            if (panelDragging) {
+              panel.getLayoutParams().height =
+                  Math.max(
+                      dp(panelHeight(false)),
+                      Math.min(dp(panelHeight(true)), panelDragHeight + Math.round(delta)));
+              panel.requestLayout();
+            }
+            return true;
+          }
+          if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+            if (!panelDragging) v.performClick();
+            else {
+              panelExpanded =
+                  panel.getLayoutParams().height
+                      > dp((panelHeight(false) + panelHeight(true)) / 2f);
+              updatePanelHeight();
+            }
+            return true;
+          }
+          if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+            updatePanelHeight();
+            return true;
+          }
+          return true;
+        });
   }
 
   private void buildHome() {
@@ -592,16 +721,17 @@ public final class MainActivity extends Activity {
     ScrollView scroll = new ScrollView(this);
     homeScreen.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
     LinearLayout content = vertical();
-    content.setPadding(dp(24), dp(24), dp(24), dp(30));
+    content.setPadding(dp(20), dp(20), dp(20), dp(28));
+    scroll.setVerticalScrollBarEnabled(false);
     scroll.addView(content);
     LinearLayout head = horizontal();
     LinearLayout branding = vertical();
-    TextView logo = text("Spektra", 29, INK);
-    logo.setTypeface(Typeface.create("serif", Typeface.NORMAL));
-    logo.setLetterSpacing(.1f);
-    add(branding, logo, -1, 39);
-    TextView cn = text("随身的胶片实验室", 10, MUTED);
-    add(branding, cn, -1, 23);
+    TextView logo = text(getString(R.string.app_name), 28, INK);
+    logo.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+    logo.setLetterSpacing(-.035f);
+    add(branding, logo, -1, 38);
+    TextView cn = text("随身的胶片实验室", 11, MUTED);
+    add(branding, cn, -1, 24);
     head.addView(branding, new LinearLayout.LayoutParams(0, -2, 1));
     TextView help = button("关于", MUTED, BG);
     help.setTextSize(11);
@@ -611,20 +741,13 @@ public final class MainActivity extends Activity {
     help.setOnClickListener(v -> about());
     add(head, help, 42, 44);
     add(content, head, -1, -2);
-    gap(content, 28);
-    TextView eyebrow = text("A LITTLE LIGHT. A DIFFERENT FEELING.", 8, ACCENT);
-    eyebrow.setLetterSpacing(.1f);
-    add(content, eyebrow, -1, 18);
-    TextView statement = text("让这一帧，有自己的温度。", 24, INK);
-    statement.setTypeface(Typeface.create("serif", Typeface.NORMAL));
-    add(content, statement, -1, 48);
-    gap(content, 16);
+    gap(content, 24);
     FrameLayout hero = new FrameLayout(this);
-    hero.setBackground(box(0xff101010, 18));
+    AppStyle.surface(hero, AppStyle.SURFACE, 24);
     hero.setClipToOutline(true);
     homeHero = new ImageView(this);
-    homeHero.setScaleType(ImageView.ScaleType.FIT_CENTER);
-    homeHero.setAdjustViewBounds(true);
+    homeHero.setScaleType(ImageView.ScaleType.CENTER_CROP);
+    homeHero.setAdjustViewBounds(false);
     homeHero.setContentDescription("最近导入的照片预览");
     if (source != null) homeHero.setImageBitmap(source);
     else
@@ -632,19 +755,19 @@ public final class MainActivity extends Activity {
         homeHero.setImageBitmap(BitmapFactory.decodeStream(getAssets().open("demo.jpg")));
       } catch (IOException ignored) {
       }
-    hero.addView(homeHero, new FrameLayout.LayoutParams(-1, -2));
-    add(content, hero, -1, -2);
-    gap(content, 20);
+    hero.addView(homeHero, new FrameLayout.LayoutParams(-1, -1));
+    add(content, hero, -1, 240);
+    gap(content, 16);
     TextView start = button("导入照片，开始显影", 0xff0a0a0a, ACCENT);
-    start.setTextSize(15);
+    start.setTextSize(14);
     start.setTypeface(null, Typeface.BOLD);
     start.setOnClickListener(v -> importPhoto());
     add(content, start, -1, 54);
-    gap(content, 15);
-    TextView privacy = text("RAW / JPEG / PNG / HEIC · 本机处理\n调整自动保存，原照片单独保留。", 10, MUTED);
+    gap(content, 12);
+    TextView privacy = text("RAW / JPEG / PNG / HEIC\n本机处理 · 自动保存调整 · 保留原照片", 10, MUTED);
     privacy.setLineSpacing(dp(4), 1);
     add(content, privacy, -1, 42);
-    gap(content, 26);
+    gap(content, 24);
     LinearLayout historyHead = horizontal();
     TextView recent = text("最近的底片", 16, INK);
     recent.setTypeface(null, Typeface.BOLD);
@@ -673,22 +796,38 @@ public final class MainActivity extends Activity {
     editorScreen.setVisibility(View.VISIBLE);
   }
 
+  private void updateComparison() {
+    photo.compare(comparing);
+    compareButton.setText(comparing ? "结束对比" : "对比原图");
+    compareButton.setSelected(comparing);
+    AppStyle.action(
+        compareButton,
+        comparing ? ACCENT : INK,
+        comparing ? AppStyle.CONTROL : Color.TRANSPARENT,
+        18);
+  }
+
   private void buildPanel() {
     if (panel == null) return;
+    // Keep the deferred crop tool's ID reserved without exposing its panel.
+    if (selectedTab == 3) selectedTab = 0;
     controls.removeIf(v -> descendant(v, panel) || descendant(v, tabRow));
     panel.removeAllViews();
     tabRow.removeAllViews();
     sliders.clear();
     values.clear();
-    String[] labels = {"胶片", "调整", "裁切", "边框", "质感"};
-    int[] tools = {0, 2, 3, 4, 5};
+    addPanelHandle();
+    String[] labels = {"胶片", "调整", "边框", "质感"};
+    int[] tools = {0, 2, 4, 5};
     for (int i = 0; i < labels.length; i++) {
       final int n = tools[i];
       boolean selected = selectedTab == n || (n == 0 && selectedTab == 1);
-      TextView tab = button(labels[i], selected ? INK : MUTED, selected ? 0xff36363b : BG);
+      TextView tab =
+          button(labels[i], selected ? ACCENT : MUTED, selected ? AppStyle.SELECTED : BG);
       tab.setTextSize(12);
       tab.setPadding(0, 0, 0, 0);
       tab.setMinHeight(0);
+      tab.setSelected(selected);
       tab.setOnClickListener(
           v -> {
             selectedTab = n;
@@ -698,10 +837,12 @@ public final class MainActivity extends Activity {
     }
     ScrollView scroll = new ScrollView(this);
     scroll.setFillViewport(true);
-    add(panel, scroll, -1, -1);
+    scroll.setVerticalScrollBarEnabled(false);
+    panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     editor = vertical();
-    editor.setPadding(dp(18), dp(12), dp(18), dp(14));
+    editor.setPadding(dp(14), 0, dp(14), dp(10));
     scroll.addView(editor);
+    updatePanelHeight();
     if (selectedTab <= 1) {
       LinearLayout modes = horizontal();
       for (int i = 0; i < 2; i++) {
@@ -709,20 +850,21 @@ public final class MainActivity extends Activity {
         TextView tab =
             button(
                 i == 0 ? "胶片型号" : "相纸与印相",
-                selectedTab == i ? INK : MUTED,
-                selectedTab == i ? 0xff303035 : BG);
+                selectedTab == i ? ACCENT : MUTED,
+                selectedTab == i ? AppStyle.SELECTED : BG);
         tab.setTextSize(11);
         tab.setPadding(0, 0, 0, 0);
         tab.setMinHeight(0);
+        tab.setSelected(selectedTab == i);
         tab.setOnClickListener(
             v -> {
               selectedTab = mode;
               buildPanel();
             });
-        modes.addView(tab, new LinearLayout.LayoutParams(0, dp(32), 1));
+        modes.addView(tab, new LinearLayout.LayoutParams(0, dp(36), 1));
       }
-      add(editor, modes, -1, 32);
-      gap(editor, 10);
+      add(editor, modes, -1, 36);
+      gap(editor, 8);
     }
     if (selectedTab == 0) {
       LinearLayout filters = horizontal();
@@ -732,20 +874,26 @@ public final class MainActivity extends Activity {
             button(
                 category,
                 category.equals(filmCategory) ? INK : MUTED,
-                category.equals(filmCategory) ? 0xff303035 : 0xff171719);
+                category.equals(filmCategory) ? AppStyle.CONTROL : BG);
         chip.setTextSize(10);
         chip.setSelected(category.equals(filmCategory));
-        chip.setPadding(dp(11), 0, dp(11), 0);
+        chip.setPadding(dp(6), 0, dp(6), 0);
+        chip.setSingleLine(true);
+        chip.setHorizontallyScrolling(false);
+        chip.setAutoSizeTextTypeUniformWithConfiguration(
+            9, 10, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
         chip.setMinHeight(0);
         chip.setOnClickListener(
             v -> {
               filmCategory = category;
               buildPanel();
             });
-        add(filters, chip, -2, 30);
+        LinearLayout.LayoutParams chipLayout = new LinearLayout.LayoutParams(0, dp(34), 1);
+        chipLayout.rightMargin = dp(3);
+        filters.addView(chip, chipLayout);
       }
-      add(editor, filters, -1, 30);
-      gap(editor, 9);
+      add(editor, filters, -1, 34);
+      gap(editor, 8);
       HorizontalScrollView filmScroll = new HorizontalScrollView(this);
       filmScroll.setHorizontalScrollBarEnabled(false);
       filmScroll.setClipToPadding(false);
@@ -759,19 +907,20 @@ public final class MainActivity extends Activity {
         boolean selected = stock.id.equals(settings.optString("film_stock"));
         if (selected) selectedPosition = position;
         LinearLayout card = vertical();
-        card.setPadding(dp(10), dp(6), dp(10), dp(8));
-        GradientDrawable shape = box(selected ? 0xff28282d : 0xff19191c, 14);
-        shape.setStroke(dp(1), selected ? ACCENT : 0xff303030);
+        card.setPadding(dp(4), dp(5), dp(4), dp(5));
+        GradientDrawable shape = box(selected ? AppStyle.CONTROL : Color.TRANSPARENT, 18);
+        shape.setStroke(Math.max(1, dp(.8f)), selected ? ACCENT : Color.TRANSPARENT);
         card.setBackground(shape);
-        FilmBadge badge = new FilmBadge(this, stock.id, stock.name, selected);
-        add(card, badge, -1, 57);
-        TextView name = text(shortName(stock.name), 11, selected ? ACCENT : INK);
-        name.setSingleLine(true);
+        card.setSelected(selected);
+        card.setFocusable(true);
+        FilmBadge badge = new FilmBadge(this, stock.id, stock.name, false);
+        add(card, badge, -1, 45);
+        TextView name = text(shortName(stock.name), 10, selected ? ACCENT : INK);
+        name.setMaxLines(2);
+        name.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        add(card, name, -1, 21);
-        TextView kind =
-            text(maker(stock) + " · " + (stock.type.equals("positive") ? "反转" : "负片"), 8, MUTED);
-        add(card, kind, -1, 15);
+        add(card, name, -1, 31);
+        card.setTooltipText(stock.name);
         card.setContentDescription("胶片 " + stock.name + (selected ? "，已选" : ""));
         card.setOnClickListener(
             v -> {
@@ -780,25 +929,27 @@ public final class MainActivity extends Activity {
               buildPanel();
             });
         controls.add(card);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(104), dp(111));
-        lp.rightMargin = dp(9);
+        int cardWidth = narrowControls() ? 76 : 82;
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(cardWidth), dp(88));
+        lp.rightMargin = dp(6);
         filmCards.addView(card, lp);
         position++;
       }
-      add(editor, filmScroll, -1, 113);
-      final int offset = selectedPosition * dp(113);
+      add(editor, filmScroll, -1, 90);
+      final int offset = selectedPosition * dp(narrowControls() ? 82 : 88);
       filmScroll
           .getViewTreeObserver()
           .addOnGlobalLayoutListener(
               new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
                 public void onGlobalLayout() {
                   if (filmScroll.getWidth() > 0) {
-                    filmScroll.scrollTo(Math.max(0, offset - dp(30)), 0);
+                    int stride = dp(narrowControls() ? 82 : 88);
+                    filmScroll.scrollTo(Math.max(0, offset - stride), 0);
                     filmScroll.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                   }
                 }
               });
-      gap(editor, 8);
+      gap(editor, 6);
       slider("exposure_compensation_ev", "胶片曝光", -3, 3, .1, " EV");
 
     } else if (selectedTab == 1) {
@@ -820,7 +971,7 @@ public final class MainActivity extends Activity {
       Stock stock = find(papers, settings.optString("print_stock"));
       LinearLayout material = horizontal();
       material.setPadding(dp(14), dp(10), dp(14), dp(10));
-      material.setBackground(box(0xeb161616, 11));
+      material.setBackground(box(AppStyle.CONTROL, 18));
       LinearLayout names = vertical();
       paperTitle = text(stock == null ? "" : shortName(stock.name), 15, INK);
       paperTitle.setSingleLine(true);
@@ -833,15 +984,14 @@ public final class MainActivity extends Activity {
       controls.add(material);
       add(editor, material, -1, 70);
       TextView linkedPaper = text("相纸与已选择的胶片联动，默认无需选择", 10, MUTED);
-      add(editor, linkedPaper, -1, 24);
+      linkedPaper.setMaxLines(2);
+      add(editor, linkedPaper, -1, 34);
       gap(editor, 14);
       slider("print_brightness", "印相亮度", -2, 2, .05, " EV");
       slider("m_filter_shift", "洋红滤色", -.25, .25, .01, "");
       slider("y_filter_shift", "黄色滤色", -.25, .25, .01, "");
     } else if (selectedTab == 2) {
       buildGradePanel();
-    } else if (selectedTab == 3) {
-      buildGeometryPanel();
     } else if (selectedTab == 4) {
       buildFramePanel();
     } else {
@@ -863,7 +1013,7 @@ public final class MainActivity extends Activity {
         slider("glare_amount", "相纸炫光", 0, 30, .5, " ×");
         slider("preflash_exposure", "相纸预闪", 0, .1, .002, "");
       }
-      toggle("auto_exposure", "自动测光", true);
+      toggle("auto_exposure", "自动测光", false);
       choice(
           "测光方式",
           new String[] {"中央加权", "平均测光", "中位数"},
@@ -961,19 +1111,20 @@ public final class MainActivity extends Activity {
       TextView tab =
           button(
               name.equals("HSL 分色") ? "HSL" : name,
-              gradeSection.equals(name) ? INK : MUTED,
-              gradeSection.equals(name) ? 0xff303035 : BG);
+              gradeSection.equals(name) ? ACCENT : MUTED,
+              gradeSection.equals(name) ? AppStyle.SELECTED : BG);
       tab.setTextSize(10);
       tab.setPadding(0, 0, 0, 0);
       tab.setMinHeight(0);
+      tab.setSelected(gradeSection.equals(name));
       tab.setOnClickListener(
           v -> {
             gradeSection = name;
             buildPanel();
           });
-      groups.addView(tab, new LinearLayout.LayoutParams(0, dp(34), 1));
+      groups.addView(tab, new LinearLayout.LayoutParams(0, dp(38), 1));
     }
-    add(editor, groups, -1, 34);
+    add(editor, groups, -1, 38);
     gap(editor, 8);
     toggle("grade_enabled", "启用调整", true);
     if (gradeSection.equals("基础")) {
@@ -1240,6 +1391,7 @@ public final class MainActivity extends Activity {
 
   private void editTextValue(String key, String title, int limit, String allowed) {
     EditText input = new EditText(this);
+    AppStyle.field(input);
     input.setSingleLine(true);
     input.setText(settings.optString(key));
     input.setFilters(
@@ -1353,8 +1505,11 @@ public final class MainActivity extends Activity {
   public void onConfigurationChanged(android.content.res.Configuration c) {
     super.onConfigurationChanged(c);
     if (panel != null) {
-      panel.getLayoutParams().height = dp(panelHeight());
-      panel.requestLayout();
+      editorScreen.post(
+          () -> {
+            updateEditorLayout();
+            buildPanel();
+          });
     }
   }
 
@@ -1368,30 +1523,38 @@ public final class MainActivity extends Activity {
       String key, String label, double min, double max, double step, String suffix) {
     LinearLayout line = horizontal();
     TextView name = text(label, 12, INK);
-    line.addView(name, new LinearLayout.LayoutParams(0, dp(27), 1));
-    TextView value = text("", 11, ACCENT);
+    name.setGravity(Gravity.CENTER_VERTICAL);
+    name.setMaxLines(2);
+    name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    boolean narrow = narrowControls();
+    add(line, name, narrow ? 66 : 76, 48);
+    TextView value = text("", 11, 0xffd4d4d9);
     value.setTypeface(Typeface.MONOSPACE);
-    add(line, value, -2, 27);
-    add(editor, line, -1, -2);
-    SeekBar bar = new SeekBar(this);
+    value.setGravity(Gravity.CENTER);
+    value.setSingleLine(true);
+    value.setHorizontallyScrolling(false);
+    value.setIncludeFontPadding(false);
+    value.setPadding(dp(4), 0, dp(4), 0);
+    value.setAutoSizeTextTypeUniformWithConfiguration(
+        8, 11, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
+    GradientDrawable valueBox = box(AppStyle.FIELD, 10);
+    valueBox.setStroke(Math.max(1, dp(.6f)), AppStyle.OUTLINE);
+    value.setBackground(valueBox);
+    AdjustmentSeekBar bar = new AdjustmentSeekBar(this, sliderColors(key));
     bar.setMax((int) Math.round((max - min) / step));
     bar.setProgress((int) Math.round((settings.optDouble(key, 0) - min) / step));
     bar.setContentDescription(label);
-    bar.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
-    bar.setThumbTintList(android.content.res.ColorStateList.valueOf(INK));
-    bar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff34343a));
-    // A thumb extends beyond the track by thumbOffset at both endpoints.
-    // Keep its full drawable and focus/ripple inside the view on every device theme.
-    int thumbHalf = Math.max(0, bar.getThumb().getIntrinsicWidth() / 2);
-    int inset = Math.max(dp(16), thumbHalf + dp(2));
-    bar.setThumbOffset(thumbHalf);
-    bar.setPadding(inset, 0, inset, 0);
     controls.add(bar);
-    add(editor, bar, -1, 30);
-    gap(editor, 5);
+    LinearLayout.LayoutParams trackLayout = new LinearLayout.LayoutParams(0, dp(48), 1);
+    trackLayout.leftMargin = dp(4);
+    trackLayout.rightMargin = dp(6);
+    line.addView(bar, trackLayout);
+    add(line, value, narrow ? 68 : 72, 30);
+    add(editor, line, -1, 56);
     sliders.put(key, bar);
     values.put(key, value);
     value.setText(number(settings.optDouble(key, 0), suffix));
+    if (Build.VERSION.SDK_INT >= 30) bar.setStateDescription(value.getText());
     bar.setOnSeekBarChangeListener(
         new SeekBar.OnSeekBarChangeListener() {
           public void onProgressChanged(SeekBar b, int pos, boolean user) {
@@ -1399,6 +1562,13 @@ public final class MainActivity extends Activity {
               double v = Math.round((min + pos * step) * 10000) / 10000.0;
               set(key, v);
               value.setText(number(v, suffix));
+              if (Build.VERSION.SDK_INT >= 30) b.setStateDescription(value.getText());
+              if (key.startsWith("balance_") && key.endsWith("_hue")) {
+                String saturation = key.substring(0, key.length() - 4) + "_saturation";
+                SeekBar related = sliders.get(saturation);
+                if (related instanceof AdjustmentSeekBar)
+                  ((AdjustmentSeekBar) related).setTrackColors(sliderColors(saturation));
+              }
             }
           }
 
@@ -1408,6 +1578,71 @@ public final class MainActivity extends Activity {
             scheduleRender();
           }
         });
+  }
+
+  private int[] sliderColors(String key) {
+    if (key.equals("grade_temperature")) return new int[] {0xff659ee8, 0xff999292, 0xffffa34e};
+    if (key.equals("grade_tint") || key.equals("m_filter_shift"))
+      return new int[] {0xff6dbb8c, 0xff8b858d, 0xffd77cbb};
+    if (key.equals("y_filter_shift")) return new int[] {0xff699fe6, 0xff92908a, 0xffe7c64d};
+    if (key.startsWith("hsl_")) {
+      String band = key.substring(4, key.lastIndexOf('_'));
+      int color =
+          switch (band) {
+            case "red" -> 0xfff24b55;
+            case "orange" -> 0xffff963f;
+            case "yellow" -> 0xffe4cc50;
+            case "green" -> 0xff72bf79;
+            case "cyan" -> 0xff58c5cd;
+            case "blue" -> 0xff629eef;
+            case "purple" -> 0xffa789df;
+            default -> 0xffd679bc;
+          };
+      float[] hsv = new float[3];
+      Color.colorToHSV(color, hsv);
+      if (key.endsWith("_hue"))
+        return new int[] {hueColor(hsv[0] - 35), color, hueColor(hsv[0] + 35)};
+      if (key.endsWith("_luminance"))
+        return new int[] {
+          mixColor(color, Color.BLACK, .7f), color, mixColor(color, Color.WHITE, .7f)
+        };
+      return new int[] {0xff626268, mixColor(color, 0xff85858b, .5f), color};
+    }
+    if (key.startsWith("balance_")) {
+      if (key.endsWith("_hue"))
+        return new int[] {
+          0xffed686d, 0xffe5cb62, 0xff77c48b, 0xff64c8d4, 0xff7e9ee7, 0xffc586cc, 0xffed686d
+        };
+      if (key.endsWith("_saturation")) {
+        String hue = key.substring(0, key.length() - "saturation".length()) + "hue";
+        int color = hueColor((float) settings.optDouble(hue, 0));
+        return new int[] {0xff626268, mixColor(color, 0xff85858b, .5f), color};
+      }
+    }
+    if (key.equals("grade_saturation")) return new int[] {0xff63636b, 0xffbe9570, 0xffff9348};
+    if (key.equals("exposure_compensation_ev")
+        || key.equals("print_brightness")
+        || key.equals("grade_exposure")
+        || key.equals("grade_brightness")
+        || key.equals("grade_contrast")
+        || key.equals("grade_shadows")
+        || key.equals("grade_highlights")
+        || key.equals("grade_black")
+        || key.equals("grade_white")
+        || key.startsWith("grade_vignette")
+        || key.endsWith("_luminance")) return new int[] {0xff53535c, 0xff909098, 0xffd8d8dd};
+    return new int[] {0xff67646a, 0xffac7e58, ACCENT};
+  }
+
+  private int hueColor(float hue) {
+    return Color.HSVToColor(new float[] {(hue % 360 + 360) % 360, .64f, .94f});
+  }
+
+  private int mixColor(int from, int to, float weight) {
+    return Color.rgb(
+        Math.round(Color.red(from) * (1 - weight) + Color.red(to) * weight),
+        Math.round(Color.green(from) * (1 - weight) + Color.green(to) * weight),
+        Math.round(Color.blue(from) * (1 - weight) + Color.blue(to) * weight));
   }
 
   private String number(double value, String suffix) {
@@ -1599,7 +1834,7 @@ public final class MainActivity extends Activity {
               && ticket == revision
               && activeImport == null
               && !exportButton.isEnabled()) {
-            setStatus("照片已读取 · 显影响应较慢，可查看诊断", false);
+            setStatus("照片已读取 · 显影响应较慢，可查看诊断", false, true);
             exportButton.setText("查看显影诊断");
             exportButton.setEnabled(true);
             exportButton.setOnClickListener(v -> showDiagnostics());
@@ -1663,7 +1898,7 @@ public final class MainActivity extends Activity {
                               ready = false;
                               engine = 0;
                               openedSource = null;
-                              setStatus("兼容显影进程已退出 · 可重启", false);
+                              setStatus("兼容显影进程已退出 · 可重启", false, true);
                               exportButton.setText("重启兼容显影");
                               exportButton.setEnabled(true);
                               exportButton.setOnClickListener(v -> restartRenderer());
@@ -1687,8 +1922,13 @@ public final class MainActivity extends Activity {
   }
 
   private void setStatus(String message, boolean busy) {
+    setStatus(message, busy, false);
+  }
+
+  private void setStatus(String message, boolean busy, boolean keepVisible) {
     status.setText(message);
     progress.setVisibility(busy ? View.VISIBLE : View.GONE);
+    if (statusRow != null) statusRow.setVisibility(busy || keepVisible ? View.VISIBLE : View.GONE);
   }
 
   private void ui(Runnable r) {
@@ -1699,11 +1939,11 @@ public final class MainActivity extends Activity {
   }
 
   private void report(String title, Throwable ex) {
-    android.util.Log.e("SpektraAndroid", title, ex);
+    android.util.Log.e("SpektraLensAndroid", title, ex);
     ui(
         () -> {
           if (activeImport != null) return;
-          setStatus(title, false);
+          setStatus(title, false, true);
           exportButton.setText("重试显影");
           exportButton.setEnabled(ready);
           exportButton.setOnClickListener(
@@ -1721,19 +1961,6 @@ public final class MainActivity extends Activity {
               .setPositiveButton("知道了", null)
               .show();
         });
-  }
-
-  private void copyAssets(String path, File target) throws IOException {
-    String[] children = getAssets().list(path);
-    if (children != null && children.length > 0) {
-      if (!target.exists() && !target.mkdirs()) throw new IOException("Cannot create " + target);
-      for (String child : children) copyAssets(path + "/" + child, new File(target, child));
-    } else {
-      try (InputStream in = getAssets().open(path);
-          OutputStream out = new FileOutputStream(target)) {
-        copy(in, out);
-      }
-    }
   }
 
   private static final class LoadedPhoto {
@@ -2066,7 +2293,7 @@ public final class MainActivity extends Activity {
             } catch (android.os.OperationCanceledException ex) {
               throw ex;
             } catch (RuntimeException ex) {
-              android.util.Log.w("SpektraAndroid", "Provider metadata unavailable", ex);
+              android.util.Log.w("SpektraLensAndroid", "Provider metadata unavailable", ex);
             }
             job.check();
             job.stage("打开相册照片");
@@ -2165,8 +2392,7 @@ public final class MainActivity extends Activity {
               hslBand = "red";
             }
             comparing = false;
-            photo.compare(false);
-            compareButton.setText("对比原图");
+            updateComparison();
             adopt(loaded);
             filename = job.name;
             activeId = id;
@@ -2191,7 +2417,9 @@ public final class MainActivity extends Activity {
             if (ready) scheduleRender();
             else {
               setStatus(
-                  engineBootPending ? "照片已读取 · 正在准备显影引擎…" : "照片已读取 · 可重启兼容显影", engineBootPending);
+                  engineBootPending ? "照片已读取 · 正在准备显影引擎…" : "照片已读取 · 可重启兼容显影",
+                  engineBootPending,
+                  !engineBootPending);
               exportButton.setText(engineBootPending ? "查看显影诊断" : "重启兼容显影");
               exportButton.setEnabled(true);
               exportButton.setOnClickListener(
@@ -2232,7 +2460,7 @@ public final class MainActivity extends Activity {
     activeImport = null;
     job.cancel();
     for (View v : controls) v.setEnabled(true);
-    setStatus(message, false);
+    setStatus(message, false, true);
     updateHistoryButtons();
     exportButton.setText(developed != null ? "导出照片" : "重新导入照片");
     exportButton.setEnabled(true);
@@ -2245,10 +2473,10 @@ public final class MainActivity extends Activity {
 
   private void failImport(PhotoImportJob job, Throwable ex) {
     if (job.cancelled.get()) {
-      android.util.Log.i("SpektraAndroid", "Import cancelled at " + job.phase);
+      android.util.Log.i("SpektraLensAndroid", "Import cancelled at " + job.phase);
       return;
     }
-    android.util.Log.e("SpektraAndroid", "Import failed at " + job.phase, ex);
+    android.util.Log.e("SpektraLensAndroid", "Import failed at " + job.phase, ex);
     main.post(
         () -> {
           if (destroyed || activeImport != job || job.cancelled.get()) return;
@@ -2269,7 +2497,7 @@ public final class MainActivity extends Activity {
   private void writeImportDiagnostic(PhotoImportJob job, String outcome, String error) {
     try {
       JSONObject j = new JSONObject();
-      j.put("app_version", "0.3.2");
+      j.put("app_version", "0.3.5");
       j.put("device", Build.MANUFACTURER + " " + Build.MODEL);
       j.put("android_api", Build.VERSION.SDK_INT);
       j.put("stage", job.phase);
@@ -2291,7 +2519,7 @@ public final class MainActivity extends Activity {
         throw ex;
       }
     } catch (Exception ex) {
-      android.util.Log.w("SpektraAndroid", "Cannot save import diagnostic", ex);
+      android.util.Log.w("SpektraLensAndroid", "Cannot save import diagnostic", ex);
     }
   }
 
@@ -2350,7 +2578,8 @@ public final class MainActivity extends Activity {
             "复制诊断",
             (d, n) -> {
               ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE))
-                  .setPrimaryClip(ClipData.newPlainText("Spektra 诊断", message));
+                  .setPrimaryClip(
+                      ClipData.newPlainText(getString(R.string.app_name) + " 诊断", message));
               Toast.makeText(this, "诊断已复制", Toast.LENGTH_SHORT).show();
             })
         .show();
@@ -2380,8 +2609,7 @@ public final class MainActivity extends Activity {
                   filmCategory = category(find(films, settings.optString("film_stock")));
                   committed = settings.toString();
                   comparing = false;
-                  photo.compare(false);
-                  compareButton.setText("对比原图");
+                  updateComparison();
                   if (initialSettings == null) {
                     selectedTab = 0;
                     gradeSection = "基础";
@@ -2435,7 +2663,7 @@ public final class MainActivity extends Activity {
                     id, j.getString("name"), original.getAbsolutePath(), j.getString("params")));
         }
       } catch (Exception ex) {
-        android.util.Log.e("SpektraAndroid", "Read library", ex);
+        android.util.Log.e("SpektraLensAndroid", "Read library", ex);
       }
     Frame frame = findFrame(activeId);
     if (frame != null)
@@ -2478,7 +2706,7 @@ public final class MainActivity extends Activity {
       if (!temp.renameTo(new File(getFilesDir(), "library.json")))
         throw new IOException("Cannot write library");
     } catch (Exception ex) {
-      android.util.Log.e("SpektraAndroid", "Save library", ex);
+      android.util.Log.e("SpektraLensAndroid", "Save library", ex);
       Toast.makeText(this, "编辑记录保存失败，请检查剩余空间", Toast.LENGTH_LONG).show();
     }
   }
@@ -2514,7 +2742,10 @@ public final class MainActivity extends Activity {
   }
 
   private void refreshStrip() {
-    if (photoPickerButton != null) photoPickerButton.setContentDescription("选择手机相册或已导入的照片");
+    if (photoPickerButton != null) {
+      photoPickerButton.setContentDescription("选择手机相册或已导入的照片");
+      photoPickerButton.setTooltipText(filename);
+    }
   }
 
   private void choosePhoto() {
@@ -2529,7 +2760,7 @@ public final class MainActivity extends Activity {
     if (library.isEmpty()) {
       LinearLayout empty = vertical();
       empty.setPadding(dp(16), dp(15), dp(16), dp(15));
-      empty.setBackground(box(0xeb111111, 10));
+      AppStyle.surface(empty, AppStyle.SURFACE, 22);
       TextView title = text("你的第一张底片，还在等光。", 12, INK);
       add(empty, title, -1, 26);
       TextView detail = text("导入照片后，可在这里继续上次的编辑。", 10, MUTED);
@@ -2543,15 +2774,15 @@ public final class MainActivity extends Activity {
       for (int k = i; k < Math.min(i + 2, library.size()); k++) {
         Frame frame = library.get(k);
         LinearLayout card = vertical();
-        card.setBackground(box(0xeb111111, 12));
+        AppStyle.surface(card, AppStyle.SURFACE, 22);
         card.setClipToOutline(true);
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
         image.setImageBitmap(thumb(frame));
         add(card, image, -1, 125);
         LinearLayout names = vertical();
-        names.setPadding(dp(10), dp(8), dp(10), dp(10));
-        TextView name = text(PhotoLabels.title(frame.name), 11, INK);
+        names.setPadding(dp(12), dp(10), dp(12), dp(12));
+        TextView name = text(PhotoLabels.title(frame.name), 12, INK);
         name.setSingleLine(true);
         name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         add(names, name, -1, 23);
@@ -2561,7 +2792,7 @@ public final class MainActivity extends Activity {
                 PhotoLabels.format(original, frame.name)
                     + " · "
                     + android.text.format.Formatter.formatShortFileSize(this, original.length()),
-                9,
+                10,
                 MUTED);
         add(names, details, -1, 18);
         String stock = "已保存调整";
@@ -2570,7 +2801,7 @@ public final class MainActivity extends Activity {
           if (s != null) stock = shortName(s.name);
         } catch (Exception ignored) {
         }
-        TextView look = text(stock, 9, ACCENT);
+        TextView look = text(stock, 10, ACCENT);
         look.setSingleLine(true);
         look.setEllipsize(android.text.TextUtils.TruncateAt.END);
         add(names, look, -1, 20);
@@ -2628,6 +2859,9 @@ public final class MainActivity extends Activity {
         defaults();
         filmCategory = category(find(films, settings.optString("film_stock")));
         buildPanel();
+        scheduleRender();
+      } else if (developed == null) {
+        // Startup restores the source on Home and defers developing until this photo is opened.
         scheduleRender();
       }
       return;
@@ -2790,7 +3024,8 @@ public final class MainActivity extends Activity {
               renderer.openFile(original.getAbsolutePath(), openParams(p));
             }
             String base =
-                "Spektra_"
+                getString(R.string.app_name)
+                    + "_"
                     + new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
             String ext = mode == 1 ? ".png" : mode == 2 ? ".tiff" : ".jpg";
             String mime = mode == 1 ? "image/png" : mode == 2 ? "image/tiff" : "image/jpeg";
@@ -2812,7 +3047,9 @@ public final class MainActivity extends Activity {
               ContentValues v = new ContentValues();
               v.put(MediaStore.Images.Media.DISPLAY_NAME, base + ext);
               v.put(MediaStore.Images.Media.MIME_TYPE, mime);
-              v.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Spektra");
+              v.put(
+                  MediaStore.Images.Media.RELATIVE_PATH,
+                  "Pictures/" + getString(R.string.app_name));
               v.put(MediaStore.Images.Media.IS_PENDING, 1);
               uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v);
               if (uri == null) throw new IOException("无法创建相册条目");
@@ -2827,7 +3064,7 @@ public final class MainActivity extends Activity {
             }
             trace.phase("verification_record_ms", "校验并保存导出记录");
             JSONObject recipe = new JSONObject();
-            recipe.put("app_version", "0.3.2");
+            recipe.put("app_version", "0.3.5");
             recipe.put("source_name", name);
             recipe.put("source_sha256", sha256(original));
             recipe.put("source_width", width);
@@ -2866,7 +3103,7 @@ public final class MainActivity extends Activity {
               out.getFD().sync();
             }
             trace.finish(null);
-            android.util.Log.i("SpektraAndroid", "Export complete: " + recipe);
+            android.util.Log.i("SpektraLensAndroid", "Export complete: " + recipe);
             String label = dimensions.getInt("width") + " × " + dimensions.getInt("height");
             File sharedFile = cache;
             ui(
@@ -2887,13 +3124,15 @@ public final class MainActivity extends Activity {
                     new Haptics.DialogBuilder(this)
                         .setTitle("已保存到相册")
                         .setMessage(
-                            "Pictures / Spektra\n"
+                            "Pictures / "
+                                + getString(R.string.app_name)
+                                + "\n"
                                 + label
                                 + " · sRGB · "
                                 + format.toUpperCase(Locale.US)
                                 + "\n\n"
                                 + (mode == 2 ? "TIFF 为 16 位文件；部分相册不显示其缩略图，可从文件管理器打开。\n\n" : "")
-                                + "包含本次调色、裁切、片边与日期。导出配方已保存在本机编辑记录中。")
+                                + "包含本次调色、片边与日期。导出配方已保存在本机编辑记录中。")
                         .setNegativeButton("回到首页", (dialog, which) -> showHome())
                         .setPositiveButton(
                             "再编辑一张", (dialog, which) -> importPhoto(exportedSettings))
@@ -2911,7 +3150,7 @@ public final class MainActivity extends Activity {
             try {
               renderer.closeImage();
             } catch (RuntimeException ex) {
-              android.util.Log.w("SpektraAndroid", "Renderer already closed", ex);
+              android.util.Log.w("SpektraLensAndroid", "Renderer already closed", ex);
             }
             openedSource = null;
           }
@@ -2920,15 +3159,14 @@ public final class MainActivity extends Activity {
 
   private void about() {
     String message =
-        "Spektra · Android 0.3.2\n\n"
+        getString(R.string.app_name)
+            + " · Android 0.3.5\n\n"
             + "本机运行 C++ / Vulkan 光谱胶片模型，使用 380–780 nm、5 nm 间隔的 81 波长数据。\n\n"
             + "原始模型与彩色配置：Andrea Volpato / spektrafilm\n"
             + "原生引擎：Hanze Qiu 与 SpektraLab 贡献者\n"
             + "移动 GPU 参考：SAINTTaiYi / SpektraLab-Android v1.3.3j\n"
             + "Android 客户端与 JNI：本项目移植\n\n"
-            + (FilmBadge.usesPublicLabels(this)
-                ? "胶卷图标：公开构建使用本项目绘制的文字标签，共用统一胶卷外壳。\n\n"
-                : "胶卷图标：13 个配置采用授权 GRLife 原始标签，另外 7 款由本项目补绘，共用统一胶卷外壳。\n\n")
+            + "胶卷图标：SpektraLens 根据各款胶片型号独立绘制。\n\n"
             + "程序：GPL-3.0-or-later\n"
             + "胶片、相纸配置：CC BY-SA 4.0，数据未经修改\n\n"
             + "RAW：LibRaw 0.22.2，原尺寸去马赛克与拍摄白平衡；预览最长边 1024，导出重新读取原文件。输出 sRGB JPEG / 16 位 PNG / 16 位"
@@ -2937,7 +3175,7 @@ public final class MainActivity extends Activity {
             + "极大图仍受设备内存和 Vulkan 限制；未移植场景纬度映射、批量工作流和专业输出色域。\n\n"
             + "这里的光晕与颗粒来自胶片计算；手机屏幕表现和性能仍取决于设备。";
     new Haptics.DialogBuilder(this)
-        .setTitle("关于 Spektra")
+        .setTitle("关于 " + getString(R.string.app_name))
         .setMessage(message)
         .setPositiveButton("完成", null)
         .setNeutralButton("许可全文", (d, n) -> licenses())

@@ -1,0 +1,135 @@
+{
+  "appIntegrated" : false,
+  "concepts" : [
+    {
+      "id" : "01-reel",
+      "name" : "片芯螺旋",
+      "previewMasks" : [
+        "rounded-square",
+        "circle"
+      ],
+      "sizes" : [
+        1024,
+        512,
+        96,
+        64,
+        48,
+        32
+      ],
+      "sourcePixels" : [
+        1254,
+        1254
+      ]
+    },
+    {
+      "id" : "02-tank",
+      "name" : "冲洗罐",
+      "previewMasks" : [
+        "rounded-square",
+        "circle"
+      ],
+      "sizes" : [
+        1024,
+        512,
+        96,
+        64,
+        48,
+        32
+      ],
+      "sourcePixels" : [
+        1254,
+        1254
+      ]
+    },
+    {
+      "id" : "03-tray",
+      "name" : "显影盘",
+      "previewMasks" : [
+        "rounded-square",
+        "circle"
+      ],
+      "sizes" : [
+        1024,
+        512,
+        96,
+        64,
+        48,
+        32
+      ],
+      "sourcePixels" : [
+        1254,
+        1254
+      ]
+    },
+    {
+      "id" : "04-safelight",
+      "name" : "暗房红灯",
+      "previewMasks" : [
+        "rounded-square",
+        "circle"
+      ],
+      "sizes" : [
+        1024,
+        512,
+        96,
+        64,
+        48,
+        32
+      ],
+      "sourcePixels" : [
+        1254,
+        1254
+      ]
+    },
+    {
+      "id" : "05-enlarger",
+      "name" : "放大机",
+      "previewMasks" : [
+        "rounded-square",
+        "circle"
+      ],
+      "sizes" : [
+        1024,
+        512,
+        96,
+        64,
+        48,
+        32
+      ],
+      "sourcePixels" : [
+        1254,
+        1254
+      ]
+    },
+    {
+      "id" : "06-drying-clip",
+      "name" : "晾片夹",
+      "previewMasks" : [
+        "rounded-square",
+        "circle"
+      ],
+      "sizes" : [
+        1024,
+        512,
+        96,
+        64,
+        48,
+        32
+      ],
+      "sourcePixels" : [
+        1254,
+        1254
+      ]
+    }
+  ],
+  "date" : "2026-11-04",
+  "detailSheetPixels" : [
+    1600,
+    2040
+  ],
+  "method" : "Resize, preview masking and layout only",
+  "overviewPixels" : [
+    1800,
+    1240
+  ]
+}

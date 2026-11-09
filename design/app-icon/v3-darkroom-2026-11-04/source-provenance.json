@@ -1,0 +1,32 @@
+[
+  {
+    "id": "01-reel",
+    "name": "片芯螺旋",
+    "source": "/Users/mao/.codex/generated_images/01a1a592-8ef7-7a63-b3f1-e66f2719848c/exec-bea94f1d-06d1-4e8c-af6b-6167194c395f.png"
+  },
+  {
+    "id": "02-tank",
+    "name": "冲洗罐",
+    "source": "/Users/mao/.codex/generated_images/01a1a592-8ef7-7a63-b3f1-e66f2719848c/exec-cdc40cb5-ef84-4d65-9c74-84fe4f7ffb0e.png"
+  },
+  {
+    "id": "03-tray",
+    "name": "显影盘",
+    "source": "/Users/mao/.codex/generated_images/01a1a592-8ef7-7a63-b3f1-e66f2719848c/exec-d55c4748-4b7e-4a2e-a413-0e219b36e146.png"
+  },
+  {
+    "id": "04-safelight",
+    "name": "暗房红灯",
+    "source": "/Users/mao/.codex/generated_images/01a1a592-8ef7-7a63-b3f1-e66f2719848c/exec-5bfcafc3-2ed1-4494-9a0f-64a5c37f22e5.png"
+  },
+  {
+    "id": "05-enlarger",
+    "name": "放大机",
+    "source": "/Users/mao/.codex/generated_images/01a1a592-8ef7-7a63-b3f1-e66f2719848c/exec-24d90528-0788-47a9-b88e-7f71f4ea5f63.png"
+  },
+  {
+    "id": "06-drying-clip",
+    "name": "晾片夹",
+    "source": "/Users/mao/.codex/generated_images/01a1a592-8ef7-7a63-b3f1-e66f2719848c/exec-9dcfe139-229b-44bd-a505-b21774e1a3c0.png"
+  }
+]

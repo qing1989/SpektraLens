@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.content.Context;
@@ -20,7 +20,7 @@ final class ExportTrace {
 
   ExportTrace(Context context) {
     file = new AtomicFile(new File(context.getFilesDir(), "last_export_diagnostic.json"));
-    put("app_version", "0.3.2");
+    put("app_version", "0.3.5");
     put("device", Build.MANUFACTURER + " " + Build.MODEL);
     put("android_api", Build.VERSION.SDK_INT);
     put("stage", "等待导出");
@@ -70,7 +70,7 @@ final class ExportTrace {
       file.finishWrite(stream);
     } catch (Exception ex) {
       if (stream != null) file.failWrite(stream);
-      android.util.Log.w("SpektraAndroid", "Cannot save export timings", ex);
+      android.util.Log.w("SpektraLensAndroid", "Cannot save export timings", ex);
     }
   }
 }

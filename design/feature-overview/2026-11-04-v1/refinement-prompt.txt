@@ -1,0 +1,9 @@
+Use case: text-localization.
+Edit the supplied SPEKTRA feature poster with exactly ONE targeted typography correction. Preserve the entire poster composition, photographs, face identity, all other text, all colors, margins, corner radii, diagrams and hierarchy unchanged.
+
+In the WHITE output-format card in the third row at the RIGHT, which currently has large orange “16 bit”, black “原尺寸导出”, and a bottom gray caption “JPEG / PNG / TIFF”:
+Replace ONLY the bottom gray caption “JPEG / PNG / TIFF” with TWO neat centered gray lines:
+“JPEG · 8 位”
+“PNG / TIFF · 16 位”
+Both lines must be clear, correctly spelled, fit fully in that same card without overlap, matching the existing small gray font. Keep large “16 bit” and black “原尺寸导出” and every other card completely unchanged. If necessary slightly reduce the small caption font within this card only to fit the two lines with comfortable padding.
+Do not rewrite any other Chinese text. Preserve the exact 3:4 portrait canvas and all photographic crops.

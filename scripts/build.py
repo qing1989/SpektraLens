@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+# Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 """Build with an existing JDK 17/Android SDK; paths containing spaces are supported."""
 import glob
 import os
@@ -25,9 +25,10 @@ gradle = ROOT / '.tooling/gradle-8.11.1/bin/gradle'
 if not gradle.exists(): gradle = FALLBACK / 'gradle-8.11.1/bin/gradle'
 if not gradle.exists(): gradle = ROOT / 'android/gradlew'
 cmd = [str(gradle)] + (sys.argv[1:] or [':app:assembleDebug', ':app:lintDebug']) + ['--console=plain']
-if os.environ.get('SPEKTRA_BUILD_PROXY'):
+build_proxy = os.environ.get('SPEKTRALENS_BUILD_PROXY') or os.environ.get('SPEKTRA_BUILD_PROXY')
+if build_proxy:
     from urllib.parse import urlparse
-    proxy = urlparse(os.environ['SPEKTRA_BUILD_PROXY'])
+    proxy = urlparse(build_proxy)
     for protocol in ('http', 'https'):
         cmd += [f'-D{protocol}.proxyHost={proxy.hostname}', f'-D{protocol}.proxyPort={proxy.port or 80}']
     cmd += ['-Dhttp.nonProxyHosts=localhost|127.*|repo.maven.apache.org']

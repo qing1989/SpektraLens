@@ -8,8 +8,8 @@ android {
         applicationId 'app.spektrafilm'
         minSdk 29
         targetSdk 35
-        versionCode 11
-        versionName '0.3.2'
+        versionCode 14
+        versionName '0.3.5'
         ndk { abiFilters 'arm64-v8a', 'x86_64' }
         externalNativeBuild { cmake { cppFlags '-std=c++20 -fexceptions -frtti'; arguments '-DANDROID_STL=c++_static' } }
         testInstrumentationRunner 'android.test.InstrumentationTestRunner'
@@ -18,16 +18,15 @@ android {
     useLibrary 'android.test.runner'
     useLibrary 'android.test.base'
     useLibrary 'android.test.mock'
-    if (providers.gradleProperty('publicBuild').getOrElse('false').toBoolean()) {
-        def publicAssetsDirectory = layout.buildDirectory.dir('public-assets')
-        def publicAssets = tasks.register('preparePublicAssets', Sync) {
-            from 'src/main/assets'
-            exclude 'film_icons/grlife/**'
-            into publicAssetsDirectory
-        }
-        sourceSets.main.assets.setSrcDirs([publicAssetsDirectory.get().asFile])
-        tasks.named('preBuild').configure { dependsOn publicAssets }
+    // Legacy local PNGs must never enter current APKs, including development builds.
+    def artworkSafeAssets = layout.buildDirectory.dir('current-assets')
+    def prepareAssets = tasks.register('prepareCurrentAssets', Sync) {
+        from 'src/main/assets'
+        exclude 'film_icons/grlife/**', 'licenses/GRLife-Film-Icons.txt'
+        into artworkSafeAssets
     }
+    sourceSets.main.assets.setSrcDirs([artworkSafeAssets.get().asFile])
+    tasks.named('preBuild').configure { dependsOn prepareAssets }
     externalNativeBuild { cmake { path 'src/main/cpp/CMakeLists.txt'; version '3.22.1' } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     buildTypes { release { minifyEnabled false } }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 // Android scan-side edits. Tone order follows SpektraLab Canvas/Shaders.metal;
 // this mobile path grades encoded sRGB, using the sRGB mid-grey pivot.
 #include "edit_pipeline.hpp"
@@ -327,7 +327,7 @@ void borders(Image16 &im, const FrameLayout &f, const spk::Json &j, uint32_t iw,
         float ink[3] = {.82f, .56f, .19f};
         std::string label = j.at("film_label").as_string();
         if (label.empty())
-            label = "SPEKTRA FILM";
+            label = "SPEKTRALENS FILM";
         label += "  " + std::to_string(std::clamp(j.at("edge_frame_number").as_int(36), 0, 99));
         text(im, label, m, int(im.height) - std::max(7 * size + 2, m / 4), size, ink, .95f);
     }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 // ICC colour-space descriptors from SpektraLab/engine/host/image_io.cpp (GPL-3.0-or-later).
 // Keep the host image loader out of Android; Android ImageDecoder handles raster inputs.
 #include "image_io.hpp"

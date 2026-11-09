@@ -1,0 +1,572 @@
+{
+  "upstream": {
+    "andreavolpato/spektrafilm": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
+    "JamesQiu2005/SpektraLab": "02d82b56cf65f0f8e802a708612edc4e9a4790af",
+    "SAINTTaiYi/SpektraLab-Android": "f5c13118bd2c6cab263d16cc42330404c0542f74"
+  },
+  "native_base": "267ee24380091e5bee87658d00f6c33d77321194",
+  "engine_source_changes_vs_latest": 0,
+  "material_resource_changes_vs_latest": 0,
+  "original_python_vs_metal": [
+    {
+      "stock": "fujifilm_c200",
+      "max_rgb_error": 1.4149079751486424e-05,
+      "mean_rgb_error": 3.5563886738722307e-06,
+      "seconds": 0.5017057919758372
+    },
+    {
+      "stock": "fujifilm_pro_400h",
+      "max_rgb_error": 1.0698739264153323e-05,
+      "mean_rgb_error": 3.499244468692519e-06,
+      "seconds": 0.041212999960407615
+    },
+    {
+      "stock": "fujifilm_provia_100f",
+      "max_rgb_error": 9.432469058934245e-06,
+      "mean_rgb_error": 3.7036546881741146e-06,
+      "seconds": 0.035452500043902546
+    },
+    {
+      "stock": "fujifilm_velvia_100",
+      "max_rgb_error": 1.0795642821193052e-05,
+      "mean_rgb_error": 3.6922260531801617e-06,
+      "seconds": 0.03474458301207051
+    },
+    {
+      "stock": "fujifilm_xtra_400",
+      "max_rgb_error": 1.2487044871056785e-05,
+      "mean_rgb_error": 3.765631092907395e-06,
+      "seconds": 0.04539595800451934
+    },
+    {
+      "stock": "kodak_ektachrome_100",
+      "max_rgb_error": 9.37274332846183e-06,
+      "mean_rgb_error": 3.7468686546797796e-06,
+      "seconds": 0.03901354200206697
+    },
+    {
+      "stock": "kodak_ektar_100",
+      "max_rgb_error": 1.0973601000885402e-05,
+      "mean_rgb_error": 3.6537625354126954e-06,
+      "seconds": 0.03829345799749717
+    },
+    {
+      "stock": "kodak_gold_200",
+      "max_rgb_error": 9.934311575143795e-06,
+      "mean_rgb_error": 3.634842315409462e-06,
+      "seconds": 0.05479808402014896
+    },
+    {
+      "stock": "kodak_kodachrome_64",
+      "max_rgb_error": 1.0616788848061276e-05,
+      "mean_rgb_error": 3.640455431350899e-06,
+      "seconds": 0.04002833302365616
+    },
+    {
+      "stock": "kodak_portra_160",
+      "max_rgb_error": 1.0598346184276242e-05,
+      "mean_rgb_error": 3.5718403949187436e-06,
+      "seconds": 0.0408573750173673
+    },
+    {
+      "stock": "kodak_portra_400",
+      "max_rgb_error": 1.0396188038386267e-05,
+      "mean_rgb_error": 3.842395844184985e-06,
+      "seconds": 0.04349312500562519
+    },
+    {
+      "stock": "kodak_portra_800",
+      "max_rgb_error": 1.0485019325046085e-05,
+      "mean_rgb_error": 3.7409025973676454e-06,
+      "seconds": 0.0504251669626683
+    },
+    {
+      "stock": "kodak_portra_800_push1",
+      "max_rgb_error": 1.0839194460574714e-05,
+      "mean_rgb_error": 3.504714441018535e-06,
+      "seconds": 0.05842716700863093
+    },
+    {
+      "stock": "kodak_portra_800_push2",
+      "max_rgb_error": 9.648015845797886e-06,
+      "mean_rgb_error": 3.598415059256715e-06,
+      "seconds": 0.05241729196859524
+    },
+    {
+      "stock": "kodak_ultramax_400",
+      "max_rgb_error": 1.1191278809316585e-05,
+      "mean_rgb_error": 3.892434344011937e-06,
+      "seconds": 0.04832370899384841
+    },
+    {
+      "stock": "kodak_verita_200d",
+      "max_rgb_error": 1.0244699235009702e-05,
+      "mean_rgb_error": 3.8025767923890294e-06,
+      "seconds": 0.04388804198242724
+    },
+    {
+      "stock": "kodak_vision3_200t",
+      "max_rgb_error": 9.318227951138347e-06,
+      "mean_rgb_error": 3.597680969384998e-06,
+      "seconds": 0.04431416600709781
+    },
+    {
+      "stock": "kodak_vision3_250d",
+      "max_rgb_error": 9.3710753917009e-06,
+      "mean_rgb_error": 3.711960711449502e-06,
+      "seconds": 0.04522066697245464
+    },
+    {
+      "stock": "kodak_vision3_500t",
+      "max_rgb_error": 9.133657289273067e-06,
+      "mean_rgb_error": 3.7528352099879932e-06,
+      "seconds": 0.040391708025708795
+    },
+    {
+      "stock": "kodak_vision3_50d",
+      "max_rgb_error": 1.0647543004727034e-05,
+      "mean_rgb_error": 3.7844947068731694e-06,
+      "seconds": 0.03907420800533146
+    }
+  ],
+  "vulkan_vs_metal_u16": [
+    {
+      "name": "fujifilm_c200",
+      "max_u16_difference": 10,
+      "mean_u16_difference": 0.8018120659722222,
+      "max_normalized_rgb_difference": 0.00015259021896696422
+    },
+    {
+      "name": "fujifilm_pro_400h",
+      "max_u16_difference": 6,
+      "mean_u16_difference": 0.6231011284722222,
+      "max_normalized_rgb_difference": 9.155413138017853e-05
+    },
+    {
+      "name": "fujifilm_provia_100f",
+      "max_u16_difference": 15,
+      "mean_u16_difference": 0.5450846354166666,
+      "max_normalized_rgb_difference": 0.00022888532845044633
+    },
+    {
+      "name": "fujifilm_velvia_100",
+      "max_u16_difference": 10,
+      "mean_u16_difference": 0.6574435763888888,
+      "max_normalized_rgb_difference": 0.00015259021896696422
+    },
+    {
+      "name": "fujifilm_xtra_400",
+      "max_u16_difference": 12,
+      "mean_u16_difference": 0.8351779513888888,
+      "max_normalized_rgb_difference": 0.00018310826276035706
+    },
+    {
+      "name": "kodak_ektachrome_100",
+      "max_u16_difference": 9,
+      "mean_u16_difference": 0.5783420138888888,
+      "max_normalized_rgb_difference": 0.0001373311970702678
+    },
+    {
+      "name": "kodak_ektar_100",
+      "max_u16_difference": 12,
+      "mean_u16_difference": 0.61181640625,
+      "max_normalized_rgb_difference": 0.00018310826276035706
+    },
+    {
+      "name": "kodak_gold_200",
+      "max_u16_difference": 15,
+      "mean_u16_difference": 0.5364040798611112,
+      "max_normalized_rgb_difference": 0.00022888532845044633
+    },
+    {
+      "name": "kodak_kodachrome_64",
+      "max_u16_difference": 11,
+      "mean_u16_difference": 0.6241861979166666,
+      "max_normalized_rgb_difference": 0.00016784924086366064
+    },
+    {
+      "name": "kodak_portra_160",
+      "max_u16_difference": 9,
+      "mean_u16_difference": 0.5251736111111112,
+      "max_normalized_rgb_difference": 0.0001373311970702678
+    },
+    {
+      "name": "kodak_portra_400",
+      "max_u16_difference": 10,
+      "mean_u16_difference": 0.5623914930555556,
+      "max_normalized_rgb_difference": 0.00015259021896696422
+    },
+    {
+      "name": "kodak_portra_800",
+      "max_u16_difference": 9,
+      "mean_u16_difference": 0.46240234375,
+      "max_normalized_rgb_difference": 0.0001373311970702678
+    },
+    {
+      "name": "kodak_portra_800_push1",
+      "max_u16_difference": 7,
+      "mean_u16_difference": 0.3965386284722222,
+      "max_normalized_rgb_difference": 0.00010681315327687495
+    },
+    {
+      "name": "kodak_portra_800_push2",
+      "max_u16_difference": 5,
+      "mean_u16_difference": 0.3089192708333333,
+      "max_normalized_rgb_difference": 7.629510948348211e-05
+    },
+    {
+      "name": "kodak_ultramax_400",
+      "max_u16_difference": 6,
+      "mean_u16_difference": 0.41748046875,
+      "max_normalized_rgb_difference": 9.155413138017853e-05
+    },
+    {
+      "name": "kodak_verita_200d",
+      "max_u16_difference": 6,
+      "mean_u16_difference": 0.4269748263888889,
+      "max_normalized_rgb_difference": 9.155413138017853e-05
+    },
+    {
+      "name": "kodak_vision3_200t",
+      "max_u16_difference": 4,
+      "mean_u16_difference": 0.3479275173611111,
+      "max_normalized_rgb_difference": 6.103608758678569e-05
+    },
+    {
+      "name": "kodak_vision3_250d",
+      "max_u16_difference": 8,
+      "mean_u16_difference": 0.5379231770833334,
+      "max_normalized_rgb_difference": 0.00012207217517357137
+    },
+    {
+      "name": "kodak_vision3_500t",
+      "max_u16_difference": 5,
+      "mean_u16_difference": 0.3327365451388889,
+      "max_normalized_rgb_difference": 7.629510948348211e-05
+    },
+    {
+      "name": "kodak_vision3_50d",
+      "max_u16_difference": 8,
+      "mean_u16_difference": 0.5836046006944444,
+      "max_normalized_rgb_difference": 0.00012207217517357137
+    },
+    {
+      "name": "portra_auto_center",
+      "max_u16_difference": 10,
+      "mean_u16_difference": 0.5646701388888888,
+      "max_normalized_rgb_difference": 0.00015259021896696422
+    },
+    {
+      "name": "portra_exposure_down",
+      "max_u16_difference": 7,
+      "mean_u16_difference": 0.5485026041666666,
+      "max_normalized_rgb_difference": 0.00010681315327687495
+    },
+    {
+      "name": "portra_exposure_up",
+      "max_u16_difference": 8,
+      "mean_u16_difference": 0.4018012152777778,
+      "max_normalized_rgb_difference": 0.00012207217517357137
+    },
+    {
+      "name": "portra_gamma",
+      "max_u16_difference": 13,
+      "mean_u16_difference": 0.7720811631944444,
+      "max_normalized_rgb_difference": 0.00019836728465705348
+    },
+    {
+      "name": "portra_halation",
+      "max_u16_difference": 10,
+      "mean_u16_difference": 0.5630425347222222,
+      "max_normalized_rgb_difference": 0.00015259021896696422
+    }
+  ],
+  "vulkan_vs_metal_rgb8": [
+    {
+      "name": "fujifilm_c200",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.016547309027777776
+    },
+    {
+      "name": "fujifilm_pro_400h",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.0027669270833333335
+    },
+    {
+      "name": "fujifilm_provia_100f",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.0005967881944444445
+    },
+    {
+      "name": "fujifilm_velvia_100",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.001193576388888889
+    },
+    {
+      "name": "fujifilm_xtra_400",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.0002712673611111111
+    },
+    {
+      "name": "kodak_ektachrome_100",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.00048828125
+    },
+    {
+      "name": "kodak_ektar_100",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.00016276041666666666
+    },
+    {
+      "name": "kodak_gold_200",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 5.425347222222222e-05
+    },
+    {
+      "name": "kodak_kodachrome_64",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.002007378472222222
+    },
+    {
+      "name": "kodak_portra_160",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.014214409722222222
+    },
+    {
+      "name": "kodak_portra_400",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.013129340277777778
+    },
+    {
+      "name": "kodak_portra_800",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.0008138020833333334
+    },
+    {
+      "name": "kodak_portra_800_push1",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.00016276041666666666
+    },
+    {
+      "name": "kodak_portra_800_push2",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.0007595486111111111
+    },
+    {
+      "name": "kodak_ultramax_400",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.013020833333333334
+    },
+    {
+      "name": "kodak_verita_200d",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.0008138020833333334
+    },
+    {
+      "name": "kodak_vision3_200t",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.0007052951388888889
+    },
+    {
+      "name": "kodak_vision3_250d",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.00021701388888888888
+    },
+    {
+      "name": "kodak_vision3_500t",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.001247829861111111
+    },
+    {
+      "name": "kodak_vision3_50d",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 5.425347222222222e-05
+    },
+    {
+      "name": "portra_exposure_up",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 5.425347222222222e-05
+    },
+    {
+      "name": "portra_exposure_down",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.0018446180555555555
+    },
+    {
+      "name": "portra_gamma",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.0020616319444444445
+    },
+    {
+      "name": "portra_halation",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.014105902777777778
+    },
+    {
+      "name": "portra_auto_center",
+      "max_rgb8_difference": 1,
+      "mean_rgb8_difference": 0.0009765625
+    }
+  ],
+  "meter": [
+    {
+      "image": "dark_64",
+      "auto_exposure": false,
+      "applied_ev": null,
+      "mean_output_rgb8": 41.0
+    },
+    {
+      "image": "dark_64",
+      "auto_exposure": true,
+      "applied_ev": 1.843533935797756,
+      "mean_output_rgb8": 117.33333333333333
+    },
+    {
+      "image": "bright_220",
+      "auto_exposure": false,
+      "applied_ev": null,
+      "mean_output_rgb8": 200.66666666666666
+    },
+    {
+      "image": "bright_220",
+      "auto_exposure": true,
+      "applied_ev": -1.9596362982513102,
+      "mean_output_rgb8": 117.33333333333333
+    },
+    {
+      "image": "demo",
+      "auto_exposure": false,
+      "applied_ev": null,
+      "mean_output_rgb8": 105.1634963768116
+    },
+    {
+      "image": "demo",
+      "auto_exposure": true,
+      "applied_ev": -0.04577990542531214,
+      "mean_output_rgb8": 103.3900928442029
+    }
+  ],
+  "default_auto_exposure": false,
+  "manual_method": "center_weighted",
+  "entire_engine_comparison": {
+    "before_files": 345,
+    "after_files": 345,
+    "changed_paths": [],
+    "excluded_generated_python_cache": true
+  },
+  "community_patch_sha256": "50af4a64e8a666f37cbc9c9335a6e78fb150b12c741ff40607198a935fed4788",
+  "verification": {
+    "device_tests_passed": 50,
+    "seconds": 79.98,
+    "old_apk_default_off_test": "expected failure, 1 test / 1 failure",
+    "focused_workflow_and_parity_tests": 6,
+    "reference_images_regenerated_byte_identically": 26,
+    "lint_errors": 0,
+    "lint_warnings": 7,
+    "physical_phone_tested": false,
+    "numerical_audit_apk_sha256": "7890e7acecfb0bb15f4b0a3d4dcb3ab3355ee92a9b7132cecc1fbe8632f6b8d0"
+  },
+  "subsequent_preview_checks": {
+    "authorized_original_pngs": 11,
+    "matched_original_bytes": true,
+    "authored_vector_labels": 7,
+    "preview_build_public": false,
+    "ui_artwork_workflow_tests": 11,
+    "test_seconds": 18.567,
+    "title_position_before_offset_pixels": -73.5,
+    "title_positions": [
+      {
+        "screen": "1080x2400",
+        "title_center_x": 540.0,
+        "toolbar_center_x": 540.0,
+        "offset": 0.0,
+        "title_bounds": [
+          300,
+          165,
+          780,
+          270
+        ],
+        "back_bounds": [
+          32,
+          160,
+          142,
+          276
+        ],
+        "export_bounds": [
+          801,
+          168,
+          1048,
+          268
+        ],
+        "overlap": false
+      },
+      {
+        "screen": "840x1920",
+        "title_center_x": 420.0,
+        "toolbar_center_x": 420.0,
+        "offset": 0.0,
+        "title_bounds": [
+          300,
+          135,
+          540,
+          240
+        ],
+        "back_bounds": [
+          32,
+          130,
+          142,
+          246
+        ],
+        "export_bounds": [
+          561,
+          138,
+          808,
+          238
+        ],
+        "overlap": false
+      },
+      {
+        "screen": "1920x1080",
+        "title_center_x": 960.0,
+        "toolbar_center_x": 960.0,
+        "offset": 0.0,
+        "title_bounds": [
+          300,
+          103,
+          1620,
+          208
+        ],
+        "back_bounds": [
+          32,
+          98,
+          142,
+          214
+        ],
+        "export_bounds": [
+          1641,
+          106,
+          1888,
+          206
+        ],
+        "overlap": false
+      }
+    ],
+    "development_preview_apk_sha256": "263bdad19569374bccede7a3d9dfea5ee74464b3d216a4063ae13ebca5cb6ef6",
+    "prior_deliverables_regenerated": false
+  },
+  "temporary_crop_removal": {
+    "tools": [
+      "胶片",
+      "调整",
+      "边框",
+      "质感"
+    ],
+    "legacy_geometry_parameters_preserved": true,
+    "crop_tool_id_reserved": 3,
+    "ui_workflow_artwork_tests_passed": 11,
+    "test_seconds": 23.404,
+    "live_four_tools_and_export_menu_checked": true,
+    "development_apk_sha256": "6f670731cd221314c4dd9ec239ab35540cbb81943885b72ff9b64bdf3e38a0d7",
+    "delivery_artifacts_regenerated": false
+  }
+}

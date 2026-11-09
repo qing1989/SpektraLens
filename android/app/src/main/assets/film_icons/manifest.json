@@ -1,233 +1,149 @@
 {
-  "source": "GRLife",
-  "source_page": "https://grlife.app/film-bay/index.html?lang=zh-hans",
-  "authorization": "User confirmed reuse authorization on 2026-10-31. These images retain their original rights and are not relicensed under the program GPL or profile CC BY-SA.",
-  "artworks": {
-    "ektachrome": {
-      "asset": "grlife/ektachrome.png",
-      "mode": "label",
-      "url": "https://grlife.app/film-bay/films/img/ektachrome/icon.png",
-      "sha256": "c71c4abf163608a2df3c65722292ba91ce38cf23e8167d0628415a8de241353c",
-      "width": 120,
-      "height": 120
-    },
-    "ektar100": {
-      "asset": "grlife/ektar100.png",
-      "mode": "label",
-      "url": "https://grlife.app/film-bay/films/img/ektar100/icon.png",
-      "sha256": "7be37ca968fb4d5ad81340cb82dec624cce7438bd8545a7b6bf01ea07ffc9443",
-      "width": 120,
-      "height": 120
-    },
-    "gold200": {
-      "asset": "grlife/gold200.png",
-      "mode": "label",
-      "url": "https://grlife.app/film-bay/films/img/gold200/icon.png",
-      "sha256": "54380fde69f85d16514fed447f38f6fe05274f1abc6c780420f671ecbb7b7840",
-      "width": 120,
-      "height": 120
-    },
-    "kodachrome": {
-      "asset": "grlife/kodachrome.png",
-      "mode": "label",
-      "url": "https://grlife.app/film-bay/films/img/kodachrome/icon.png",
-      "sha256": "9e47cdf90fbdd0a08f630e896ad0d6edee4fa86ad26cc66d363d87b00714d982",
-      "width": 120,
-      "height": 120
-    },
-    "portra-160": {
-      "asset": "grlife/portra-160.png",
-      "mode": "label",
-      "url": "https://grlife.app/film-bay/films/img/portra-160/icon.png",
-      "sha256": "7a990a61e879728aa36251d02f5a624ea9870a04b23ec49146dbdaeccdef26b6",
-      "width": 120,
-      "height": 120
-    },
-    "portra-800": {
-      "asset": "grlife/portra-800.png",
-      "mode": "label",
-      "url": "https://grlife.app/film-bay/films/img/portra-800/icon.png",
-      "sha256": "1d07a8ab1107e2b79558f6d4d5703f6072ece6171b72a4f4aa2af4399868bb05",
-      "width": 120,
-      "height": 120
-    },
-    "portra400": {
-      "asset": "grlife/portra400.png",
-      "mode": "label",
-      "url": "https://grlife.app/film-bay/films/img/portra400/icon.png",
-      "sha256": "ded939b55cc238998458521af84b508db1b543a33cb9e594feb6b0eb5a0b0abb",
-      "width": 120,
-      "height": 120
-    },
-    "pro400h": {
-      "asset": "grlife/pro400h.png",
-      "mode": "label",
-      "url": "https://grlife.app/film-bay/films/img/pro400h/icon.png",
-      "sha256": "06bb9db2e0c186ae61bb70caf7832d02716f4cef134e778b879968057b740189",
-      "width": 120,
-      "height": 120
-    },
-    "umax-400": {
-      "asset": "grlife/umax-400.png",
-      "mode": "label",
-      "url": "https://grlife.app/film-bay/films/img/umax-400/icon.png",
-      "sha256": "8eba39fc777c04a64ebc5bac76540dc2ca4965d4d764101fd743b44d9c7859da",
-      "width": 120,
-      "height": 120
-    },
-    "v3-500t": {
-      "asset": "grlife/v3-500t.png",
-      "mode": "label",
-      "url": "https://grlife.app/film-bay/films/img/v3-500t/icon.png",
-      "sha256": "05427f43bef612e8391c61778e0b3c2a6e1ee283799fbc844122bb450717c281",
-      "width": 120,
-      "height": 120
-    },
-    "vision3-250d": {
-      "asset": "grlife/vision3-250d.png",
-      "mode": "label",
-      "url": "https://grlife.app/film-bay/films/img/vision3-250d/icon.png",
-      "sha256": "3fd9df8c016b1a0c1489bde239e10f4a517e6871a6ca3988f36cd443e2893fb3",
-      "width": 120,
-      "height": 120
-    },
-    "drawn-fujifilm_c200": {
-      "mode": "vector_label",
-      "source": "Original project artwork; drawn with FilmLabelArtwork.java, using the existing label layout.",
-      "logical_width": 120,
-      "logical_height": 120,
-      "drawing": {
-        "display": "C200",
-        "family": "C200",
-        "background": "#FFFFFF",
-        "ink": "#008B46",
-        "spine": "#00A74B",
-        "separator": "#E52C95",
-        "rail_ink": "#FFFFFF"
-      }
-    },
-    "drawn-fujifilm_provia_100f": {
-      "mode": "vector_label",
-      "source": "Original project artwork; drawn with FilmLabelArtwork.java, using the existing label layout.",
-      "logical_width": 120,
-      "logical_height": 120,
-      "drawing": {
-        "display": "100F",
-        "family": "PROVIA",
-        "background": "#FFFFFF",
-        "ink": "#193E79",
-        "spine": "#008E59",
-        "separator": "#4AD5B0",
-        "rail_ink": "#FFFFFF"
-      }
-    },
-    "drawn-fujifilm_velvia_100": {
-      "mode": "vector_label",
-      "source": "Original project artwork; drawn with FilmLabelArtwork.java, using the existing label layout.",
-      "logical_width": 120,
-      "logical_height": 120,
-      "drawing": {
-        "display": "V100",
-        "family": "VELVIA",
-        "background": "#FFFFFF",
-        "ink": "#C80F78",
-        "spine": "#009D4F",
-        "separator": "#EE57A6",
-        "rail_ink": "#FFFFFF"
-      }
-    },
-    "drawn-fujifilm_xtra_400": {
-      "mode": "vector_label",
-      "source": "Original project artwork; drawn with FilmLabelArtwork.java, using the existing label layout.",
-      "logical_width": 120,
-      "logical_height": 120,
-      "drawing": {
-        "display": "X400",
-        "family": "X-TRA",
-        "background": "#FFFFFF",
-        "ink": "#006B41",
-        "spine": "#00A64B",
-        "separator": "#E72B96",
-        "rail_ink": "#FFFFFF"
-      }
-    },
-    "drawn-kodak_verita_200d": {
-      "mode": "vector_label",
-      "source": "Original project artwork; drawn with FilmLabelArtwork.java, using the existing label layout.",
-      "logical_width": 120,
-      "logical_height": 120,
-      "drawing": {
-        "display": "200D",
-        "family": "VERITA",
-        "background": "#FFD000",
-        "ink": "#141719",
-        "spine": "#141719",
-        "separator": "#F3441D",
-        "rail_ink": "#FFD000"
-      }
-    },
-    "drawn-kodak_vision3_200t": {
-      "mode": "vector_label",
-      "source": "Original project artwork; drawn with FilmLabelArtwork.java, using the existing label layout.",
-      "logical_width": 120,
-      "logical_height": 120,
-      "drawing": {
-        "display": "200T",
-        "family": "VISION3",
-        "background": "#FFD000",
-        "ink": "#141719",
-        "spine": "#141719",
-        "separator": "#00B0BD",
-        "rail_ink": "#FFD000"
-      }
-    },
-    "drawn-kodak_vision3_50d": {
-      "mode": "vector_label",
-      "source": "Original project artwork; drawn with FilmLabelArtwork.java, using the existing label layout.",
-      "logical_width": 120,
-      "logical_height": 120,
-      "drawing": {
-        "display": "50D",
-        "family": "VISION3",
-        "background": "#FFD000",
-        "ink": "#141719",
-        "spine": "#141719",
-        "separator": "#00B0BD",
-        "rail_ink": "#FFD000"
-      }
-    }
-  },
+  "schema_version": 3,
+  "collection": "SpektraLens / Canisters 01",
+  "license": "GPL-3.0-or-later",
   "stocks": {
-    "kodak_ektar_100": "ektar100",
-    "kodak_gold_200": "gold200",
-    "fujifilm_pro_400h": "pro400h",
-    "kodak_portra_400": "portra400",
-    "kodak_vision3_250d": "vision3-250d",
-    "kodak_ultramax_400": "umax-400",
-    "kodak_portra_160": "portra-160",
-    "kodak_portra_800": "portra-800",
-    "kodak_portra_800_push1": "portra-800",
-    "kodak_portra_800_push2": "portra-800",
-    "kodak_kodachrome_64": "kodachrome",
-    "kodak_ektachrome_100": "ektachrome",
-    "kodak_vision3_500t": "v3-500t",
-    "fujifilm_c200": "drawn-fujifilm_c200",
-    "fujifilm_provia_100f": "drawn-fujifilm_provia_100f",
-    "fujifilm_velvia_100": "drawn-fujifilm_velvia_100",
-    "fujifilm_xtra_400": "drawn-fujifilm_xtra_400",
-    "kodak_verita_200d": "drawn-kodak_verita_200d",
-    "kodak_vision3_200t": "drawn-kodak_vision3_200t",
-    "kodak_vision3_50d": "drawn-kodak_vision3_50d"
-  },
-  "vector_fallback_stocks": [],
-  "schema_version": 2,
-  "authored_vector_stocks": [
-    "fujifilm_c200",
-    "fujifilm_provia_100f",
-    "fujifilm_velvia_100",
-    "fujifilm_xtra_400",
-    "kodak_verita_200d",
-    "kodak_vision3_200t",
-    "kodak_vision3_50d"
-  ]
+    "fujifilm_c200": {
+      "family": "COLOR",
+      "mark": "C200",
+      "coat": "#9DDA76",
+      "accent": "#16804C",
+      "series": "negative"
+    },
+    "fujifilm_pro_400h": {
+      "family": "PRO",
+      "mark": "400H",
+      "coat": "#6ACDB2",
+      "accent": "#3664A4",
+      "series": "negative"
+    },
+    "fujifilm_provia_100f": {
+      "family": "PROVIA",
+      "mark": "100F",
+      "coat": "#267E90",
+      "accent": "#6AE2B0",
+      "series": "reversal"
+    },
+    "fujifilm_velvia_100": {
+      "family": "VELVIA",
+      "mark": "100",
+      "coat": "#B13277",
+      "accent": "#FF976A",
+      "series": "reversal"
+    },
+    "fujifilm_xtra_400": {
+      "family": "X-TRA",
+      "mark": "400",
+      "coat": "#75AA33",
+      "accent": "#F8A9D4",
+      "series": "negative"
+    },
+    "kodak_ektachrome_100": {
+      "family": "EKTACHROME",
+      "mark": "100",
+      "coat": "#285FA0",
+      "accent": "#72D0E8",
+      "series": "reversal"
+    },
+    "kodak_ektar_100": {
+      "family": "EKTAR",
+      "mark": "100",
+      "coat": "#CA4337",
+      "accent": "#FFBC7B",
+      "series": "negative"
+    },
+    "kodak_gold_200": {
+      "family": "GOLD",
+      "mark": "200",
+      "coat": "#F1B52E",
+      "accent": "#BC4B1D",
+      "series": "negative"
+    },
+    "kodak_kodachrome_64": {
+      "family": "KODACHROME",
+      "mark": "64",
+      "coat": "#DA653C",
+      "accent": "#882845",
+      "series": "reversal"
+    },
+    "kodak_portra_160": {
+      "family": "PORTRA",
+      "mark": "160",
+      "coat": "#E8CD85",
+      "accent": "#5F986D",
+      "series": "negative"
+    },
+    "kodak_portra_400": {
+      "family": "PORTRA",
+      "mark": "400",
+      "coat": "#E9A66B",
+      "accent": "#A74E78",
+      "series": "negative"
+    },
+    "kodak_portra_800": {
+      "family": "PORTRA",
+      "mark": "800",
+      "coat": "#D98D71",
+      "accent": "#8D4166",
+      "series": "negative"
+    },
+    "kodak_portra_800_push1": {
+      "family": "PORTRA",
+      "mark": "800",
+      "coat": "#D98D71",
+      "accent": "#8D4166",
+      "series": "negative",
+      "push": 1
+    },
+    "kodak_portra_800_push2": {
+      "family": "PORTRA",
+      "mark": "800",
+      "coat": "#D98D71",
+      "accent": "#8D4166",
+      "series": "negative",
+      "push": 2
+    },
+    "kodak_ultramax_400": {
+      "family": "ULTRAMAX",
+      "mark": "400",
+      "coat": "#366FA7",
+      "accent": "#EFAB38",
+      "series": "negative"
+    },
+    "kodak_verita_200d": {
+      "family": "VERITA",
+      "mark": "200D",
+      "coat": "#B2BC75",
+      "accent": "#327A65",
+      "series": "cine"
+    },
+    "kodak_vision3_200t": {
+      "family": "VISION3",
+      "mark": "200T",
+      "coat": "#585C9C",
+      "accent": "#FF9B67",
+      "series": "cine"
+    },
+    "kodak_vision3_250d": {
+      "family": "VISION3",
+      "mark": "250D",
+      "coat": "#338783",
+      "accent": "#F3DC71",
+      "series": "cine"
+    },
+    "kodak_vision3_500t": {
+      "family": "VISION3",
+      "mark": "500T",
+      "coat": "#365A8E",
+      "accent": "#D58CC9",
+      "series": "cine"
+    },
+    "kodak_vision3_50d": {
+      "family": "VISION3",
+      "mark": "50D",
+      "coat": "#85A45A",
+      "accent": "#EDD36D",
+      "series": "cine"
+    }
+  }
 }

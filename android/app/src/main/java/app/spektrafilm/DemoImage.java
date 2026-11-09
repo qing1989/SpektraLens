@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.graphics.*;
@@ -64,7 +64,7 @@ final class DemoImage {
     c.drawText("STUDY OF LIGHT", 58, 90, p);
     p.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
     p.setTextSize(19);
-    c.drawText("SPEKTRA  /  SYNTHETIC REFERENCE 01", 60, 127, p);
+    c.drawText("SPEKTRALENS  /  SYNTHETIC REFERENCE 01", 60, 127, p);
     int[] colors = {0xff211e1c, 0xff77736b, 0xfff6f1df, 0xffbd5e48, 0xffd9af61, 0xff4d7890};
     for (int i = 0; i < colors.length; i++) {
       p.setColor(colors[i]);

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.content.Context;
@@ -17,6 +17,8 @@ public final class PhotoView extends View {
   private boolean compare;
   private float split = .5f;
   private float zoom = 1, offsetX, offsetY, lastX, lastY;
+  private float lastFocusX, lastFocusY;
+  private boolean scaleGesture;
   private final ScaleGestureDetector scale;
   private final GestureDetector taps;
 
@@ -28,15 +30,26 @@ public final class PhotoView extends View {
             c,
             new ScaleGestureDetector.SimpleOnScaleGestureListener() {
               @Override
+              public boolean onScaleBegin(ScaleGestureDetector detector) {
+                lastFocusX = detector.getFocusX();
+                lastFocusY = detector.getFocusY();
+                return true;
+              }
+
+              @Override
               public boolean onScale(ScaleGestureDetector detector) {
-                zoom = Math.max(1, Math.min(6, zoom * detector.getScaleFactor()));
-                if (zoom == 1) {
-                  offsetX = offsetY = 0;
-                }
-                invalidate();
+                zoomAt(
+                    zoom * detector.getScaleFactor(),
+                    detector.getFocusX(),
+                    detector.getFocusY(),
+                    lastFocusX,
+                    lastFocusY);
+                lastFocusX = detector.getFocusX();
+                lastFocusY = detector.getFocusY();
                 return true;
               }
             });
+    scale.setQuickScaleEnabled(false);
     taps =
         new GestureDetector(
             c,
@@ -49,10 +62,7 @@ public final class PhotoView extends View {
               @Override
               public boolean onDoubleTap(MotionEvent e) {
                 if (zoom > 1) resetZoom();
-                else {
-                  zoom = 2;
-                  invalidate();
-                }
+                else zoomAt(2, e.getX(), e.getY(), e.getX(), e.getY());
                 return true;
               }
             });
@@ -61,6 +71,18 @@ public final class PhotoView extends View {
   public void resetZoom() {
     zoom = 1;
     offsetX = offsetY = 0;
+    invalidate();
+  }
+
+  private void zoomAt(
+      float requested, float focusX, float focusY, float previousX, float previousY) {
+    float next = Math.max(1, Math.min(6, requested));
+    float factor = next / zoom;
+    offsetX = focusX - getWidth() / 2f - (previousX - getWidth() / 2f - offsetX) * factor;
+    offsetY = focusY - getHeight() / 2f - (previousY - getHeight() / 2f - offsetY) * factor;
+    zoom = next;
+    if (zoom == 1) offsetX = offsetY = 0;
+    updateFrame();
     invalidate();
   }
 
@@ -81,24 +103,8 @@ public final class PhotoView extends View {
     c.drawColor(Color.BLACK);
     Bitmap image = after != null ? after : before;
     if (image == null) return;
-    float pad = 12 * getResources().getDisplayMetrics().density;
-    float scale =
-        Math.min(
-            (getWidth() - pad * 2) / image.getWidth(), (getHeight() - pad * 2) / image.getHeight());
-    float w = image.getWidth() * scale * zoom, h = image.getHeight() * scale * zoom;
-    offsetX =
-        Math.max(
-            -Math.max(0, (w - getWidth()) / 2),
-            Math.min(Math.max(0, (w - getWidth()) / 2), offsetX));
-    offsetY =
-        Math.max(
-            -Math.max(0, (h - getHeight()) / 2),
-            Math.min(Math.max(0, (h - getHeight()) / 2), offsetY));
-    frame.set(
-        (getWidth() - w) / 2 + offsetX,
-        (getHeight() - h) / 2 + offsetY,
-        (getWidth() + w) / 2 + offsetX,
-        (getHeight() + h) / 2 + offsetY);
+    updateFrame();
+    if (frame.isEmpty()) return;
     paint.setColor(Color.BLACK);
     c.drawRect(frame.left + 3, frame.top + 5, frame.right + 3, frame.bottom + 5, paint);
     c.drawBitmap(image, null, frame, paint);
@@ -121,6 +127,35 @@ public final class PhotoView extends View {
     }
   }
 
+  private void updateFrame() {
+    Bitmap image = after != null ? after : before;
+    if (image == null) {
+      frame.setEmpty();
+      return;
+    }
+    float pad = 12 * getResources().getDisplayMetrics().density;
+    float scale =
+        Math.max(
+            0,
+            Math.min(
+                (getWidth() - pad * 2) / image.getWidth(),
+                (getHeight() - pad * 2) / image.getHeight()));
+    float w = image.getWidth() * scale * zoom, h = image.getHeight() * scale * zoom;
+    offsetX =
+        Math.max(
+            -Math.max(0, (w - getWidth()) / 2),
+            Math.min(Math.max(0, (w - getWidth()) / 2), offsetX));
+    offsetY =
+        Math.max(
+            -Math.max(0, (h - getHeight()) / 2),
+            Math.min(Math.max(0, (h - getHeight()) / 2), offsetY));
+    frame.set(
+        (getWidth() - w) / 2 + offsetX,
+        (getHeight() - h) / 2 + offsetY,
+        (getWidth() + w) / 2 + offsetX,
+        (getHeight() + h) / 2 + offsetY);
+  }
+
   private void label(Canvas c, String s, float x, float y) {
     float d = getResources().getDisplayMetrics().density;
     paint.setColor(0xc0101010);
@@ -133,21 +168,35 @@ public final class PhotoView extends View {
 
   @Override
   public boolean onTouchEvent(MotionEvent e) {
+    int action = e.getActionMasked();
+    if (action == MotionEvent.ACTION_DOWN) scaleGesture = false;
     scale.onTouchEvent(e);
     taps.onTouchEvent(e);
     if (e.getPointerCount() > 1) {
-      getParent().requestDisallowInterceptTouchEvent(true);
-      lastX = e.getX();
-      lastY = e.getY();
+      scaleGesture = true;
+      intercept(true);
+      return true;
+    }
+    // Consume the rest of a pinch, so lifting a finger cannot grab the comparison divider.
+    if (scaleGesture) {
+      if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+        scaleGesture = false;
+        intercept(false);
+      }
+      return true;
+    }
+    if (action == MotionEvent.ACTION_CANCEL) {
+      intercept(false);
       return true;
     }
     if (!compare) {
-      if (e.getActionMasked() == MotionEvent.ACTION_DOWN) {
+      if (action == MotionEvent.ACTION_DOWN) {
         lastX = e.getX();
         lastY = e.getY();
         return true;
       }
-      if (e.getActionMasked() == MotionEvent.ACTION_MOVE && zoom > 1 && !scale.isInProgress()) {
+      if (action == MotionEvent.ACTION_MOVE && zoom > 1 && !scale.isInProgress()) {
+        intercept(true);
         offsetX += e.getX() - lastX;
         offsetY += e.getY() - lastY;
         lastX = e.getX();
@@ -155,21 +204,30 @@ public final class PhotoView extends View {
         invalidate();
         return true;
       }
-      if (e.getActionMasked() == MotionEvent.ACTION_UP) performClick();
+      if (action == MotionEvent.ACTION_UP) {
+        intercept(false);
+        performClick();
+      }
       return true;
     }
-    if (e.getAction() == MotionEvent.ACTION_DOWN || e.getAction() == MotionEvent.ACTION_MOVE) {
-      getParent().requestDisallowInterceptTouchEvent(true);
+    if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_MOVE) {
+      intercept(true);
+      updateFrame();
+      if (frame.isEmpty()) return true;
       split = Math.max(.03f, Math.min(.97f, (e.getX() - frame.left) / frame.width()));
       invalidate();
       return true;
     }
-    if (e.getAction() == MotionEvent.ACTION_UP) {
-      getParent().requestDisallowInterceptTouchEvent(false);
+    if (action == MotionEvent.ACTION_UP) {
+      intercept(false);
       performClick();
       return true;
     }
     return true;
+  }
+
+  private void intercept(boolean disallow) {
+    if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(disallow);
   }
 
   @Override

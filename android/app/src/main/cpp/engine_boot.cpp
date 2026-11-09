@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 // Android loader adapter. Upstream shader code and numerical guard remain
 // unchanged.
 #include "engine_boot.hpp"
@@ -53,7 +53,7 @@ void stage(const std::string &value) {
                 .count();
   state.set("elapsed_ms", spk::Json(double(ms)));
   save_locked();
-  __android_log_print(ANDROID_LOG_INFO, "SpektraEngineBoot", "%s",
+  __android_log_print(ANDROID_LOG_INFO, "SpektraLensEngineBoot", "%s",
                       value.c_str());
 }
 VKAPI_ATTR VkResult VKAPI_CALL create_instance(const VkInstanceCreateInfo *a,

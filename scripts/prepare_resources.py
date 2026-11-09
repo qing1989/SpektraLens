@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+# Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 """Package upstream data unchanged and compile its GLSL kernels for Android."""
 import json
 import os

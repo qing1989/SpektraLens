@@ -1,0 +1,5 @@
+SpektraLens / Canisters 01
+Copyright (c) 2026 SpektraLens contributors.
+
+Current cartridge illustrations, stock definitions and renderer: GPL-3.0-or-later.
+See GPL-3.0.txt. Film names identify the simulated materials.

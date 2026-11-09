@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.app.*;
@@ -98,6 +98,7 @@ final class Haptics implements InvocationHandler {
     public AlertDialog create() {
       AlertDialog dialog = super.create();
       install(dialog.getWindow());
+      AppStyle.dialog(dialog);
       return dialog;
     }
   }

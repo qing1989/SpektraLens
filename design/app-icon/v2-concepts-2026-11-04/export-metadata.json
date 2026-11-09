@@ -1,0 +1,91 @@
+{
+  "appIntegrated" : false,
+  "boardPixels" : [
+    1600,
+    1440
+  ],
+  "concepts" : [
+    {
+      "id" : "01-negative-s",
+      "name" : "负形 S",
+      "previewMasks" : [
+        "rounded-square",
+        "circle"
+      ],
+      "sizes" : [
+        1024,
+        512,
+        96,
+        64,
+        48,
+        32
+      ],
+      "sourcePixels" : [
+        1254,
+        1254
+      ]
+    },
+    {
+      "id" : "02-offset-discs",
+      "name" : "错位",
+      "previewMasks" : [
+        "rounded-square",
+        "circle"
+      ],
+      "sizes" : [
+        1024,
+        512,
+        96,
+        64,
+        48,
+        32
+      ],
+      "sourcePixels" : [
+        1254,
+        1254
+      ]
+    },
+    {
+      "id" : "03-overlap",
+      "name" : "叠光",
+      "previewMasks" : [
+        "rounded-square",
+        "circle"
+      ],
+      "sizes" : [
+        1024,
+        512,
+        96,
+        64,
+        48,
+        32
+      ],
+      "sourcePixels" : [
+        1254,
+        1254
+      ]
+    },
+    {
+      "id" : "04-open-ring",
+      "name" : "余光",
+      "previewMasks" : [
+        "rounded-square",
+        "circle"
+      ],
+      "sizes" : [
+        1024,
+        512,
+        96,
+        64,
+        48,
+        32
+      ],
+      "sourcePixels" : [
+        1254,
+        1254
+      ]
+    }
+  ],
+  "date" : "2026-11-04",
+  "method" : "Resize, preview masking and layout only"
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+# Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 """Read-only localhost preview of the project's own Android emulator."""
 import argparse
 import json
@@ -31,9 +31,9 @@ frame = b''
 updated = 0.0
 error = '等待模拟器画面'
 stop = threading.Event()
-PAGE = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Spektra · Android 实时预览</title>
+PAGE = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SpektraLens · Android 实时预览</title>
 <style>*{box-sizing:border-box}body{margin:0;background:#151517;color:#f4f4f6;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{padding:16px 18px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #2c2c30;gap:12px}strong{font-weight:600}small{color:#a3a3ab;font-size:12px}main{display:flex;align-items:flex-start;justify-content:center;padding:16px;min-height:70vh}img{display:block;max-width:100%;max-height:calc(100vh - 112px);width:auto;height:auto;object-fit:contain;border-radius:12px;background:#000}#state{color:#ff8c42;white-space:nowrap}footer{padding:0 18px 12px;text-align:center;font-size:12px;color:#a3a3ab}</style>
-<header><div><strong>Spektra</strong><br><small>Android 模拟器实时预览</small></div><span id="state">连接中</span></header><main><img id="screen" alt="Android 模拟器当前画面"></main><footer>只读画面 · 约每 1.2 秒更新 · 编译安装后显示最新版本</footer>
+<header><div><strong>SpektraLens</strong><br><small>Android 模拟器实时预览</small></div><span id="state">连接中</span></header><main><img id="screen" alt="Android 模拟器当前画面"></main><footer>只读画面 · 约每 1.2 秒更新 · 编译安装后显示最新版本</footer>
 <script>const img=document.getElementById('screen'),state=document.getElementById('state');let pending=false;function refresh(){if(pending)return;pending=true;img.src=location.pathname+'frame.png?t='+Date.now()}img.onload=()=>{pending=false;state.textContent='实时画面';setTimeout(refresh,1200)};img.onerror=()=>{pending=false;state.textContent='等待模拟器';setTimeout(refresh,1800)};refresh();</script></html>'''.encode()
 
 def capture():

@@ -1,5 +1,6 @@
-Spektra Android
-Copyright (C) 2026 Spektra contributors, for project contributions.
+SpektraLens Android
+Former project display name: Spektra (renamed 2026-11-05).
+Copyright (C) 2026 SpektraLens contributors, for project contributions.
 Project software: GNU GPL version 3 or, at your option, any later version.
 
 Based on spektrafilm by Andrea Volpato, SpektraLab by Hanze Qiu and contributors,
@@ -11,8 +12,9 @@ Film/paper profiles and direct LUT encodings: CC BY-SA 4.0.
 Demo photograph: Fronalpstock big.jpg, Hannes Röst, CC BY-SA 3.0.
 Project-generated launcher artwork and synthetic test data: CC0-1.0 to the
 extent rights can be granted. Code renderers and scripts: GPL-3.0-or-later.
-GRLife reserved PNG artwork is NOT part of this public repository and is NOT
-relicensed under the GPL. Public builds use project-drawn text labels.
+The current stock cartridges are drawn by SpektraLens. The rendering code,
+stock definitions and resulting project artwork are GPL-3.0-or-later.
+Archived GRLife artwork retains its original rights and is excluded from current builds.
 
 No affiliation or endorsement by the upstream authors or film manufacturers
 is claimed. Full component copyright notices and licenses are preserved in

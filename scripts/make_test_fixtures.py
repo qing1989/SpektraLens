@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+# Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 """Generate an original Bayer DNG with no thumbnail/preview IFD (standard library only).
 Generated chart pixels and metadata are CC0. No third-party camera photo is bundled.
 """
@@ -18,9 +18,9 @@ def dng(path, width=256, height=192):
         tags.append([code,kind,count,payload])
     for code,kind,values in [
         (254,4,[0]),(256,4,[width]),(257,4,[height]),(258,3,[16]),(259,3,[1]),(262,3,[32803]),
-        (271,2,'Spektra Test'),(272,2,'Bayer no-preview'),(273,4,[0]),(274,3,[1]),(277,3,[1]),
+        (271,2,'SpektraLens Test'),(272,2,'Bayer no-preview'),(273,4,[0]),(274,3,[1]),(277,3,[1]),
         (278,4,[height]),(279,4,[width*height*2]),(284,3,[1]),(33421,3,[2,2]),(33422,1,[0,1,1,2]),
-        (50706,1,[1,4,0,0]),(50707,1,[1,1,0,0]),(50708,2,'Spektra Bayer Fixture'),
+        (50706,1,[1,4,0,0]),(50707,1,[1,1,0,0]),(50708,2,'SpektraLens Bayer Fixture'),
         (50710,1,[0,1,2]),(50711,3,[1]),(50713,3,[1,1]),(50714,5,[(0,1)]),(50717,4,[65535]),
         (50721,10,[(10000,10000),(0,10000),(0,10000),(0,10000),(10000,10000),(0,10000),(0,10000),(0,10000),(10000,10000)]),
         (50728,5,[(1,1),(1,1),(1,1)]),(50778,3,[21]),(50829,4,[0,0,height,width])]: tag(code,kind,values)

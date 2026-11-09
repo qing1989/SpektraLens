@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+# Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 """Install and test real APKs. Optional camera fixture download is hash checked and local only."""
 import argparse
 import hashlib
@@ -26,9 +26,9 @@ if hashlib.sha256(fixture.read_bytes()).hexdigest() != SHA: raise SystemExit('Ca
 def adb(*args): return subprocess.run([str(ADB), *map(str,args)], check=True)
 adb('install', '-r', ROOT / 'android/app/build/outputs/apk/debug/app-debug.apk')
 adb('install', '-r', ROOT / 'android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk')
-adb('push', fixture, '/data/local/tmp/Spektra-camera-fixture.NEF')
+adb('push', fixture, '/data/local/tmp/SpektraLens-camera-fixture.NEF')
 adb('shell', 'run-as', 'app.spektrafilm', 'mkdir', '-p', 'files/test-fixtures')
-adb('shell', 'run-as', 'app.spektrafilm', 'cp', '/data/local/tmp/Spektra-camera-fixture.NEF', 'files/test-fixtures/iss030e122639.NEF')
+adb('shell', 'run-as', 'app.spektrafilm', 'cp', '/data/local/tmp/SpektraLens-camera-fixture.NEF', 'files/test-fixtures/iss030e122639.NEF')
 adb('shell', 'am', 'force-stop', 'app.spektrafilm')
 result = subprocess.check_output([str(ADB), 'shell', 'am', 'instrument', '-w', 'app.spektrafilm.test/android.test.InstrumentationTestRunner'], text=True)
 print(result)

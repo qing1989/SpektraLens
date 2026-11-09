@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.content.Context;
@@ -66,10 +66,10 @@ final class CurveEditor extends View {
     float d = getResources().getDisplayMetrics().density;
     area.set(20 * d, 12 * d, getWidth() - 20 * d, getHeight() - 24 * d);
     p.setStyle(Paint.Style.FILL);
-    p.setColor(0xff111111);
-    c.drawRoundRect(area, 8 * d, 8 * d, p);
+    p.setColor(AppStyle.FIELD);
+    c.drawRoundRect(area, 14 * d, 14 * d, p);
     p.setStrokeWidth(d);
-    p.setColor(0xff343434);
+    p.setColor(AppStyle.OUTLINE);
     for (int i = 0; i <= 4; i++) {
       float t = i / 4f;
       c.drawLine(
@@ -114,7 +114,7 @@ final class CurveEditor extends View {
     for (PointF q : points) {
       p.setColor(color);
       c.drawCircle(area.left + q.x * area.width(), area.bottom - q.y * area.height(), 5 * d, p);
-      p.setColor(0xff111111);
+      p.setColor(AppStyle.FIELD);
       c.drawCircle(area.left + q.x * area.width(), area.bottom - q.y * area.height(), 2 * d, p);
     }
   }

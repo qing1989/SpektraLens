@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.content.Context;
@@ -116,7 +116,7 @@ public final class ExportPerformanceInstrumentedTest extends InstrumentationTest
           result.put("backend", renderer.backend());
           result.put("fallback_reason", renderer.fallbackReason());
           measurements.put(result);
-          android.util.Log.i("SpektraBenchmark", result.toString());
+          android.util.Log.i("SpektraLensBenchmark", result.toString());
           try (OutputStream out = new FileOutputStream(new File(directory, "timings.json"))) {
             out.write(measurements.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
           }

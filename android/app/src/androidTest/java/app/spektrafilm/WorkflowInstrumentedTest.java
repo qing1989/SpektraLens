@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.content.*;
@@ -61,11 +61,70 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
     super.tearDown();
   }
 
+  public void testOpeningLastFrameAfterRestartRendersItsSavedEdits() throws Exception {
+    importPhoto(image(), null);
+    main(
+        () -> {
+          try {
+            ((JSONObject) field("settings")).put("grade_exposure", .45);
+            call("scheduleRender", new Class<?>[] {});
+          } catch (Exception error) {
+            throw new RuntimeException(error);
+          }
+        });
+    awaitPreview();
+    String saved = settings().toString();
+    String id = (String) field("activeId");
+    main(activity::finish);
+    setActivity(null);
+    activity = getActivity();
+    long end = android.os.SystemClock.elapsedRealtime() + 30000;
+    while (!(Boolean) field("ready") && android.os.SystemClock.elapsedRealtime() < end)
+      Thread.sleep(40);
+    assertTrue("Engine restored after restarting the activity", (Boolean) field("ready"));
+    assertEquals(id, field("activeId"));
+    assertNull("Home defers developing the restored photograph", field("developed"));
+    main(
+        () -> {
+          try {
+            LinearLayout history = (LinearLayout) field("historyList");
+            ((ViewGroup) history.getChildAt(0)).getChildAt(0).performClick();
+          } catch (Exception error) {
+            throw new RuntimeException(error);
+          }
+        });
+    awaitPreview();
+    assertEquals(View.VISIBLE, ((View) field("editorScreen")).getVisibility());
+    assertEquals("Reopening preserves the saved adjustments", saved, settings().toString());
+  }
+
+  private void awaitPreview() throws Exception {
+    long end = android.os.SystemClock.elapsedRealtime() + 15000;
+    while (android.os.SystemClock.elapsedRealtime() < end) {
+      boolean[] complete = {false};
+      main(
+          () -> {
+            try {
+              TextView export = (TextView) field("exportButton");
+              complete[0] =
+                  field("developed") != null
+                      && export.isEnabled()
+                      && "导出照片".contentEquals(export.getText());
+            } catch (Exception error) {
+              throw new RuntimeException(error);
+            }
+          });
+      if (complete[0]) return;
+      Thread.sleep(40);
+    }
+    fail("Opening the saved photo must produce a developed preview and enable export");
+  }
+
   private Uri image() throws Exception {
     ContentValues values = new ContentValues();
-    values.put(MediaStore.Images.Media.DISPLAY_NAME, "Spektra-workflow.JPG");
+    values.put(MediaStore.Images.Media.DISPLAY_NAME, "SpektraLens-workflow.JPG");
     values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-    values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/SpektraTests");
+    values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/SpektraLensTests");
     Uri uri =
         activity.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
     created.add(uri);
@@ -150,19 +209,51 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
                     java.nio.file.Files.readAllBytes(record.toPath()),
                     java.nio.charset.StandardCharsets.UTF_8))
             .getString("export");
+    assertTrue("New exports carry the new project name", name.startsWith("SpektraLens_"));
+    Uri shared = Uri.parse("content://app.spektrafilm.files/" + name);
+    try (InputStream in = activity.getContentResolver().openInputStream(shared)) {
+      assertEquals("Renamed JPEG remains readable through the sharing provider", 0xff, in.read());
+      assertEquals(0xd8, in.read());
+    }
     try (android.database.Cursor cursor =
         activity
             .getContentResolver()
             .query(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                new String[] {MediaStore.Images.Media._ID},
+                new String[] {MediaStore.Images.Media._ID, MediaStore.Images.Media.RELATIVE_PATH},
                 MediaStore.Images.Media.DISPLAY_NAME + " = ?",
                 new String[] {name},
                 null)) {
-      if (cursor != null && cursor.moveToFirst())
-        created.add(
-            ContentUris.withAppendedId(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cursor.getLong(0)));
+      assertNotNull(cursor);
+      assertTrue("The renamed export is saved to the phone gallery", cursor.moveToFirst());
+      created.add(
+          ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cursor.getLong(0)));
+      assertEquals("Pictures/SpektraLens/", cursor.getString(1));
+    }
+  }
+
+  public void testEarlierSharedFileNamesRemainReadableAfterRename() throws Exception {
+    File prior = File.createTempFile("Spektra_legacy_", ".jpg", activity.getCacheDir());
+    try {
+      try (FileOutputStream out = new FileOutputStream(prior)) {
+        out.write(new byte[] {(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xd9});
+      }
+      Uri uri = Uri.parse("content://app.spektrafilm.files/" + prior.getName());
+      try (InputStream in = activity.getContentResolver().openInputStream(uri)) {
+        assertEquals(0xff, in.read());
+        assertEquals(0xd8, in.read());
+      }
+      Uri invalid =
+          Uri.parse("content://app.spektrafilm.files/")
+              .buildUpon()
+              .appendPath("../SpektraLens_legacy_rename_test.jpg")
+              .build();
+      try (android.database.Cursor result =
+          activity.getContentResolver().query(invalid, null, null, null, null)) {
+        assertNull("Reject path traversal even when querying only file metadata", result);
+      }
+    } finally {
+      prior.delete();
     }
   }
 
@@ -248,10 +339,17 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
     assertEquals(1., state.getDouble("geo_w"));
     assertEquals("none", state.getString("edge_style"));
     assertFalse(state.optBoolean("date_enabled"));
-    assertTrue(state.getBoolean("auto_exposure"));
+    assertFalse(state.getBoolean("auto_exposure"));
+    JSONObject engineParams = new JSONObject((String) call("params", new Class<?>[] {}));
+    assertFalse(
+        "The engine must receive the default, not only the switch",
+        engineParams.getBoolean("auto_exposure"));
     assertEquals("center_weighted", state.getString("auto_exposure_method"));
     assertTrue(((ArrayDeque<?>) field("undoStack")).isEmpty());
     assertTrue(((ArrayDeque<?>) field("redoStack")).isEmpty());
+    assertFalse(
+        "Original comparison is not active on a new photo",
+        ((TextView) field("compareButton")).isSelected());
   }
 
   public void testOrdinaryImportsResetAndExplicitCarryDoesNotLeakToNextImport() throws Exception {
@@ -270,8 +368,9 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
             state.put("date_enabled", true);
             state.put("date_text", "2001.02.03");
             state.put("grain_amount", 1.7);
-            state.put("auto_exposure", false);
+            state.put("auto_exposure", true);
             state.put("auto_exposure_method", "median");
+            ((TextView) field("compareButton")).performClick();
             call("saveActiveFrame", new Class<?>[] {});
           } catch (Exception ex) {
             throw new RuntimeException(ex);
@@ -308,6 +407,32 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
           }
         });
     assertNull(field("pickerSettings"));
+  }
+
+  public void testAutoExposureDefaultsOffAndCanBeEnabledManually() throws Exception {
+    Uri uri = image();
+    importPhoto(uri, null);
+    main(
+        () -> {
+          try {
+            call("showEditor", new Class<?>[] {});
+            field("selectedTab", 5);
+            call("buildPanel", new Class<?>[] {});
+            Switch meter = (Switch) find((View) field("editorScreen"), "自动测光", false);
+            assertNotNull(meter);
+            assertFalse(meter.isChecked());
+            assertNotNull(find((View) field("editorScreen"), "测光方式   中央加权", false));
+            meter.performClick();
+            assertTrue(meter.isChecked());
+            JSONObject request = new JSONObject((String) call("params", new Class<?>[] {}));
+            assertTrue(request.getBoolean("auto_exposure"));
+            assertEquals("center_weighted", request.getString("auto_exposure_method"));
+          } catch (Exception error) {
+            throw new RuntimeException(error);
+          }
+        });
+    importPhoto(uri, null);
+    defaults(settings());
   }
 
   private View find(View root, String text, boolean description) {
@@ -361,7 +486,7 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
   }
 
   public void testFileLabelsUseActualFormatAndLeaveOriginalNameUntouched() throws Exception {
-    File file = new File(activity.getCacheDir(), "Spektra-label-test.JPG");
+    File file = new File(activity.getCacheDir(), "SpektraLens-label-test.JPG");
     Bitmap bitmap = Bitmap.createBitmap(4, 3, Bitmap.Config.ARGB_8888);
     try (OutputStream out = new FileOutputStream(file)) {
       bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);

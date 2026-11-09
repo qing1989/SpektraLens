@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.graphics.*;
@@ -47,9 +47,9 @@ public final class EditorLayoutInstrumentedTest
   public void testSliderThumbsFitAtBothEndpointsInEveryTool() throws Exception {
     activity = getActivity();
     Set<String> checked = new HashSet<>();
-    for (int tab = 0; tab <= 5; tab++) {
+    for (int tab : new int[] {0, 1, 2, 4, 5}) {
       for (String section :
-          tab == 2 ? new String[] {"基础", "曲线", "色彩平衡", "HSL", "暗角"} : new String[] {"基础"}) {
+          tab == 2 ? new String[] {"基础", "曲线", "色彩平衡", "HSL 分色", "暗角"} : new String[] {"基础"}) {
         final int tool = tab;
         main(
             () -> {
@@ -66,6 +66,8 @@ public final class EditorLayoutInstrumentedTest
             () -> {
               try {
                 Map<String, SeekBar> bars = (Map<String, SeekBar>) field("sliders").get(activity);
+                Map<String, TextView> numbers =
+                    (Map<String, TextView>) field("values").get(activity);
                 for (Map.Entry<String, SeekBar> item : bars.entrySet()) {
                   SeekBar bar = item.getValue();
                   assertTrue("Measured " + item.getKey(), bar.getWidth() > 0);
@@ -85,6 +87,14 @@ public final class EditorLayoutInstrumentedTest
                   }
                   bar.setProgress(previous);
                   pixels.recycle();
+                  TextView number = numbers.get(item.getKey());
+                  assertTrue(
+                      "Full value and unit fit: " + item.getKey(),
+                      number.getPaint().measureText(number.getText().toString())
+                          <= number.getWidth()
+                              - number.getPaddingLeft()
+                              - number.getPaddingRight()
+                              + 1);
                   checked.add(item.getKey());
                 }
               } catch (Exception ex) {
@@ -96,7 +106,8 @@ public final class EditorLayoutInstrumentedTest
     assertTrue("Every tool's actual sliders were checked", checked.size() >= 30);
   }
 
-  public void testHomePreviewUsesLandscapePortraitAndSquareAspectRatios() throws Exception {
+  public void testHomeBannerKeepsFixedHeightAndCentersLandscapePortraitAndSquare()
+      throws Exception {
     activity = getActivity();
     ImageView hero = (ImageView) field("homeHero").get(activity);
     for (int[] dimensions : new int[][] {{300, 100}, {100, 300}, {120, 120}}) {
@@ -112,11 +123,25 @@ public final class EditorLayoutInstrumentedTest
             hero.setImageBitmap(bitmap);
           });
       assertEquals(
-          "Whole photo aspect ratio",
-          hero.getWidth() * (double) dimensions[1] / dimensions[0],
-          (double) hero.getHeight(),
-          1.0);
-      assertEquals(ImageView.ScaleType.FIT_CENTER, hero.getScaleType());
+          "Photo aspect ratio must not change the banner height",
+          Math.round(240 * activity.getResources().getDisplayMetrics().density),
+          hero.getHeight());
+      assertEquals(ImageView.ScaleType.CENTER_CROP, hero.getScaleType());
+      RectF image =
+          new RectF(
+              0,
+              0,
+              hero.getDrawable().getIntrinsicWidth(),
+              hero.getDrawable().getIntrinsicHeight());
+      float[] center = {image.centerX(), image.centerY()};
+      hero.getImageMatrix().mapPoints(center);
+      hero.getImageMatrix().mapRect(image);
+      assertEquals("Photo center stays on banner center X", hero.getWidth() / 2., center[0], 1.);
+      assertEquals("Photo center stays on banner center Y", hero.getHeight() / 2., center[1], 1.);
+      assertTrue(
+          "Banner is filled horizontally", image.left <= 1 && image.right >= hero.getWidth() - 1);
+      assertTrue(
+          "Banner is filled vertically", image.top <= 1 && image.bottom >= hero.getHeight() - 1);
       main(() -> hero.setImageBitmap(null));
       bitmap.recycle();
     }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.graphics.Bitmap;
@@ -102,9 +102,9 @@ public final class ImportPipelineInstrumentedTest
     image.recycle();
     android.content.ContentValues values = new android.content.ContentValues();
     values.put(
-        android.provider.MediaStore.Images.Media.DISPLAY_NAME, "Spektra-queue-regression.jpg");
+        android.provider.MediaStore.Images.Media.DISPLAY_NAME, "SpektraLens-queue-regression.jpg");
     values.put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-    values.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/SpektraTests");
+    values.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/SpektraLensTests");
     galleryPhoto =
         activity
             .getContentResolver()
@@ -241,6 +241,11 @@ public final class ImportPipelineInstrumentedTest
     while (field("activeImport") != null && System.nanoTime() < until) Thread.sleep(30);
     assertNull("Watchdog must terminate the stalled import", field("activeImport"));
     assertTrue(job.cancelled.get());
+    assertEquals(
+        "Timeout feedback stays visible above the tools",
+        android.view.View.VISIBLE,
+        ((android.view.View) field("statusRow")).getVisibility());
+    assertTrue(((android.widget.TextView) field("status")).getText().toString().contains("超时"));
     assertEquals(previous, field("sourceFile"));
     String text;
     try (InputStream in =

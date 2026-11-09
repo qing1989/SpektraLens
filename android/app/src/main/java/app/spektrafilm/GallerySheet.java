@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.app.*;
@@ -26,7 +26,7 @@ final class GallerySheet extends Dialog {
     void permission();
   }
 
-  private static final int INK = 0xfff2f2f4, MUTED = 0xff98989f, ORANGE = 0xffff7a1a;
+  private static final int INK = AppStyle.INK, MUTED = AppStyle.MUTED, ORANGE = AppStyle.ACCENT;
   private final Activity activity;
   private final Listener listener;
   private final List<GalleryPhotos.Photo> imported;
@@ -48,7 +48,7 @@ final class GallerySheet extends Dialog {
   private GridView grid;
   private TextView title, access, sourceButton, emptyText;
   private LinearLayout empty;
-  private int collapsedHeight, expandedHeight;
+  private int collapsedHeight, expandedHeight, sheetWidth;
   private float dragY;
   private int dragHeight;
   private boolean dragging;
@@ -110,6 +110,7 @@ final class GallerySheet extends Dialog {
     view.setTextColor(color);
     view.setGravity(Gravity.CENTER_VERTICAL);
     view.setFontFeatureSettings("kern");
+    view.setIncludeFontPadding(false);
     return view;
   }
 
@@ -119,29 +120,20 @@ final class GallerySheet extends Dialog {
     view.setPadding(dp(12), 0, dp(12), 0);
     view.setOnClickListener(v -> run.run());
     view.setFocusable(true);
-    view.setBackground(
-        new android.graphics.drawable.RippleDrawable(
-            android.content.res.ColorStateList.valueOf(0x33ffffff),
-            null,
-            new ColorDrawable(Color.WHITE)));
+    AppStyle.action(view, color, Color.TRANSPARENT, 18);
     return view;
   }
 
   private void build() {
     LinearLayout root = column();
-    GradientDrawable background = new GradientDrawable();
-    background.setColor(0xff18181b);
-    float radius = dp(24);
-    background.setCornerRadii(new float[] {radius, radius, radius, radius, 0, 0, 0, 0});
-    root.setBackground(background);
-    root.setClipToOutline(true);
-    FrameLayout grab = new FrameLayout(getContext());
+    AppStyle.surface(root, AppStyle.SURFACE, 26);
+    PanelHandle grab = new PanelHandle(getContext());
     grab.setContentDescription("上拉展开图库，下拉收起");
     grab.setFocusable(true);
     grab.setClickable(true);
     View handle = new View(getContext());
     GradientDrawable pill = new GradientDrawable();
-    pill.setColor(0xff606067);
+    pill.setColor(0xff74747e);
     pill.setCornerRadius(dp(3));
     handle.setBackground(pill);
     FrameLayout.LayoutParams line =
@@ -190,7 +182,7 @@ final class GallerySheet extends Dialog {
     header.setGravity(Gravity.CENTER_VERTICAL);
     header.setPadding(dp(8), 0, dp(8), 0);
     title = action("图库", INK, this::albums);
-    title.setTextSize(19);
+    title.setTextSize(18);
     title.setSingleLine(true);
     title.setEllipsize(android.text.TextUtils.TruncateAt.END);
     title.setTypeface(null, Typeface.BOLD);
@@ -198,7 +190,7 @@ final class GallerySheet extends Dialog {
     title.setContentDescription("图库，切换相册");
     header.addView(title, new LinearLayout.LayoutParams(0, dp(49), 1));
     header.addView(
-        action("取消", MUTED, this::dismiss), new LinearLayout.LayoutParams(dp(56), dp(49)));
+        action("取消", MUTED, this::dismiss), new LinearLayout.LayoutParams(dp(64), dp(49)));
     root.addView(header);
     access = action("", ORANGE, listener::permission);
     access.setTextSize(11);
@@ -208,10 +200,10 @@ final class GallerySheet extends Dialog {
     FrameLayout body = new FrameLayout(getContext());
     grid = new GridView(getContext());
     grid.setNumColumns(3);
-    grid.setHorizontalSpacing(dp(2));
-    grid.setVerticalSpacing(dp(2));
+    grid.setHorizontalSpacing(dp(4));
+    grid.setVerticalSpacing(dp(4));
     grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
-    grid.setPadding(dp(2), 0, dp(2), 0);
+    grid.setPadding(dp(12), 0, dp(12), dp(8));
     grid.setClipToPadding(false);
     grid.setSelector(new ColorDrawable(Color.TRANSPARENT));
     grid.setAdapter(adapter);
@@ -234,7 +226,7 @@ final class GallerySheet extends Dialog {
     grid.setEmptyView(empty);
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
     LinearLayout footer = new LinearLayout(getContext());
-    footer.setPadding(dp(8), dp(6), dp(8), dp(8));
+    footer.setPadding(dp(12), dp(6), dp(12), dp(12));
     sourceButton =
         action(
             "已导入",
@@ -265,7 +257,8 @@ final class GallerySheet extends Dialog {
     window.setGravity(Gravity.BOTTOM);
     window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     WindowManager.LayoutParams attributes = window.getAttributes();
-    attributes.dimAmount = .48f;
+    attributes.dimAmount = .58f;
+    attributes.y = dp(10);
     window.setAttributes(attributes);
     activity.getWindow().getDecorView().addOnLayoutChangeListener(windowSizeChanged);
     resize(true);
@@ -275,15 +268,23 @@ final class GallerySheet extends Dialog {
   private void resize(boolean initial) {
     boolean expanded =
         !initial && getWindow().getAttributes().height > (collapsedHeight + expandedHeight) / 2;
-    int available = activity.getWindow().getDecorView().getHeight();
-    if (available <= 0) available = activity.getResources().getDisplayMetrics().heightPixels;
+    Rect visible = new Rect();
+    activity.getWindow().getDecorView().getWindowVisibleDisplayFrame(visible);
+    int available = visible.height() - dp(20);
+    if (available <= 0)
+      available = activity.getResources().getDisplayMetrics().heightPixels - dp(72);
+    int availableWidth =
+        visible.width() > 0
+            ? visible.width()
+            : activity.getResources().getDisplayMetrics().widthPixels;
+    sheetWidth = Math.min(dp(720), Math.max(dp(240), availableWidth - dp(24)));
     collapsedHeight = Math.min(available, Math.max(dp(240), Math.round(available * .56f)));
     expandedHeight = Math.max(collapsedHeight, Math.round(available * .94f));
-    getWindow().setLayout(-1, expanded ? expandedHeight : collapsedHeight);
+    getWindow().setLayout(sheetWidth, expanded ? expandedHeight : collapsedHeight);
   }
 
   private void height(int pixels) {
-    if (!closed) getWindow().setLayout(-1, pixels);
+    if (!closed) getWindow().setLayout(sheetWidth, pixels);
   }
 
   void refresh() {
@@ -398,6 +399,8 @@ final class GallerySheet extends Dialog {
       super(GallerySheet.this.getContext());
       image = new ImageView(getContext());
       image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+      setBackground(AppStyle.shape(getContext(), AppStyle.CONTROL, 9, false));
+      setClipToOutline(true);
       addView(image, new FrameLayout.LayoutParams(-1, -1));
       setLayoutParams(new AbsListView.LayoutParams(-1, -2));
     }
@@ -418,8 +421,11 @@ final class GallerySheet extends Dialog {
       String key = photo.key();
       image.setTag(key);
       setContentDescription("照片 " + photo.name);
-      setForeground(borderFor(photo));
-      setBackgroundColor(0xff2b2b30);
+      setForeground(
+          new RippleDrawable(
+              android.content.res.ColorStateList.valueOf(0x30ffffff),
+              borderFor(photo),
+              AppStyle.shape(getContext(), Color.WHITE, 9, false)));
       Bitmap hit = cache.get(key);
       image.setImageBitmap(hit);
       if (hit != null) return;
@@ -471,6 +477,7 @@ final class GallerySheet extends Dialog {
       GradientDrawable border = new GradientDrawable();
       border.setColor(Color.TRANSPARENT);
       border.setStroke(dp(2), ORANGE);
+      border.setCornerRadius(dp(9));
       return border;
     }
   }

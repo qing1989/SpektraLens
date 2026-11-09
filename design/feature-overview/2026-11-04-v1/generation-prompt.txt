@@ -1,0 +1,50 @@
+Use case: ads-marketing / infographic-diagram.
+Create ONE finished, premium Chinese feature-overview poster for the existing Android film simulation app “光谱暗房 · SPEKTRA”. Portrait 3:4 canvas, ideally 2160×2880. This is a publication-ready single image, not a photo of a poster, not a phone mockup.
+
+INPUT ROLES:
+Image 1 is a COMPOSITION REFERENCE ONLY: light gray canvas, crisp white rounded cards, tight even gutters, asymmetric bento mosaic, photo feature tiles, a dominant central brand tile, clean Chinese typography. Do not copy GRLife branding or its feature claims.
+Image 2 is the supplied portrait photograph by Zac Taheriyan: blue veil, original face and lighting. Use as a photographic insert, preserving the person's identity and real appearance.
+Image 3 is the supplied Istanbul photograph by Yunus Tug: tower framed by an out-of-focus person and arm. Use as a photographic insert, preserving original scene.
+Image 4 is the supplied architecture and flying-birds photograph by Bruno BD: blue sky and warm stone. Use as a photographic insert, preserving original scene.
+Use only these THREE distinct supplied photos for all photo tiles, repeating crops when useful. Do not invent additional photography. Preserve original photographic composition and subjects. Do not use photo content from reference 1.
+
+ART DIRECTION:
+Follow reference 1 closely in density and card rhythm, with refined Apple-like typography. Very light warm gray #EAE9EB background, white rounded cards, near-black text #171717, restrained SPEKTRA orange #FF7A1A highlights. Equal 24 px outer margin and approximately 14 px gutters on a 1080 px reference width; consistent 26 px corner radii. Flat, crisp, no drop shadows, no 3D decorations. Main title very large. All Chinese text must be exact simplified Chinese and beautifully legible. Small English typography clean sans serif. Bright, premium, photographic editorial style.
+
+LAYOUT (on conceptual 1080×1440 grid, scale proportionally):
+Top row approx y=28–190: THREE equal photo cards. Left: architecture/birds with bottom-left white “20 款胶片”. Middle: Istanbul with bottom-left white “RAW 原片导入”. Right: portrait with bottom-left white “颗粒 · 光晕 · 柔化”. Subtle dark bottom gradient for readable captions.
+
+Second area approx y=204–700:
+Left TWO THIRDS is the dominant WHITE hero card.
+Centered small gray “光谱暗房”
+Below it oversized black wordmark “SPEKTRA”, spelled S P E K T R A, stylish neutral sans serif.
+Below in orange “把日常，显影成胶片”
+Below, small gray “从光谱模拟，到相纸印相”
+Lower half: four adjacent vertical photographic strips using the EXACT SAME crop of the supplied architecture/birds image 4 in each strip, with tasteful different film-like color treatments. Keep same architecture/bird placement in each strip; only tonal treatment differs. Add tidy white labels at bottom of each strip: “Gold 200”, “Portra 400”, “Pro 400H”, “Provia 100F”. These are illustrative looks, not measurement or output claims. Do not add random stock labels.
+Right ONE THIRD: top compact WHITE card with bold “8 款印相材料”, small orange and gray neatly stacked paper swatches, and gray “相纸 · 电影拷贝片”.
+Right below that: larger portrait photo card, original face closeup with fine detail. Bottom-left white caption “留住细腻肤色” and smaller “光谱胶片模拟”.
+
+Third area approx y=714–880: THREE equal WHITE feature cards, concise exact typography:
+Left: a simple clean orange spectral-wave line graphic, bold “81 波长光谱计算”, small gray “380–780 nm”.
+Middle: a small precise RGB curves graphic in a faint grid, bold “曲线 · HSL · 色彩平衡”, small gray “把颜色调到心里”.
+Right: a large typographic “16 bit” with “16” in orange, bold “原尺寸导出”, small gray “JPEG / PNG / TIFF”.
+Make diagram details elegant but keep headings highly readable.
+
+Fourth area approx y=894–1200:
+Left HALF WIDTH: a wide Istanbul photo tile with tasteful black 135 film sprocket border, amber date “2026.11.04” in one corner. Top-left white bold “片边 · 日期”, smaller white “给回忆一个落款”. Preserve tower in an attractive recognizable crop.
+Middle ONE SIXTH / narrow vertical photo tile: original architecture/birds crop. Bottom-left white “原图对比”. A thin divider can subtly suggest before/after.
+Right ONE THIRD WHITE card: a mini gallery of three thumbnails from the supplied photos, with a minimal orange selected outline; bold “每张照片，独立记忆”, small gray “保存编辑 · 撤销重做”.
+
+Bottom area approx y=1214–1352: TWO equal WHITE feature cards:
+Left: bold “全程本机显影”, small gray “照片无需上传服务器”; subtle tiny orange circle, no generic cloud icon.
+Right: bold “负片 · 反转片”, small gray “各有自己的色彩性格”; two simple orange/gray film-strip swatches.
+Do not mention camera firmware, ISO control, video, half-frame stitching, CineStill, HDR, black-and-white film, crop tool or AI editing, because they are not current project features.
+
+Footer on gray canvas approx y=1370–1420:
+Left black small wordmark “SPEKTRA”, second gray line “光谱暗房 · Android 胶片模拟”
+Right aligned gray small attribution in two readable lines:
+“照片：Zac Taheriyan / Yunus Tug / Bruno BD · Unsplash”
+“配图效果为视觉示意，非应用实测输出”
+No other credits, no GRLife text, no page counter, no watermark.
+
+Overall prioritize a beautiful coherent single feature poster like the reference, accurate Chinese, exact feature counts, three real supplied photographs, consistent rounded grid, clear hierarchy, enough breathing space.

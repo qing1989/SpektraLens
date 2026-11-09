@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (c) 2026 Spektra contributors. See NOTICE for upstream attribution.
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import android.content.Context;
@@ -314,7 +314,7 @@ public final class EditingInstrumentedTest extends InstrumentationTestCase {
     Bitmap developed = NativeEngine.renderEdited(engine, p, "{}", true);
     assertTrue(light(developed) > 1 && light(developed) < 254);
     assertTrue(difference(small, developed) > 1000);
-    android.util.Log.i("SpektraV02Test", "RAW actual camera: " + info);
+    android.util.Log.i("SpektraLensV02Test", "RAW actual camera: " + info);
     small.recycle();
     developed.recycle();
   }

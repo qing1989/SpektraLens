@@ -1,0 +1,49 @@
+{
+  "historical_source": "https://grlife.app/film-bay/index.html?lang=zh-hans",
+  "archived_artwork": {
+    "ektachrome.png": {
+      "url": "https://grlife.app/film-bay/films/img/ektachrome/icon.png",
+      "sha256": "c71c4abf163608a2df3c65722292ba91ce38cf23e8167d0628415a8de241353c"
+    },
+    "ektar100.png": {
+      "url": "https://grlife.app/film-bay/films/img/ektar100/icon.png",
+      "sha256": "7be37ca968fb4d5ad81340cb82dec624cce7438bd8545a7b6bf01ea07ffc9443"
+    },
+    "gold200.png": {
+      "url": "https://grlife.app/film-bay/films/img/gold200/icon.png",
+      "sha256": "54380fde69f85d16514fed447f38f6fe05274f1abc6c780420f671ecbb7b7840"
+    },
+    "kodachrome.png": {
+      "url": "https://grlife.app/film-bay/films/img/kodachrome/icon.png",
+      "sha256": "9e47cdf90fbdd0a08f630e896ad0d6edee4fa86ad26cc66d363d87b00714d982"
+    },
+    "portra-160.png": {
+      "url": "https://grlife.app/film-bay/films/img/portra-160/icon.png",
+      "sha256": "7a990a61e879728aa36251d02f5a624ea9870a04b23ec49146dbdaeccdef26b6"
+    },
+    "portra-800.png": {
+      "url": "https://grlife.app/film-bay/films/img/portra-800/icon.png",
+      "sha256": "1d07a8ab1107e2b79558f6d4d5703f6072ece6171b72a4f4aa2af4399868bb05"
+    },
+    "portra400.png": {
+      "url": "https://grlife.app/film-bay/films/img/portra400/icon.png",
+      "sha256": "ded939b55cc238998458521af84b508db1b543a33cb9e594feb6b0eb5a0b0abb"
+    },
+    "pro400h.png": {
+      "url": "https://grlife.app/film-bay/films/img/pro400h/icon.png",
+      "sha256": "06bb9db2e0c186ae61bb70caf7832d02716f4cef134e778b879968057b740189"
+    },
+    "umax-400.png": {
+      "url": "https://grlife.app/film-bay/films/img/umax-400/icon.png",
+      "sha256": "8eba39fc777c04a64ebc5bac76540dc2ca4965d4d764101fd743b44d9c7859da"
+    },
+    "v3-500t.png": {
+      "url": "https://grlife.app/film-bay/films/img/v3-500t/icon.png",
+      "sha256": "05427f43bef612e8391c61778e0b3c2a6e1ee283799fbc844122bb450717c281"
+    },
+    "vision3-250d.png": {
+      "url": "https://grlife.app/film-bay/films/img/vision3-250d/icon.png",
+      "sha256": "3fd9df8c016b1a0c1489bde239e10f4a517e6871a6ca3988f36cd443e2893fb3"
+    }
+  }
+}

@@ -2,9 +2,9 @@
 
 公开仓库版本的统一组件清单、版权和来源索引见 [UPSTREAMS.md](UPSTREAMS.md)，项目贡献声明见 [NOTICE](NOTICE)。各上游原始许可证保持原样，不因本项目采用 GPL 而改变。
 
-## 公开版本与私下交付的区别
+## 当前胶卷图标与历史交付
 
-按项目拥有者要求，GRLife 原始11张 PNG 不进入公开 Git 历史，也不进入公开构建。公开版所有胶卷使用本项目独立绘制的文字标签，使用统一胶卷外壳；授权原图仅保留在本地私下版本。来源 URL、型号映射与校验值可以用于追溯，不代表授予原图公开下载或再分发许可。历史安装包和源码包可能包含原图，不上传到公开仓库或公开 Release。
+SpektraLens 的 20 款胶卷图标由本项目根据胶片目录绘制。开发和公开版本均使用同一套代码和配色。历史版本曾获授权使用 11 张 GRLife PNG，这些图片及含有原图的历史交付物继续受原授权限制。历史来源与校验值见 [历史胶卷图标来源](docs/历史胶卷图标来源.json)。
 
 AndroidX ExifInterface 的实际运行时依赖还包括 AndroidX Annotation/annotation-jvm 1.8.1、Kotlin stdlib/common 1.7.10、JetBrains Annotations 13.0、JSpecify 1.0.0，均保留 Apache-2.0 条款及原作者声明。新补充的 `JVM-Dependency-NOTICES.txt` 从官方发布的源码制品提取版权行，包括 JetBrains、Kotlin contributors、Sascha Weinreuter 与 JSpecify Authors。NDK 静态 C++ 运行库与编译器运行时的原始 LLVM/第三方声明保留于 `NDK-LLVM-runtime-NOTICE.txt`，包括 LLVM exception。完整许可可从应用“关于 → 许可全文”查看。
 
@@ -32,11 +32,7 @@ Fronalpstock big.jpg，作者 Hannes Röst，来源 [Wikimedia Commons](https://
 
 ## 胶卷图标
 
-v0.1.1 使用来自用户指定的 [GRLife 胶片库页面](https://grlife.app/film-bay/index.html?lang=zh-hans) 的 11 张原始 PNG 标签，对应 13 个胶片配置。用户于 2026-10-31 明确确认已获得这批图标的复用授权；本项目按该确认授权将图标用于 Android 安装包及本次源码交付。
-
-图标归 GRLife 或原权利人所有，保留原有权利，不改授为程序的 GPL 或胶片数据的 CC BY-SA 许可。各 PNG 文件保持原始字节，独立记录来源 URL、SHA-256 和配置映射，见 `android/app/src/main/assets/film_icons/manifest.json`。外壳、金属边缘和选中态由 Android 原生 Canvas 绘制，没有复用网站的程序、CSS 或胶片色彩数据。
-
-Portra 800、Push 1 和 Push 2 共用同一张 Portra 800 标签，并由界面标注推片档数。页面目录未发现对应图标的 7 个型号继续使用原创 Canvas 图标。Kodak、Fujifilm 等名称用于标明所选胶片，不表示品牌背书。
+胶卷外壳、卷芯、标签、片头和推片标记由本项目以几何路径绘制。绘制代码、型号定义和当前渲染出的图标使用 GPL-3.0-or-later。Kodak、Fujifilm 及型号文字用于识别模拟材料。参见 [图标设计与型号清单](docs/图标映射.md)。
 
 Gradle Wrapper 按 Gradle 项目的 Apache-2.0 条款使用；其 launcher 文件头保留原始版权说明。
 
@@ -67,4 +63,4 @@ JPEG/TIFF 编码、ICC/EXIF 和色彩空间描述复用 SpektraLab 的 host 输�
 
 ## v0.2.4 补绘胶卷标签
 
-在授权 GRLife 标签的既有版式上，为未匹配的 7 款胶片绘制独立标签：C200、Provia 100F、Velvia 100、X-Tra 400、Verita 200D、Vision3 200T、Vision3 50D。文字与配色由本项目定义，绘制代码为 `FilmLabelArtwork.java`，随项目按 GPL-3.0-or-later 提供；原始 11 张 GRLife PNG 没有改写。新标签和原标签使用同一 `FilmBadge` 胶卷外壳、片头和状态标记。型号、来源及对应厂商资料见 `docs/图标映射.md`。
+历史版本曾在授权 GRLife 标签的既有版式上，为未匹配的 7 款胶片绘制独立标签：C200、Provia 100F、Velvia 100、X-Tra 400、Verita 200D、Vision3 200T、Vision3 50D。文字与配色由本项目定义，当时的绘制代码为 `FilmLabelArtwork.java`，随项目按 GPL-3.0-or-later 提供；原始 11 张 GRLife PNG 没有改写。新标签和原标签使用同一 `FilmBadge` 胶卷外壳、片头和状态标记。型号、来源及对应厂商资料见 `docs/图标映射.md`。
