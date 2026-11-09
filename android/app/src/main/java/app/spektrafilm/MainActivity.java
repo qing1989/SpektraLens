@@ -959,12 +959,13 @@ public final class MainActivity extends Activity {
       // 图标就能长到卡宽的 80%（100×80 画布），比原来 45dp 的小图大三分之一。
       int screenDp = getResources().getConfiguration().screenWidthDp;
       if (wideEditor()) screenDp = Math.round(screenDp / 2.1f);
-      final int cardGap = 4;
+      final int cardGap = 6;
       final int stride = Math.max(64, (screenDp - 52) / 4);
       final int cardWidth = stride - cardGap;
       final int iconHeight = Math.round(cardWidth * .80f);
-      final int labelHeight = 33;
-      final int cardHeight = iconHeight + labelHeight + 4 + 4 + 8;
+      // 两行名称需要 38dp：11sp × 2 行再加字体自带的上下留白，33dp 会把第二行顶出去。
+      final int labelHeight = 38;
+      final int cardHeight = iconHeight + labelHeight + 3 + 3 + 6;
 
       HorizontalScrollView filmScroll = new HorizontalScrollView(this);
       filmScroll.setHorizontalScrollBarEnabled(false);
@@ -979,14 +980,21 @@ public final class MainActivity extends Activity {
         boolean selected = stock.id.equals(settings.optString("film_stock"));
         if (selected) selectedPosition = position;
         LinearLayout card = vertical();
-        card.setPadding(dp(2), dp(4), dp(2), dp(4));
-        GradientDrawable shape = box(selected ? AppStyle.CONTROL : Color.TRANSPARENT, AppStyle.R_CARD);
-        shape.setStroke(Math.max(1, dp(.8f)), selected ? ACCENT : Color.TRANSPARENT);
-        card.setBackground(shape);
+        card.setPadding(dp(1), dp(3), dp(1), dp(3));
         card.setSelected(selected);
         card.setFocusable(true);
         FilmBadge badge = new FilmBadge(this, stock.id, stock.name, false);
-        add(card, badge, -1, iconHeight);
+        // 选中态画在图标外圈。整卡描边会把两行名称一起圈进来，卡片又窄，描出来是个细长的
+        // 怪形状，而且名称换行就顶到框上；只圈图标既像「挑了这一卷」，也不会被文字撑变形。
+        FrameLayout iconBox = new FrameLayout(this);
+        int inset = dp(3);
+        iconBox.setPadding(inset, inset, inset, inset);
+        iconBox.addView(badge, new FrameLayout.LayoutParams(-1, -1));
+        GradientDrawable ring =
+            box(selected ? AppStyle.withAlpha(ACCENT, .12f) : Color.TRANSPARENT, 12);
+        if (selected) ring.setStroke(Math.max(1, dp(1.8f)), ACCENT);
+        iconBox.setBackground(ring);
+        add(card, iconBox, -1, iconHeight);
         TextView name = text(shortName(stock.name), AppStyle.TYPE_MICRO, selected ? ACCENT : INK);
         name.setMaxLines(2);
         name.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
@@ -994,7 +1002,7 @@ public final class MainActivity extends Activity {
         name.setLineSpacing(dp(1), 1f);
         // 图标与文字之间留一口气，贴着图标会显得拥挤。
         LinearLayout.LayoutParams nameLayout = new LinearLayout.LayoutParams(-1, dp(labelHeight));
-        nameLayout.topMargin = dp(8);
+        nameLayout.topMargin = dp(6);
         card.addView(name, nameLayout);
         card.setTooltipText(stock.name);
         card.setContentDescription("胶片 " + stock.name + (selected ? "，已选" : ""));
@@ -1038,6 +1046,9 @@ public final class MainActivity extends Activity {
       pick.setPadding(dp(16), 0, dp(16), 0);
       pick.setMinHeight(0);
       pick.setTextSize(AppStyle.TYPE_LABEL);
+      // 宽度跟着文字走：一旦被挤就整行折成两行，药丸里塞两行很难看，所以锁死单行。
+      pick.setSingleLine(true);
+      pick.setEllipsize(android.text.TextUtils.TruncateAt.END);
       pick.setOnClickListener(v -> chooseStock(false));
       add(heading, pick, -2, 40);
       add(editor, heading, -1, 40);
@@ -1099,6 +1110,8 @@ public final class MainActivity extends Activity {
       TextView pick = button(formatName() + "", ACCENT, AppStyle.CONTROL);
       pick.setTextSize(AppStyle.TYPE_LABEL);
       pick.setPadding(dp(14), 0, dp(14), 0);
+      pick.setSingleLine(true);
+      pick.setEllipsize(android.text.TextUtils.TruncateAt.END);
       pick.setMinHeight(0);
       pick.setOnClickListener(
           v ->
