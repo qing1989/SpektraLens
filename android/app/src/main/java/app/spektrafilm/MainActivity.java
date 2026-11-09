@@ -12,6 +12,8 @@ import android.os.*;
 import android.provider.MediaStore;
 import android.view.*;
 import android.widget.*;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
@@ -36,6 +38,7 @@ public final class MainActivity extends Activity {
   private SharedPreferences prefs;
   private LinearLayout root, editor, header, statusRow, editorBody, previewColumn, toolsColumn;
   private PanelHandle panelHandle;
+  private OnBackInvokedCallback backCallback;
   private boolean panelExpanded;
   private float panelDragY;
   private int panelDragHeight;
@@ -126,6 +129,7 @@ public final class MainActivity extends Activity {
     committed = settings.toString();
     loadLibrary();
     buildUI();
+    installBackHandler();
     updateStockLabels();
     setStatus("正在准备 " + getString(R.string.app_name) + "…", true);
     initializeRenderer();
@@ -1504,12 +1508,24 @@ public final class MainActivity extends Activity {
 
   @Override
   public void onBackPressed() {
+    // Android 13 及以上的返回手势走 OnBackInvokedCallback（见 installBackHandler）；这里只覆盖 12L 及以下。
+    handleBack();
+  }
+
+  private void handleBack() {
     if (activeImport != null) {
       cancelImport("已取消导入");
       return;
     }
     if (homeScreen.getVisibility() != View.VISIBLE) showHome();
-    else super.onBackPressed();
+    else finish();
+  }
+
+  private void installBackHandler() {
+    if (Build.VERSION.SDK_INT < 33) return;
+    backCallback = this::handleBack;
+    getOnBackInvokedDispatcher()
+        .registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
   }
 
   @Override
@@ -3241,6 +3257,10 @@ public final class MainActivity extends Activity {
   protected void onDestroy() {
     if (flowingBackground != null) flowingBackground.setHostResumed(false);
     if (gallerySheet != null) gallerySheet.dismiss();
+    if (backCallback != null && Build.VERSION.SDK_INT >= 33) {
+      getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+      backCallback = null;
+    }
     destroyed = true;
     if (homeImages != null) homeImages.close();
     if (activeImport != null) {
