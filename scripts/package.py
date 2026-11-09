@@ -24,9 +24,12 @@ validate(apk)
 with zipfile.ZipFile(apk) as z:
     names = z.namelist()
     assert 'lib/arm64-v8a/libspektra.so' in names
-    assert 'lib/x86_64/libspektra.so' in names
     assert 'lib/arm64-v8a/libvk_swiftshader.so' in names
-    assert 'lib/x86_64/libvk_swiftshader.so' in names
+    # x86_64 is only packaged for emulator builds (-Pabis=arm64-v8a,x86_64); a delivery APK may
+    # legitimately contain arm64 only.
+    if any(n.startswith('lib/x86_64/') for n in names):
+        assert 'lib/x86_64/libspektra.so' in names
+        assert 'lib/x86_64/libvk_swiftshader.so' in names
     assert len([n for n in names if n.startswith('assets/engine/profiles/') and n.endswith('.json')]) == 28
     assert len([n for n in names if n.startswith('assets/engine/vulkan/') and n.endswith('.spv')]) == 35
 shutil.copy2(apk, OUT / f'SpektraLens-v{version}-debug.apk')
