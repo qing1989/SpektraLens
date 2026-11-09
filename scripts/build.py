@@ -13,7 +13,11 @@ sdk = Path(os.environ.get('ANDROID_HOME', ROOT / '.tooling/sdk'))
 jdk = os.environ.get('JAVA_HOME')
 if not jdk:
     candidates = glob.glob(str(ROOT / '.tooling/jdk/*/Contents/Home')) + glob.glob(str(FALLBACK / 'jdk/*/Contents/Home'))
-    if not candidates: sys.exit('Set JAVA_HOME to JDK 17')
+    if not candidates:
+        sys.exit(
+            'Set JAVA_HOME to JDK 17.\n'
+            f'Looked in: {ROOT / ".tooling/jdk"}  and  {FALLBACK / "jdk"}\n'
+            '(the second path belongs to a sibling project and only exists on this machine)')
     jdk = candidates[0]
 cache = FALLBACK / 'gradle-home' if (FALLBACK / 'gradle-home').exists() else ROOT / '.tooling/gradle-home'
 env = dict(os.environ, JAVA_HOME=jdk, ANDROID_HOME=str(sdk), ANDROID_SDK_ROOT=str(sdk),
