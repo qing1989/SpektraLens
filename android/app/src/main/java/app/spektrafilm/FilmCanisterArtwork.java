@@ -3,20 +3,35 @@
 package app.spektrafilm;
 
 import android.graphics.*;
+import java.util.Locale;
 import org.json.JSONObject;
 
-/** Original cartridge illustration. Coordinates are in a 100 × 80 design space. */
+/**
+ * Flat cartridge label: stock colour on top, speed code as the hero, a maker line or push tag
+ * below. Drawn in a 100 × 80 design space.
+ *
+ * <p>Replaces the earlier 3D canister illustration. The card in the film list is only about 34 dp
+ * tall, and the eight layers of gradient plus a sprocketed leader left the speed code unreadable at
+ * that size. Everything here is flat fill and a hairline frame, so it survives downscaling without
+ * any image assets.
+ */
 final class FilmCanisterArtwork {
   static final int WIDTH = 100, HEIGHT = 80;
+
+  private static final float RADIUS = 13f;
+  private static final float DIVIDER = 55f;
+  private static final int BLACK = 0xff000000, WHITE = 0xffffffff;
+  private static final int DARK_INK = 0xff0d1010, LIGHT_INK = 0xfffaf6ec;
+
   private final Canvas c;
   private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-  private static final int WHITE = Color.WHITE, BLACK = Color.BLACK;
+  private final RectF rect = new RectF();
 
-  static Bitmap render(JSONObject stock) {
+  static Bitmap render(String id, JSONObject stock) {
     Bitmap bitmap = Bitmap.createBitmap(WIDTH * 3, HEIGHT * 3, Bitmap.Config.ARGB_8888);
     Canvas canvas = new Canvas(bitmap);
     canvas.scale(3, 3);
-    new FilmCanisterArtwork(canvas).draw(stock);
+    new FilmCanisterArtwork(canvas).draw(id, stock);
     return bitmap;
   }
 
@@ -24,14 +39,11 @@ final class FilmCanisterArtwork {
     c = canvas;
   }
 
-  private void solid(int color) {
-    p.setShader(null);
-    p.setColor(color);
-  }
-
-  private void across(float start, float end, int[] colors, float[] stops) {
-    p.setColor(WHITE);
-    p.setShader(new LinearGradient(start, 0, end, 0, colors, stops, Shader.TileMode.CLAMP));
+  /** Maker line, taken from the stock id prefix: fujifilm_c200 → FUJIFILM. */
+  private static String maker(String id) {
+    int cut = id.indexOf('_');
+    String prefix = cut > 0 ? id.substring(0, cut) : id;
+    return prefix.toUpperCase(Locale.ROOT);
   }
 
   private static int mix(int a, int b, float t) {
@@ -41,129 +53,104 @@ final class FilmCanisterArtwork {
         Math.round(Color.blue(a) * (1 - t) + Color.blue(b) * t));
   }
 
-  // A band around the cylinder. Its front edge dips towards the viewer.
-  private static Path band(float left, float right, float top, float bottom, float bow) {
-    float mid = (left + right) / 2;
-    Path path = new Path();
-    path.moveTo(left, top);
-    path.quadTo(mid, top + 2 * bow, right, top);
-    path.lineTo(right, bottom);
-    path.quadTo(mid, bottom + 2 * bow, left, bottom);
-    path.close();
-    return path;
+  private static int withAlpha(int color, float alpha) {
+    return (color & 0x00ffffff) | (Math.round(alpha * 255) << 24);
   }
 
-  private void metal() {
-    across(
-        19,
-        74,
-        new int[] {0xff303539, 0xff778181, 0xff42494a, 0xff242a2c, 0xff545a58, 0xff242729},
-        new float[] {0, .17f, .38f, .74f, .92f, 1});
+  private static int inkOf(int color) {
+    return Color.luminance(color) > 0.26f ? DARK_INK : LIGHT_INK;
   }
 
-  private void leader() {
-    Path tail = new Path();
-    tail.moveTo(64, 32);
-    tail.cubicTo(74, 34, 79, 32, 86, 29);
-    tail.quadTo(89, 28, 89, 31);
-    tail.lineTo(89, 39);
-    tail.quadTo(89, 41, 87, 42);
-    tail.quadTo(83, 43, 83, 47);
-    tail.lineTo(83, 58);
-    tail.quadTo(77, 63, 64, 63);
-    tail.close();
-    tail.setFillType(Path.FillType.EVEN_ODD);
-    for (int i = 0; i < 2; i++) {
-      float x = 75 + 6 * i, y = 35 - 2 * i;
-      tail.addRoundRect(x, y, x + 3.6f, y + 3.2f, .65f, .65f, Path.Direction.CW);
-    }
-    tail.addRoundRect(75, 55, 78.6f, 58.2f, .65f, .65f, Path.Direction.CW);
-    across(64, 90, new int[] {0xff32291f, 0xff76543a, 0xffa57d51}, null);
-    c.drawPath(tail, p);
+  private void fill(int color) {
+    p.setShader(null);
+    p.setColor(color);
   }
 
-  private void draw(JSONObject stock) {
+  private void draw(String id, JSONObject stock) {
     int coat = Color.parseColor(stock.optString("coat", "#ABADA8"));
     int accent = Color.parseColor(stock.optString("accent", "#577B78"));
-    solid(0x40000000);
-    c.drawOval(14, 67, 84, 79, p);
-    solid(0x5c000000);
-    c.drawOval(21, 69, 76, 76, p);
-    leader();
+    int ink = inkOf(coat);
 
-    metal();
-    c.drawPath(band(19, 73, 15, 67, 5), p);
-    Path wrap = band(20, 72, 18, 64, 4.5f);
+    Path label = new Path();
+    rect.set(0, 0, WIDTH, HEIGHT);
+    label.addRoundRect(rect, RADIUS, RADIUS, Path.Direction.CW);
+
     c.save();
-    c.clipPath(wrap);
-    // Matte stock paper, glancing light at left and a soft falloff round the far side.
-    across(
-        20,
-        72,
-        new int[] {
-          mix(coat, BLACK, .31f),
-          mix(coat, WHITE, .13f),
-          coat,
-          mix(coat, BLACK, .08f),
-          mix(coat, BLACK, .37f)
-        },
-        new float[] {0, .17f, .44f, .72f, 1});
-    c.drawPath(wrap, p);
-    solid(accent);
-    c.drawPath(band(19, 73, 59, 65, 4.5f), p);
-    solid(mix(accent, WHITE, .48f));
-    c.drawPath(band(19, 73, 59, 59.7f, 4.5f), p);
-    String series = stock.optString("series");
-    if ("reversal".equals(series)) {
-      solid(accent);
-      c.drawPath(band(19, 73, 56.8f, 57.8f, 4.5f), p);
-    } else if ("cine".equals(series)) {
-      solid(mix(accent, BLACK, .56f));
-      for (int i = 0; i < 4; i++) c.drawRoundRect(29 + i * 9, 64, 34 + i * 9, 66, .6f, .6f, p);
-    }
+    c.clipPath(label);
+    fill(mix(coat, BLACK, .42f));
+    c.drawRect(0, DIVIDER, WIDTH, HEIGHT, p);
+    fill(coat);
+    c.drawRect(0, 0, WIDTH, DIVIDER, p);
+    // Paper edge catching the light, then the accent rule that ties the family names together.
+    fill(withAlpha(mix(coat, WHITE, .26f), .5f));
+    c.drawRect(0, DIVIDER - .8f, WIDTH, DIVIDER + .85f, p);
+    fill(accent);
+    rect.set(18, 57.6f, 82, 60.2f);
+    c.drawRoundRect(rect, 1.3f, 1.3f, p);
 
-    // One family name and one large speed code, readable without a manufacturer logo.
-    int ink = Color.luminance(coat) >= .18 ? 0xff101412 : 0xfffff9ec;
-    solid(ink);
-    p.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
-    p.setTextAlign(Paint.Align.CENTER);
-    text(stock.optString("family", "FILM"), 45, 34, 7.8f, 45);
-    text(stock.optString("mark", "35"), 45, 56.7f, 23, 46);
+    int push = stock.optInt("push");
+    p.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+    if (push > 0) {
+      fill(accent);
+      rect.set(66, 59, 90, 72);
+      c.drawRoundRect(rect, 6.5f, 6.5f, p);
+      fill(inkOf(accent));
+      centered("+" + push, 78, 68.8f, 8.6f, 22);
+    } else {
+      fill(withAlpha(ink, .38f));
+      tracked(maker(id), 50, 68.4f, 6.4f, 2f, 60);
+    }
     c.restore();
 
-    // Independent rolled hems, graphite lid, and a recessed winding spindle.
-    metal();
-    c.drawPath(band(18, 74, 65, 69, 4.8f), p);
-    c.drawPath(band(18, 74, 13, 18, 4.8f), p);
-    solid(0x86c1c5bb);
-    c.drawPath(band(19, 73, 65.4f, 66.2f, 4.6f), p);
-    c.drawPath(band(19, 73, 16.2f, 17, 4.6f), p);
-    solid(0xff7c8380);
-    c.drawOval(18, 8.5f, 74, 18.5f, p);
-    solid(0xff343a39);
-    c.drawOval(19, 9, 73, 17.6f, p);
-    solid(0xff59605d);
-    c.drawOval(28, 10.5f, 63, 16.3f, p);
-    across(35, 55, new int[] {0xff303536, 0xff778080, 0xff42494a, 0xff242827}, null);
-    c.drawPath(band(35, 55, 4.8f, 12, 2.1f), p);
-    solid(0xff808884);
-    c.drawOval(35, 2.7f, 55, 7, p);
-    solid(0xff202423);
-    c.drawOval(39.2f, 3.7f, 51, 6.1f, p);
-    int push = stock.optInt("push");
-    if (push > 0) {
-      solid(0xffe7cda9);
-      c.drawRoundRect(68, 44, 93, 59, 3, 3, p);
-      solid(0xff342b28);
-      text("+" + push, 80.5f, 55.5f, 12, 22);
-    }
+    // Frame: a hairline that keeps the tile from bleeding into the card behind it.
+    p.setStyle(Paint.Style.STROKE);
+    p.setStrokeWidth(1);
+    fill(withAlpha(WHITE, .09f));
+    rect.set(.5f, .5f, WIDTH - .5f, HEIGHT - .5f);
+    c.drawRoundRect(rect, RADIUS - .4f, RADIUS - .4f, p);
+    p.setStyle(Paint.Style.FILL);
+
+    fill(withAlpha(ink, .58f));
+    tracked(stock.optString("family", "FILM"), 50, 24, 7.6f, 2.4f, 74);
+
+    fill(ink);
+    p.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+    centered(stock.optString("mark", "35"), 50, 49, 27, 78);
   }
 
-  private void text(String value, float x, float baseline, float size, float maxWidth) {
+  /** Shrinks horizontally rather than wrapping, then centres on {@code centerX}. */
+  private void centered(String value, float centerX, float baseline, float size, float maxWidth) {
     p.setTextSize(size);
     p.setTextScaleX(1);
-    p.setTextScaleX(Math.min(1, maxWidth / Math.max(1, p.measureText(value))));
-    c.drawText(value, x, baseline, p);
+    float width = p.measureText(value);
+    if (width > maxWidth) p.setTextScaleX(maxWidth / width);
+    p.setTextAlign(Paint.Align.CENTER);
+    c.drawText(value, centerX, baseline, p);
+    p.setTextScaleX(1);
+  }
+
+  /** Same, with per-character tracking so short family names keep their wide-set label look. */
+  private void tracked(
+      String value, float centerX, float baseline, float size, float tracking, float maxWidth) {
+    p.setTextSize(size);
+    p.setTextScaleX(1);
+    int n = value.length();
+    if (n == 0) return;
+    float[] advance = new float[n];
+    float total = 0;
+    for (int i = 0; i < n; i++) {
+      advance[i] = p.measureText(value, i, i + 1);
+      total += advance[i];
+    }
+    total += tracking * (n - 1);
+    float scale = total > maxWidth ? maxWidth / total : 1;
+    p.setTextScaleX(scale);
+    p.setTextAlign(Paint.Align.LEFT);
+    float x = centerX - total * scale / 2;
+    for (int i = 0; i < n; i++) {
+      c.drawText(value, i, i + 1, x, baseline, p);
+      x += (advance[i] + tracking) * scale;
+    }
     p.setTextScaleX(1);
   }
 }

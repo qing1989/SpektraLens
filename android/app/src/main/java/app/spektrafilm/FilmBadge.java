@@ -43,7 +43,7 @@ final class FilmBadge extends View {
     JSONObject stock = recipes.optJSONObject(id);
     if (stock == null)
       throw new IllegalArgumentException("No film icon for " + id + " (" + name + ")");
-    artwork = cache.computeIfAbsent(id, ignored -> FilmCanisterArtwork.render(stock));
+    artwork = cache.computeIfAbsent(id, ignored -> FilmCanisterArtwork.render(id, stock));
     setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
   }
 
