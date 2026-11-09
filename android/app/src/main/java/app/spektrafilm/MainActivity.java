@@ -337,7 +337,14 @@ public final class MainActivity extends Activity {
     putDefault("product_defaults", true);
     // Preserve the imported file's exposure until the user explicitly enables the meter.
     putDefault("auto_exposure", false);
-    putDefault("auto_exposure_method", "center_weighted");
+    putDefault("auto_exposure_method", "balanced");
+    // 旧版三档测光（center_weighted / average / median）已不在面板上出现；开着测光的老会话
+    // 迁到上游的均衡档，否则面板上会一个都不选中。
+    if (settings.optBoolean("auto_exposure", false)) {
+      String meter = settings.optString("auto_exposure_method", "balanced");
+      if (meter.equals("center_weighted") || meter.equals("average") || meter.equals("median"))
+        set("auto_exposure_method", "balanced");
+    }
     putDefault("glare_amount", 1);
     putDefault("dir_couplers_amount", 1);
     putDefault("halation_scatter_amount", 1);
@@ -1110,12 +1117,37 @@ public final class MainActivity extends Activity {
         slider("glare_amount", "相纸炫光", 0, 30, .5, " ×");
         slider("preflash_exposure", "相纸预闪", 0, .1, .002, "");
       }
-      toggle("auto_exposure", "自动测光", false);
-      choice(
-          "测光方式",
-          new String[] {"中央加权", "平均测光", "中位数"},
-          new String[] {"center_weighted", "average", "median"},
-          "auto_exposure_method");
+      // 测光：上游把「关闭」也当成一个档位（Custom），所以这里是一排意图而不是开关 + 下拉，
+      // 免得开关关着、下面那行还亮着却不起作用。
+      TextView meterLabel = text("测光", AppStyle.TYPE_LABEL, MUTED);
+      add(editor, meterLabel, -1, 22);
+      LinearLayout meters = horizontal();
+      String[] meterNames = {"自定义", "均衡", "中央主体", "保护高光", "保护阴影"};
+      String[] meterIds = {"custom", "balanced", "center", "protect_highlights", "protect_shadows"};
+      String activeMeter = meterState();
+      for (int i = 0; i < meterNames.length; i++) {
+        boolean on = meterIds[i].equals(activeMeter);
+        TextView chip = button(meterNames[i], on ? INK : MUTED, on ? AppStyle.CONTROL : BG);
+        chip.setTextSize(AppStyle.TYPE_LABEL);
+        chip.setPadding(dp(4), 0, dp(4), 0);
+        chip.setMinHeight(0);
+        chip.setSelected(on);
+        chip.setAutoSizeTextTypeUniformWithConfiguration(
+            9, 11, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
+        final String meter = meterIds[i];
+        chip.setOnClickListener(
+            v -> {
+              set("auto_exposure", !meter.equals("custom"));
+              if (!meter.equals("custom")) set("auto_exposure_method", meter);
+              scheduleRender();
+              buildPanel();
+            });
+        LinearLayout.LayoutParams chipLayout = new LinearLayout.LayoutParams(0, dp(38), 1);
+        if (i > 0) chipLayout.leftMargin = dp(4);
+        meters.addView(chip, chipLayout);
+      }
+      add(editor, meters, -1, 38);
+      gap(editor, 9);
       LinearLayout format = horizontal();
       TextView label = text("胶片画幅", AppStyle.TYPE_LABEL, INK);
       format.addView(label, new LinearLayout.LayoutParams(0, dp(40), 1));
@@ -1626,6 +1658,12 @@ public final class MainActivity extends Activity {
             buildPanel();
           });
     }
+  }
+
+  /** 面板上那个「测光」药丸当前该亮哪一档；关闭测光就是「自定义」。 */
+  private String meterState() {
+    if (!settings.optBoolean("auto_exposure", false)) return "custom";
+    return settings.optString("auto_exposure_method", "balanced");
   }
 
   private String formatName() {
