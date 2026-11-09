@@ -1020,17 +1020,24 @@ public final class MainActivity extends Activity {
         // 选中态画在图标外圈。整卡描边会把两行名称一起圈进来，卡片又窄，描出来是个细长的
         // 怪形状，而且名称换行就顶到框上；只圈图标既像「挑了这一卷」，也不会被文字撑变形。
         FrameLayout iconBox = new FrameLayout(this);
+        // 图标与环之间留 2dp 空隙，但描边是向内画的，所以内边距要写成「空隙 + 描边」：
+        // 环占外侧 stroke，剩下的才是露出来的空隙。只按空隙设内边距，环会贴到图标上。
+        final float gapDp = 2, strokeDp = 1.6f;
+        int pad = dp(gapDp + strokeDp);
+        iconBox.setPadding(pad, pad, pad, pad);
         iconBox.addView(badge, new FrameLayout.LayoutParams(-1, -1));
-        // 环直接画在图标自己的矩形上，半径用图标自己的半径，描边向内 2dp——三个量都
-        // 来自同一个图形，圆角才会严丝合缝。留间隙的写法得分两步对：环的内弧半径是
-        // outer − stroke，只补间隙不补描边，内弧就会比图标更圆（之前四角那道楔形空隙
-        // 就是这么来的）；而且图标在框里还有缩放余量，间隙会上下不均。
+        // 外径同理要补两项：环的内弧 = 外径 − 描边，要让内弧正好落在「图标边缘 + 空隙」上，
+        // 外径就是 图标半径 + 空隙 + 描边。少补描边（上一版就是），内弧会比图标更圆，
+        // 四角挤出一道楔形空隙，看着就是两个圆角不一样。
         float iconScale =
             Math.min(
-                (cardWidth - 2) / (float) FilmCanisterArtwork.WIDTH,
-                iconHeight / (float) FilmCanisterArtwork.HEIGHT);
-        GradientDrawable ring = box(Color.TRANSPARENT, FilmCanisterArtwork.RADIUS * iconScale);
-        if (selected) ring.setStroke(Math.max(1, dp(2f)), ACCENT);
+                (cardWidth - 2 - 2 * pad / (float) dp(1)) / (float) FilmCanisterArtwork.WIDTH,
+                (iconHeight - 2 * pad / (float) dp(1)) / (float) FilmCanisterArtwork.HEIGHT);
+        GradientDrawable ring =
+            box(
+                Color.TRANSPARENT,
+                FilmCanisterArtwork.RADIUS * iconScale + gapDp + strokeDp);
+        if (selected) ring.setStroke(Math.max(1, dp(strokeDp)), ACCENT);
         iconBox.setBackground(ring);
         add(card, iconBox, -1, iconHeight);
         TextView name = text(shortName(stock.name), AppStyle.TYPE_MICRO, selected ? ACCENT : INK);
