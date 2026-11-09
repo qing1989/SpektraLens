@@ -1,0 +1,111 @@
+name: Android CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: 素材与密钥检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          lfs: false
+      - name: 禁止入库的素材与凭据
+        run: |
+          set -euo pipefail
+          fail=0
+          check() {
+            local label="$1"; shift
+            local hits
+            hits=$(git ls-files -- "$@" || true)
+            if [ -n "$hits" ]; then
+              echo "::error::$label 不应出现在仓库中："
+              echo "$hits"
+              fail=1
+            fi
+          }
+          check "历史 GRLife 胶卷原图" '*grlife*' '*/grlife/*'
+          check "GRLife 授权素材说明文件" '*GRLife-Film-Icons.txt'
+          check "签名文件" '*.jks' '*.keystore' '*.p12' '*.pem' '*.key'
+          check "预编译安装包" '*.apk' '*.aab'
+          check "本地 SDK 配置" '*/local.properties'
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "仓库不含受限素材、签名或预编译产物。"
+
+  build:
+    name: 构建 Debug APK
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: 安装 SDK 组件
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager --install \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;27.2.12479018" \
+            "cmake;3.22.1"
+
+      - name: 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: 构建
+        run: |
+          python3 scripts/build.py -PpublicBuild=true :app:assembleDebug :app:lintDebug
+
+      - name: 校验产物
+        run: |
+          set -euo pipefail
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          test -f "$apk"
+          ls -lh "$apk"
+          sha256sum "$apk" | tee app-debug.apk.sha256
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpektraLens-debug-apk
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            app-debug.apk.sha256
+          retention-days: 14
+
+      - name: 上传 Lint 报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: android/app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+          retention-days: 14
