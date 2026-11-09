@@ -82,7 +82,8 @@ final class Haptics implements InvocationHandler {
     }
     return view.isClickable()
             || view instanceof AdapterView
-            || view instanceof android.widget.SeekBar
+            // SeekBar 不在此列：AdjustmentSeekBar 自带刻度震动，点按跳值已有一下，
+            // 再叠全局点按反馈就是连续两震。
             || view instanceof PhotoView
             || view instanceof CurveEditor
             || view instanceof CropEditor

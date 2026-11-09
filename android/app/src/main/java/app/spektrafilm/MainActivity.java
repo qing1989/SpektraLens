@@ -1730,6 +1730,8 @@ public final class MainActivity extends Activity {
     AdjustmentSeekBar bar = new AdjustmentSeekBar(this, sliderColors(key));
     bar.setMax((int) Math.round((max - min) / step));
     bar.setProgress((int) Math.round((settings.optDouble(key, 0) - min) / step));
+    // 双极参数（-x..+y）在 0（默认值）处设刻度，拖回默认那一下的触感更明确
+    if (min < 0 && max > 0) bar.setDetentProgress((int) Math.round(-min / step));
     bar.setContentDescription(label);
     controls.add(bar);
     LinearLayout.LayoutParams trackLayout = new LinearLayout.LayoutParams(0, dp(48), 1);

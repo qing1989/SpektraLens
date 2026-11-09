@@ -5,12 +5,36 @@ package app.spektrafilm;
 import android.content.Context;
 import android.graphics.*;
 import android.graphics.drawable.Drawable;
+import android.os.SystemClock;
+import android.view.HapticFeedbackConstants;
 import android.widget.SeekBar;
 import java.util.Arrays;
 
 /** Native seeking and accessibility with a full gradient track and a white capsule thumb. */
 final class AdjustmentSeekBar extends SeekBar {
   private final Track track;
+  private OnSeekBarChangeListener delegate;
+  private int lastProgress, detent = Integer.MIN_VALUE;
+  private long lastTick;
+
+  /** 拖动时每跨一格刻度震一下；过零刻度换成更明确的一下，方便盲拖回默认值。 */
+  private final OnSeekBarChangeListener ticker =
+      new OnSeekBarChangeListener() {
+        public void onProgressChanged(SeekBar bar, int pos, boolean user) {
+          if (user) tick(pos);
+          else lastProgress = pos; // 程序设值只对齐基线，不震动
+          if (delegate != null) delegate.onProgressChanged(bar, pos, user);
+        }
+
+        public void onStartTrackingTouch(SeekBar bar) {
+          lastProgress = bar.getProgress();
+          if (delegate != null) delegate.onStartTrackingTouch(bar);
+        }
+
+        public void onStopTrackingTouch(SeekBar bar) {
+          if (delegate != null) delegate.onStopTrackingTouch(bar);
+        }
+      };
 
   public AdjustmentSeekBar(Context context) {
     this(context, new int[] {0xff67646a, 0xffac7e58, 0xffff7a1a});
@@ -36,6 +60,33 @@ final class AdjustmentSeekBar extends SeekBar {
     int inset = half + Math.max(2, Math.round(2 * density));
     setThumbOffset(half);
     setPadding(inset, 0, inset, 0);
+  }
+
+  @Override
+  public void setOnSeekBarChangeListener(OnSeekBarChangeListener listener) {
+    delegate = listener;
+    super.setOnSeekBarChangeListener(listener == null ? null : ticker);
+  }
+
+  /** 双极参数（-x..+y）把 0（默认值）所在格设为刻度，拖过或落上时换成更重的一下。 */
+  void setDetentProgress(int progress) {
+    detent = progress;
+  }
+
+  private void tick(int pos) {
+    int from = lastProgress;
+    lastProgress = pos;
+    if (pos == from) return; // 顶在端点或格内微动，不震
+    boolean zero =
+        detent != Integer.MIN_VALUE
+            && ((from < detent && pos >= detent) || (from > detent && pos <= detent));
+    long now = SystemClock.uptimeMillis();
+    // 刻度限 25 次/秒，快速甩动是连续的嗒嗒声而不是一片嗡嗡；过零不受限频。
+    if (zero || now - lastTick >= 40) {
+      lastTick = now;
+      performHapticFeedback(
+          zero ? HapticFeedbackConstants.CONTEXT_CLICK : HapticFeedbackConstants.CLOCK_TICK);
+    }
   }
 
   void setTrackColors(int[] colors) {
