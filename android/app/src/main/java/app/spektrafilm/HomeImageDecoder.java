@@ -95,18 +95,27 @@ final class HomeImageDecoder {
 
     // Per-axis overlap: which source cells cover a destination cell, and by how much.
     int maxSpan = (int) Math.ceil(Math.max(stepX, stepY)) + 2;
-    double[] xWeight = new double[maxSpan], yWeight = new double[maxSpan];
     int[] xFrom = new int[width], xSpan = new int[width];
+    // Horizontal weights are kept per destination column. With a fractional stepX the first and
+    // last source cell of a column are only partly covered, and how much differs from column to
+    // column, so one shared scratch array cannot hold them: a previous version filled a single
+    // array in this loop and used it afterwards, leaving every column on the last column's weights.
+    // Columns whose span is 1 then summed to almost no coverage, and the resulting transparent
+    // strips drew as evenly spaced vertical hairlines across the preview.
+    double[] xWeights = new double[width * maxSpan];
     for (int x = 0; x < width; x++) {
       double left = x * stepX, right = Math.min(w, left + stepX);
-      xFrom[x] = (int) left;
-      xSpan[x] = Math.max(1, (int) Math.ceil(right) - xFrom[x]);
-      for (int i = 0; i < xSpan[x]; i++) {
-        double cell = xFrom[x] + i;
-        xWeight[i] = Math.min(right, cell + 1) - Math.max(left, cell);
+      int from = (int) left, span = Math.max(1, (int) Math.ceil(right) - from);
+      xFrom[x] = from;
+      xSpan[x] = span;
+      int base = x * maxSpan;
+      for (int i = 0; i < span; i++) {
+        double cell = from + i;
+        xWeights[base + i] = Math.min(right, cell + 1) - Math.max(left, cell);
       }
     }
 
+    double[] yWeight = new double[maxSpan];
     for (int y = 0; y < height; y++) {
       double top = y * stepY, bottom = Math.min(h, top + stepY);
       int from = (int) top;
@@ -118,27 +127,31 @@ final class HomeImageDecoder {
       int rowStart = y * width;
       for (int x = 0; x < width; x++) {
         double alpha = 0, red = 0, green = 0, blue = 0;
-        int firstColumn = xFrom[x], columns = xSpan[x];
+        int firstColumn = xFrom[x], columns = xSpan[x], base = x * maxSpan;
         for (int j = 0; j < span; j++) {
           double weightY = yWeight[j];
           int row = (from + j) * w + firstColumn;
           for (int i = 0; i < columns; i++) {
             int color = pixels[row + i];
             // Premultiply by the source alpha so transparent edges do not darken the average.
-            double weight = weightY * xWeight[i] * (color >>> 24);
+            double weight = weightY * xWeights[base + i] * (color >>> 24);
             alpha += weight;
             red += weight * ((color >>> 16) & 255);
             green += weight * ((color >>> 8) & 255);
             blue += weight * (color & 255);
           }
         }
+        if (alpha <= 0) {
+          out[rowStart + x] = 0;
+          continue;
+        }
+        // Clamp before shifting: a value above 255 would spill into the colour bits.
+        int alpha8 = Math.min(255, (int) Math.round(alpha / area));
         out[rowStart + x] =
-            alpha == 0
-                ? 0
-                : ((int) Math.round(alpha / area) << 24)
-                    | ((int) Math.round(red / alpha) << 16)
-                    | ((int) Math.round(green / alpha) << 8)
-                    | (int) Math.round(blue / alpha);
+            (alpha8 << 24)
+                | (Math.min(255, (int) Math.round(red / alpha)) << 16)
+                | (Math.min(255, (int) Math.round(green / alpha)) << 8)
+                | Math.min(255, (int) Math.round(blue / alpha));
       }
     }
 

@@ -81,7 +81,10 @@ final class HomePhotoImages implements AutoCloseable {
     this.scroll = scroll;
     this.rawWorker = rawWorker;
     this.maxEdge = HomeImageDecoder.maxEdge(context);
-    cache = new File(context.getCacheDir(), "home-images-v1");
+    // v2: v1 was written while the area resize dropped whole columns, so those PNGs have vertical
+    // hairlines baked in. The file name only carries size and mtime, so bumping the directory is
+    // the only way to make already-cached previews regenerate.
+    cache = new File(context.getCacheDir(), "home-images-v2");
     // A previous run killed mid-write leaves image-*.pending behind; the size cap below only
     // covered the finished PNGs, so those temp files used to pile up forever.
     io.execute(this::sweepPending);
@@ -90,9 +93,16 @@ final class HomePhotoImages implements AutoCloseable {
   }
 
   private void sweepPending() {
+    deleteTree(new File(context.getCacheDir(), "home-images-v1"));
     File[] files = cache.listFiles();
     if (files == null) return;
     for (File file : files) if (file.getName().endsWith(".pending")) file.delete();
+  }
+
+  private static void deleteTree(File file) {
+    File[] children = file.listFiles();
+    if (children != null) for (File child : children) deleteTree(child);
+    file.delete();
   }
 
   void setRenderer(SpectralRenderer renderer) {
