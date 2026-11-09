@@ -3,6 +3,8 @@
 package app.spektrafilm;
 
 import android.graphics.*;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.test.ActivityInstrumentationTestCase2;
 import android.widget.*;
 import java.lang.reflect.*;
@@ -110,48 +112,40 @@ public final class EditorLayoutInstrumentedTest
       throws Exception {
     activity = getActivity();
     ImageView hero = (ImageView) field("homeHero").get(activity);
+    main(
+        () -> {
+          try {
+            call("showHome");
+          } catch (Exception ex) {
+            throw new RuntimeException(ex);
+          }
+        });
     for (int[] dimensions : new int[][] {{300, 100}, {100, 300}, {120, 120}}) {
       Bitmap bitmap = Bitmap.createBitmap(dimensions[0], dimensions[1], Bitmap.Config.ARGB_8888);
       bitmap.eraseColor(Color.MAGENTA);
+      bitmap.setDensity(Bitmap.DENSITY_NONE);
+      RectF image = new RectF(0, 0, dimensions[0], dimensions[1]);
+      float[] center = {image.centerX(), image.centerY()};
       main(
           () -> {
-            try {
-              call("showHome");
-            } catch (Exception ex) {
-              throw new RuntimeException(ex);
-            }
-            hero.setImageBitmap(bitmap);
+            Drawable original = hero.getDrawable();
+            hero.setImageDrawable(new BitmapDrawable(activity.getResources(), bitmap));
+            hero.getImageMatrix().mapPoints(center);
+            hero.getImageMatrix().mapRect(image);
+            hero.setImageDrawable(original);
           });
       assertEquals(
           "Photo aspect ratio must not change the banner height",
           Math.round(240 * activity.getResources().getDisplayMetrics().density),
           hero.getHeight());
       assertEquals(ImageView.ScaleType.CENTER_CROP, hero.getScaleType());
-      RectF image =
-          new RectF(
-              0,
-              0,
-              hero.getDrawable().getIntrinsicWidth(),
-              hero.getDrawable().getIntrinsicHeight());
-      float[] center = {image.centerX(), image.centerY()};
-      hero.getImageMatrix().mapPoints(center);
-      hero.getImageMatrix().mapRect(image);
       assertEquals("Photo center stays on banner center X", hero.getWidth() / 2., center[0], 1.);
       assertEquals("Photo center stays on banner center Y", hero.getHeight() / 2., center[1], 1.);
       assertTrue(
           "Banner is filled horizontally", image.left <= 1 && image.right >= hero.getWidth() - 1);
       assertTrue(
           "Banner is filled vertically", image.top <= 1 && image.bottom >= hero.getHeight() - 1);
-      main(() -> hero.setImageBitmap(null));
       bitmap.recycle();
     }
-    main(
-        () -> {
-          try {
-            hero.setImageBitmap((Bitmap) field("source").get(activity));
-          } catch (Exception ex) {
-            throw new RuntimeException(ex);
-          }
-        });
   }
 }

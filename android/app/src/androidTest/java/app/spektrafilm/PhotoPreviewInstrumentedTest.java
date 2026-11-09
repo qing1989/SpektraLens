@@ -180,4 +180,67 @@ public final class PhotoPreviewInstrumentedTest extends InstrumentationTestCase 
           event(MotionEvent.ACTION_UP, 650, 400);
         });
   }
+
+  public void testStartingComparisonPinchDoesNotMoveDivider() {
+    main(
+        () -> {
+          original.eraseColor(Color.RED);
+          developed.eraseColor(Color.BLUE);
+          view.compare(true);
+          assertEquals(Color.RED, pixel(320, 300));
+          event(MotionEvent.ACTION_DOWN, 180, 400);
+          assertEquals(
+              "The first finger of a pinch must not move the divider", Color.RED, pixel(320, 300));
+          event(
+              MotionEvent.ACTION_POINTER_DOWN | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+              180,
+              400,
+              620,
+              400);
+          event(MotionEvent.ACTION_MOVE, 100, 400, 700, 400);
+          assertEquals("Pinch keeps the original side in place", Color.RED, pixel(320, 300));
+          event(MotionEvent.ACTION_CANCEL, 100, 400);
+        });
+  }
+
+  public void testZoomedComparisonCanPanAwayFromDivider() {
+    main(
+        () -> {
+          for (int i = 0; i < 2; i++) {
+            event(MotionEvent.ACTION_DOWN, 400, 400);
+            event(MotionEvent.ACTION_UP, 400, 400);
+          }
+          time += 500;
+          view.compare(true);
+          int detail = pixel(180, 300);
+          event(MotionEvent.ACTION_DOWN, 180, 300);
+          event(MotionEvent.ACTION_MOVE, 280, 350);
+          near(detail, pixel(280, 350));
+          assertTrue(
+              "Divider stays at the viewport center while the photo pans",
+              Color.red(pixel(400, 650)) > 210);
+          event(MotionEvent.ACTION_UP, 280, 350);
+        });
+  }
+
+  public void testZoomedComparisonDividerCanStillBeDragged() {
+    main(
+        () -> {
+          original.eraseColor(Color.RED);
+          developed.eraseColor(Color.BLUE);
+          for (int i = 0; i < 2; i++) {
+            event(MotionEvent.ACTION_DOWN, 600, 400);
+            event(MotionEvent.ACTION_UP, 600, 400);
+          }
+          time += 500;
+          view.compare(true);
+          assertEquals(
+              "Zoom must keep the divider in the visible photo", Color.RED, pixel(320, 300));
+          event(MotionEvent.ACTION_DOWN, 400, 400);
+          event(MotionEvent.ACTION_MOVE, 600, 400);
+          event(MotionEvent.ACTION_UP, 600, 400);
+          assertEquals("The handle remains draggable after zooming", Color.RED, pixel(550, 300));
+          assertEquals(Color.BLUE, pixel(700, 300));
+        });
+  }
 }

@@ -72,7 +72,6 @@ public final class ImportPipelineInstrumentedTest
               }
             });
     assertFalse("Home preview still references a recycled photo", displayed[0].isRecycled());
-    assertSame(field("source"), displayed[0]);
     getInstrumentation()
         .runOnMainSync(
             () -> {

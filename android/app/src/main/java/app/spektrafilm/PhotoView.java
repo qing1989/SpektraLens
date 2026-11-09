@@ -8,23 +8,29 @@ import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
+import android.view.ViewConfiguration;
 
 /** Both the before/after canvas and saved file use encoded sRGB pixels. */
 public final class PhotoView extends View {
   private final Paint paint = new Paint(3);
   private final RectF frame = new RectF();
+  private final RectF visibleFrame = new RectF();
   private Bitmap before, after;
   private boolean compare;
   private float split = .5f;
   private float zoom = 1, offsetX, offsetY, lastX, lastY;
   private float lastFocusX, lastFocusY;
   private boolean scaleGesture;
+  private boolean dragging, dragDivider;
+  private float downX, downY;
+  private final int touchSlop;
   private final ScaleGestureDetector scale;
   private final GestureDetector taps;
 
   public PhotoView(Context c) {
     super(c);
-    setContentDescription("照片预览；双指缩放，双击复位，开启对比后可左右拖动分界线");
+    touchSlop = ViewConfiguration.get(c).getScaledTouchSlop();
+    setContentDescription("照片预览；双指缩放，双击放大或复位；对比时拖动分界线，放大后拖动其他位置平移照片");
     scale =
         new ScaleGestureDetector(
             c,
@@ -109,21 +115,27 @@ public final class PhotoView extends View {
     c.drawRect(frame.left + 3, frame.top + 5, frame.right + 3, frame.bottom + 5, paint);
     c.drawBitmap(image, null, frame, paint);
     if (compare && before != null && after != null) {
-      float x = frame.left + split * frame.width();
+      float x = dividerX();
       c.save();
       c.clipRect(frame.left, frame.top, x, frame.bottom);
       c.drawBitmap(before, null, frame, paint);
       c.restore();
       paint.setColor(0xddffffff);
       paint.setStrokeWidth(2);
-      c.drawLine(x, frame.top, x, frame.bottom, paint);
-      c.drawCircle(x, frame.centerY(), 13 * getResources().getDisplayMetrics().density, paint);
+      c.drawLine(x, visibleFrame.top, x, visibleFrame.bottom, paint);
+      c.drawCircle(
+          x, visibleFrame.centerY(), 13 * getResources().getDisplayMetrics().density, paint);
       paint.setColor(0xff171717);
       paint.setTextSize(12 * getResources().getDisplayMetrics().density);
       paint.setTextAlign(Paint.Align.CENTER);
-      c.drawText("↔", x, frame.centerY() + 4 * getResources().getDisplayMetrics().density, paint);
-      label(c, "原图", frame.left + 8, frame.top + 8);
-      label(c, "显影", frame.right - 48 * getResources().getDisplayMetrics().density, frame.top + 8);
+      c.drawText(
+          "↔", x, visibleFrame.centerY() + 4 * getResources().getDisplayMetrics().density, paint);
+      label(c, "原图", visibleFrame.left + 8, visibleFrame.top + 8);
+      label(
+          c,
+          "显影",
+          visibleFrame.right - 48 * getResources().getDisplayMetrics().density,
+          visibleFrame.top + 8);
     }
   }
 
@@ -131,6 +143,7 @@ public final class PhotoView extends View {
     Bitmap image = after != null ? after : before;
     if (image == null) {
       frame.setEmpty();
+      visibleFrame.setEmpty();
       return;
     }
     float pad = 12 * getResources().getDisplayMetrics().density;
@@ -154,6 +167,12 @@ public final class PhotoView extends View {
         (getHeight() - h) / 2 + offsetY,
         (getWidth() + w) / 2 + offsetX,
         (getHeight() + h) / 2 + offsetY);
+    visibleFrame.set(frame);
+    if (!visibleFrame.intersect(0, 0, getWidth(), getHeight())) visibleFrame.setEmpty();
+  }
+
+  private float dividerX() {
+    return visibleFrame.left + split * visibleFrame.width();
   }
 
   private void label(Canvas c, String s, float x, float y) {
@@ -169,7 +188,18 @@ public final class PhotoView extends View {
   @Override
   public boolean onTouchEvent(MotionEvent e) {
     int action = e.getActionMasked();
-    if (action == MotionEvent.ACTION_DOWN) scaleGesture = false;
+    if (action == MotionEvent.ACTION_DOWN) {
+      scaleGesture = false;
+      dragging = false;
+      downX = lastX = e.getX();
+      downY = lastY = e.getY();
+      updateFrame();
+      dragDivider =
+          compare
+              && (zoom == 1
+                  || Math.abs(e.getX() - dividerX())
+                      <= 24 * getResources().getDisplayMetrics().density);
+    }
     scale.onTouchEvent(e);
     taps.onTouchEvent(e);
     if (e.getPointerCount() > 1) {
@@ -189,38 +219,27 @@ public final class PhotoView extends View {
       intercept(false);
       return true;
     }
-    if (!compare) {
-      if (action == MotionEvent.ACTION_DOWN) {
-        lastX = e.getX();
-        lastY = e.getY();
-        return true;
-      }
-      if (action == MotionEvent.ACTION_MOVE && zoom > 1 && !scale.isInProgress()) {
-        intercept(true);
-        offsetX += e.getX() - lastX;
-        offsetY += e.getY() - lastY;
-        lastX = e.getX();
-        lastY = e.getY();
-        invalidate();
-        return true;
-      }
-      if (action == MotionEvent.ACTION_UP) {
-        intercept(false);
-        performClick();
-      }
-      return true;
-    }
-    if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_MOVE) {
+    if (action == MotionEvent.ACTION_MOVE) {
+      if (!dragging && Math.hypot(e.getX() - downX, e.getY() - downY) <= touchSlop) return true;
+      dragging = true;
       intercept(true);
       updateFrame();
-      if (frame.isEmpty()) return true;
-      split = Math.max(.03f, Math.min(.97f, (e.getX() - frame.left) / frame.width()));
+      if (visibleFrame.isEmpty()) return true;
+      if (dragDivider) {
+        split =
+            Math.max(.03f, Math.min(.97f, (e.getX() - visibleFrame.left) / visibleFrame.width()));
+      } else if (zoom > 1) {
+        offsetX += e.getX() - lastX;
+        offsetY += e.getY() - lastY;
+      }
+      lastX = e.getX();
+      lastY = e.getY();
       invalidate();
       return true;
     }
     if (action == MotionEvent.ACTION_UP) {
       intercept(false);
-      performClick();
+      if (!dragging) performClick();
       return true;
     }
     return true;

@@ -5,6 +5,7 @@ package app.spektrafilm;
 import android.app.*;
 import android.content.*;
 import android.graphics.*;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.*;
@@ -75,6 +76,7 @@ public final class MainActivity extends Activity {
   private FlowingBackgroundView flowingBackground;
   private LinearLayout homeScreen, editorScreen, panel, tabRow, filmCards, historyList;
   private ImageView homeHero;
+  private HomePhotoImages homeImages;
   private TextView photoPickerButton;
   private GallerySheet gallerySheet;
   private String pickerSettings;
@@ -136,6 +138,7 @@ public final class MainActivity extends Activity {
     final Frame restoreFrame = findFrame(activeId);
     final boolean restore = source == null;
     ready = false;
+    if (homeImages != null) homeImages.setRenderer(null);
     engine = 0;
     openedSource = null;
     engineBootPending = true;
@@ -193,6 +196,7 @@ public final class MainActivity extends Activity {
                     return;
                   }
                   ready = true;
+                  homeImages.setRenderer(next);
                   engineBootPending = false;
                   prefs.edit().remove("last_engine_error").apply();
                   if (first != null) {
@@ -206,7 +210,6 @@ public final class MainActivity extends Activity {
                       fileLabel.setText(filename);
                       refreshStrip();
                       photo.images(source, null);
-                      homeHero.setImageBitmap(source);
                     } else first.bitmap.recycle();
                   }
                   if (activeImport == null) {
@@ -715,11 +718,14 @@ public final class MainActivity extends Activity {
   }
 
   private void buildHome() {
+    if (homeImages != null) homeImages.close();
     if (homeScreen != null) screens.removeView(homeScreen);
     homeScreen = vertical();
     screens.addView(homeScreen, new FrameLayout.LayoutParams(-1, -1));
     ScrollView scroll = new ScrollView(this);
     homeScreen.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
+    homeImages = new HomePhotoImages(this, main, scroll, worker);
+    if (ready) homeImages.setRenderer(renderer);
     LinearLayout content = vertical();
     content.setPadding(dp(20), dp(20), dp(20), dp(28));
     scroll.setVerticalScrollBarEnabled(false);
@@ -750,12 +756,15 @@ public final class MainActivity extends Activity {
     homeHero.setAdjustViewBounds(false);
     homeHero.setContentDescription("最近导入的照片预览");
     if (source != null) homeHero.setImageBitmap(source);
-    else
-      try {
-        homeHero.setImageBitmap(BitmapFactory.decodeStream(getAssets().open("demo.jpg")));
-      } catch (IOException ignored) {
-      }
     hero.addView(homeHero, new FrameLayout.LayoutParams(-1, -1));
+    Frame restored = findFrame(activeId);
+    File heroFile = sourceFile;
+    if (heroFile == null) {
+      File candidate =
+          restored == null ? new File(getFilesDir(), "source.img") : new File(restored.path);
+      if (candidate.isFile()) heroFile = candidate;
+    }
+    homeImages.bind(homeHero, heroFile, null, true);
     add(content, hero, -1, 240);
     gap(content, 16);
     TextView start = button("导入照片，开始显影", 0xff0a0a0a, ACCENT);
@@ -787,6 +796,7 @@ public final class MainActivity extends Activity {
       homeScreen.setVisibility(View.VISIBLE);
       editorScreen.setVisibility(View.GONE);
       refreshHistory();
+      homeImages.loadVisible();
     }
   }
 
@@ -794,6 +804,7 @@ public final class MainActivity extends Activity {
     flowingBackground.setVisibility(View.GONE);
     homeScreen.setVisibility(View.GONE);
     editorScreen.setVisibility(View.VISIBLE);
+    homeImages.loadVisible();
   }
 
   private void updateComparison() {
@@ -1896,6 +1907,7 @@ public final class MainActivity extends Activity {
                             if (current.backend().equals("gpu")) restartRenderer();
                             else {
                               ready = false;
+                              homeImages.setRenderer(null);
                               engine = 0;
                               openedSource = null;
                               setStatus("兼容显影进程已退出 · 可重启", false, true);
@@ -2058,8 +2070,16 @@ public final class MainActivity extends Activity {
       compared = null;
     }
     source = image.bitmap;
-    // The home preview shares this bitmap too, including demo and library switches.
-    if (homeHero != null) homeHero.setImageBitmap(source);
+    if (homeHero != null) {
+      boolean changed = homeImages.bind(homeHero, image.file, null, true);
+      if (changed
+          || homeHero.getDrawable() == null
+          || (homeHero.getDrawable() instanceof BitmapDrawable shown
+              && shown.getBitmap() == previous)) {
+        homeHero.setImageBitmap(source);
+      }
+      homeImages.loadVisible();
+    }
     sourceFile = image.file;
     sourceMetadata = image.meta;
     sourceRaw = image.raw;
@@ -2410,7 +2430,6 @@ public final class MainActivity extends Activity {
             fileLabel.setText(filename);
             photo.images(source, null);
             photo.resetZoom();
-            homeHero.setImageBitmap(source);
             refreshStrip();
             saveLibrary();
             buildPanel();
@@ -2497,7 +2516,7 @@ public final class MainActivity extends Activity {
   private void writeImportDiagnostic(PhotoImportJob job, String outcome, String error) {
     try {
       JSONObject j = new JSONObject();
-      j.put("app_version", "0.3.5");
+      j.put("app_version", "0.3.6");
       j.put("device", Build.MANUFACTURER + " " + Build.MODEL);
       j.put("android_api", Build.VERSION.SDK_INT);
       j.put("stage", job.phase);
@@ -2728,19 +2747,6 @@ public final class MainActivity extends Activity {
     }
   }
 
-  private Bitmap thumb(Frame frame) {
-    File cached = new File(new File(getFilesDir(), "thumbnails"), frame.id + ".jpg");
-    if (cached.exists()) return BitmapFactory.decodeFile(cached.getAbsolutePath());
-    BitmapFactory.Options o = new BitmapFactory.Options();
-    o.inJustDecodeBounds = true;
-    BitmapFactory.decodeFile(frame.path, o);
-    int sample = 1;
-    while (Math.max(o.outWidth, o.outHeight) / sample > 320) sample *= 2;
-    o.inJustDecodeBounds = false;
-    o.inSampleSize = sample;
-    return BitmapFactory.decodeFile(frame.path, o);
-  }
-
   private void refreshStrip() {
     if (photoPickerButton != null) {
       photoPickerButton.setContentDescription("选择手机相册或已导入的照片");
@@ -2756,6 +2762,7 @@ public final class MainActivity extends Activity {
     if (historyList == null) return;
     if (recentCount != null) recentCount.setText(library.size() + " 张");
     controls.removeIf(v -> descendant(v, historyList));
+    homeImages.clearCards();
     historyList.removeAllViews();
     if (library.isEmpty()) {
       LinearLayout empty = vertical();
@@ -2778,8 +2785,12 @@ public final class MainActivity extends Activity {
         card.setClipToOutline(true);
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        image.setImageBitmap(thumb(frame));
         add(card, image, -1, 125);
+        homeImages.bind(
+            image,
+            new File(frame.path),
+            new File(new File(getFilesDir(), "thumbnails"), frame.id + ".jpg"),
+            false);
         LinearLayout names = vertical();
         names.setPadding(dp(12), dp(10), dp(12), dp(12));
         TextView name = text(PhotoLabels.title(frame.name), 12, INK);
@@ -2836,6 +2847,7 @@ public final class MainActivity extends Activity {
               new File(frame.path).delete();
               saveLibrary();
               refreshHistory();
+              homeImages.remove(new File(frame.path));
               refreshStrip();
               if (activeId.equals(frame.id)) loadDemoAction();
             })
@@ -3064,7 +3076,7 @@ public final class MainActivity extends Activity {
             }
             trace.phase("verification_record_ms", "校验并保存导出记录");
             JSONObject recipe = new JSONObject();
-            recipe.put("app_version", "0.3.5");
+            recipe.put("app_version", "0.3.6");
             recipe.put("source_name", name);
             recipe.put("source_sha256", sha256(original));
             recipe.put("source_width", width);
@@ -3160,7 +3172,7 @@ public final class MainActivity extends Activity {
   private void about() {
     String message =
         getString(R.string.app_name)
-            + " · Android 0.3.5\n\n"
+            + " · Android 0.3.6\n\n"
             + "本机运行 C++ / Vulkan 光谱胶片模型，使用 380–780 nm、5 nm 间隔的 81 波长数据。\n\n"
             + "原始模型与彩色配置：Andrea Volpato / spektrafilm\n"
             + "原生引擎：Hanze Qiu 与 SpektraLab 贡献者\n"
@@ -3230,6 +3242,7 @@ public final class MainActivity extends Activity {
     if (flowingBackground != null) flowingBackground.setHostResumed(false);
     if (gallerySheet != null) gallerySheet.dismiss();
     destroyed = true;
+    if (homeImages != null) homeImages.close();
     if (activeImport != null) {
       activeImport.cancel();
       activeImport = null;

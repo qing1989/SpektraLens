@@ -20,7 +20,7 @@ final class ExportTrace {
 
   ExportTrace(Context context) {
     file = new AtomicFile(new File(context.getFilesDir(), "last_export_diagnostic.json"));
-    put("app_version", "0.3.5");
+    put("app_version", "0.3.6");
     put("device", Build.MANUFACTURER + " " + Build.MODEL);
     put("android_api", Build.VERSION.SDK_INT);
     put("stage", "等待导出");
