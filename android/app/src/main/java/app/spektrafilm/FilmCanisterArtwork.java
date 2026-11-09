@@ -18,7 +18,7 @@ import org.json.JSONObject;
 final class FilmCanisterArtwork {
   static final int WIDTH = 100, HEIGHT = 80;
 
-  private static final float RADIUS = 13f;
+  static final float RADIUS = 13f;
   private static final float DIVIDER = 55f;
   private static final int BLACK = 0xff000000, WHITE = 0xffffffff;
   private static final int DARK_INK = 0xff0d1010, LIGHT_INK = 0xfffaf6ec;

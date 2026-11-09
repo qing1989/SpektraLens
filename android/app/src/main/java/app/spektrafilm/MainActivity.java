@@ -412,6 +412,11 @@ public final class MainActivity extends Activity {
   }
 
   private TextView button(String title, int color, int background) {
+    return button(title, color, background, AppStyle.R_MEDIUM);
+  }
+
+  /** 同一容器里的控件可以指定和容器同档的半径，见 AppStyle 的两条配套规则。 */
+  private TextView button(String title, int color, int background, float radius) {
     TextView v = text(title, AppStyle.TYPE_BODY, color);
     v.setGravity(Gravity.CENTER);
     // 按钮里折行必然压到上下留白，所以默认锁单行，放不下就用省略号。
@@ -426,7 +431,7 @@ public final class MainActivity extends Activity {
             : background == ACCENT
                 ? ACCENT
                 : background == AppStyle.SELECTED ? AppStyle.SELECTED : AppStyle.CONTROL,
-        AppStyle.R_MEDIUM);
+        radius);
     v.setMinHeight(dp(44));
     controls.add(v);
     return v;
@@ -893,8 +898,14 @@ public final class MainActivity extends Activity {
     for (int i = 0; i < labels.length; i++) {
       final int n = tools[i];
       boolean selected = selectedTab == n || (n == 0 && selectedTab == 1);
+      // 选中块与导航条同一档半径（26）。40 高装不下 26，平台会按半高裁成胶囊，
+      // 于是两条弧的曲率读起来是一个家族，而不是「方角塞进圆角」。
       TextView tab =
-          button(labels[i], selected ? ACCENT : MUTED, selected ? AppStyle.SELECTED : BG);
+          button(
+              labels[i],
+              selected ? ACCENT : MUTED,
+              selected ? AppStyle.SELECTED : BG,
+              AppStyle.R_LARGE);
       tab.setTextSize(AppStyle.TYPE_TITLE);
       tab.setPadding(0, 0, 0, 0);
       tab.setMinHeight(0);
@@ -1009,12 +1020,20 @@ public final class MainActivity extends Activity {
         // 选中态画在图标外圈。整卡描边会把两行名称一起圈进来，卡片又窄，描出来是个细长的
         // 怪形状，而且名称换行就顶到框上；只圈图标既像「挑了这一卷」，也不会被文字撑变形。
         FrameLayout iconBox = new FrameLayout(this);
-        int inset = dp(2);
+        final int insetDp = 2;
+        int inset = dp(insetDp);
         iconBox.setPadding(inset, inset, inset, inset);
         iconBox.addView(badge, new FrameLayout.LayoutParams(-1, -1));
-        // 环要贴着图标才像「选中」，中间留 3dp 再加橙色底会读成内外两层框。
-        // 圆角跟图标自身的 8dp 对齐后再缩进 2dp，两段弧才同心。
-        GradientDrawable ring = box(Color.TRANSPARENT, AppStyle.R_SMALL);
+        // 环的圆角必须由图标自己的实际半径推出来：图标是 100×80 的画布按比例缩放的，
+        // 缩放比随屏宽变化，固定写 10dp 在大屏上会切进图标的角。
+        float iconScale =
+            Math.min(
+                (cardWidth - 2 - 2 * insetDp) / (float) FilmCanisterArtwork.WIDTH,
+                (iconHeight - 2 * insetDp) / (float) FilmCanisterArtwork.HEIGHT);
+        GradientDrawable ring =
+            box(
+                Color.TRANSPARENT,
+                AppStyle.ringRadius(FilmCanisterArtwork.RADIUS * iconScale, insetDp));
         if (selected) ring.setStroke(Math.max(1, dp(1.6f)), ACCENT);
         iconBox.setBackground(ring);
         add(card, iconBox, -1, iconHeight);

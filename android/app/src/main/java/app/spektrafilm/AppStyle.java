@@ -37,11 +37,24 @@ final class AppStyle {
   static final int TYPE_MICRO = 11, TYPE_LABEL = 12, TYPE_BODY = 13,
       TYPE_TITLE = 15, TYPE_HEADING = 18, TYPE_BRAND = 30;
 
-  // 圆角只有三档，按用途分，和字号一样不许再插第四种：
-  //   R_SMALL  10 —— 输入框、值框、状态条、图标选中环
+  // 圆角三档，按用途分，不许再插第四种：
+  //   R_SMALL  10 —— 输入框、值框、状态条
   //   R_MEDIUM 16 —— 按钮、chip、卡片、胶片卡材质卡
   //   R_LARGE  26 —— 面板、底部导航条、弹层、对话框
+  // 两条配套规则比档位更重要，凡是「套在一起」的形状都按它们来：
+  //   ① 容器里的选中块用容器同档（底部导航 26 → 选中块也 26，高度不够时由平台
+  //      按半高裁成胶囊），不要用小一档的半径，否则就是「方角塞进圆角」；
+  //   ② 包住图形的环按「图形自身半径 + 间距」算（ringRadius），固定值在大图上
+  //      会切进图形的角。
   static final float R_SMALL = 10, R_MEDIUM = 16, R_LARGE = 26;
+
+  /**
+   * 包住某个圆角图形的外环半径：图形半径 + 四周间距。小于这个值，环会在四角
+   * 「切」进图形；大于它，四角的间隙会突然变宽。两者都会读成两层框。
+   */
+  static float ringRadius(float shapeRadius, float gap) {
+    return shapeRadius + gap;
+  }
 
   // 触控基准：主操作 48、常规 44。低于 44 的只留给纯展示元素。
   static final int TOUCH_PRIMARY = 48, TOUCH_MIN = 44;
