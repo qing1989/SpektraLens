@@ -43,12 +43,12 @@ RAW 解码、光谱显影、调色、颗粒与光晕合成、编码写盘全部�
 </p>
 
 <p align="center">
-  <img src="docs/images/04-curve.jpg" width="23%" alt="曲线调整" />
+  <img src="docs/images/04-adjust.jpg" width="23%" alt="调整面板" />
   <img src="docs/images/05-border.jpg" width="23%" alt="片边与日期" />
   <img src="docs/images/06-texture.jpg" width="23%" alt="质感" />
 </p>
 <p align="center">
-  <sub><b>调整</b> 曲线 / HSL / 色彩平衡 / 暗角 · <b>边框</b> 齿孔、白边、即时相纸与日期 · <b>质感</b> 颗粒、光晕与物理画幅</sub>
+  <sub><b>调整</b> 基础 / 曲线 / 色彩平衡 / HSL / 暗角 · <b>边框</b> 齿孔、白边、即时相纸与日期水印 · <b>质感</b> 颗粒、光晕与物理画幅</sub>
 </p>
 
 > 截图取自 v0.3.3；v0.3.5 起应用统一更名为 SpektraLens，界面与交互未变。
