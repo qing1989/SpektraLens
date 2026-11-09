@@ -65,7 +65,12 @@ final class AppStyle {
   }
 
   static void surface(View view, int color, float radius) {
-    view.setBackground(shape(view.getContext(), color, radius, true));
+    surface(view, color, radius, true);
+  }
+
+  /** 底部导航这类贴着屏幕边的容器不要描边：那道线看起来像多余的外框。 */
+  static void surface(View view, int color, float radius, boolean outline) {
+    view.setBackground(shape(view.getContext(), color, radius, outline));
     view.setClipToOutline(true);
     view.setElevation(dp(view.getContext(), 2));
   }

@@ -77,7 +77,7 @@ final class FilmCanisterArtwork {
 
     c.save();
     c.clipPath(label);
-    fill(mix(coat, BLACK, .48f));
+    fill(mix(coat, BLACK, .44f));
     c.drawRect(0, DIVIDER, WIDTH, HEIGHT, p);
     fill(coat);
     c.drawRect(0, 0, WIDTH, DIVIDER, p);
@@ -115,7 +115,7 @@ final class FilmCanisterArtwork {
       fill(inkOf(accent));
       centered("+" + push, 74, 69.8f, 11, 26);
     } else {
-      fill(withAlpha(ink, .50f));
+      fill(withAlpha(ink, .58f));
       tracked(maker(id), 50, 69, 8f, 1.6f, 62);
     }
     c.restore();

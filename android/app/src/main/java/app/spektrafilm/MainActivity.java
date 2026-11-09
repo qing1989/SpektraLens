@@ -524,7 +524,7 @@ public final class MainActivity extends Activity {
     title.setEllipsize(android.text.TextUtils.TruncateAt.END);
     FrameLayout.LayoutParams titleLayout = new FrameLayout.LayoutParams(-1, dp(40), Gravity.CENTER);
     // Equal insets reserve the wider action on both sides, so the title stays on the screen axis.
-    titleLayout.leftMargin = titleLayout.rightMargin = dp(98);
+    titleLayout.leftMargin = titleLayout.rightMargin = dp(94);
     toolbar.addView(title, titleLayout);
     exportButton = button("显影准备中…", AppStyle.BG, ACCENT);
     exportButton.setTextSize(AppStyle.TYPE_LABEL);
@@ -535,7 +535,7 @@ public final class MainActivity extends Activity {
     exportButton.setEnabled(false);
     toolbar.addView(
         exportButton,
-        new FrameLayout.LayoutParams(dp(96), dp(48), Gravity.END | Gravity.CENTER_VERTICAL));
+        new FrameLayout.LayoutParams(dp(88), dp(42), Gravity.END | Gravity.CENTER_VERTICAL));
     add(editorScreen, header, -1, -2);
     editorBody = new LinearLayout(this);
     editorScreen.addView(editorBody, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -577,30 +577,30 @@ public final class MainActivity extends Activity {
     photoPickerButton.setPadding(0, 0, 0, 0);
     photoPickerButton.setMinHeight(0);
     photoPickerButton.setOnClickListener(v -> choosePhoto());
-    add(meta, photoPickerButton, 48, 44);
+    add(meta, photoPickerButton, 48, 40);
     refreshStrip();
     fileLabel = text(filename, AppStyle.TYPE_MICRO, MUTED);
     fileLabel.setSingleLine(true);
     fileLabel.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
     // Keep source details available without crowding the compact photo action bar.
     fileLabel.setVisibility(View.GONE);
-    meta.addView(fileLabel, new LinearLayout.LayoutParams(0, dp(44), 1));
+    meta.addView(fileLabel, new LinearLayout.LayoutParams(0, dp(40), 1));
     undoButton = button("撤销", MUTED, BG);
     undoButton.setTextSize(AppStyle.TYPE_LABEL);
     undoButton.setPadding(0, 0, 0, 0);
     undoButton.setMinHeight(0);
     undoButton.setContentDescription("撤销");
     undoButton.setOnClickListener(v -> historyStep(false));
-    add(meta, undoButton, 44, 44);
+    add(meta, undoButton, 44, 40);
     redoButton = button("重做", MUTED, BG);
     redoButton.setTextSize(AppStyle.TYPE_LABEL);
     redoButton.setPadding(0, 0, 0, 0);
     redoButton.setMinHeight(0);
     redoButton.setContentDescription("重做");
     redoButton.setOnClickListener(v -> historyStep(true));
-    add(meta, redoButton, 44, 44);
+    add(meta, redoButton, 44, 40);
     meta.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
-    add(meta, zoom, 64, 44);
+    add(meta, zoom, 64, 40);
     compareButton = button("对比原图", INK, BG);
     compareButton.setTextSize(AppStyle.TYPE_LABEL);
     compareButton.setMinHeight(0);
@@ -610,11 +610,11 @@ public final class MainActivity extends Activity {
           comparing = !comparing;
           updateComparison();
         });
-    add(meta, compareButton, 80, 44);
-    add(previewColumn, meta, -1, 44);
+    add(meta, compareButton, 80, 40);
+    add(previewColumn, meta, -1, 40);
     tabRow = horizontal();
     tabRow.setPadding(dp(6), dp(4), dp(6), dp(4));
-    AppStyle.surface(tabRow, AppStyle.SURFACE, AppStyle.R_LARGE);
+    AppStyle.surface(tabRow, AppStyle.SURFACE, AppStyle.R_LARGE, false);
     panel = vertical();
     AppStyle.surface(panel, AppStyle.SURFACE, AppStyle.R_LARGE);
     LinearLayout.LayoutParams panelLayout = new LinearLayout.LayoutParams(-1, dp(panelHeight()));
@@ -899,6 +899,13 @@ public final class MainActivity extends Activity {
       tab.setPadding(0, 0, 0, 0);
       tab.setMinHeight(0);
       tab.setSelected(selected);
+      // 选中块原来铺满整个格子，四角会顶到导航条自己的圆角上，看起来像套了个方框。
+      // 内缩 4/5dp 之后就是一颗独立的 chip，和面板里的分段控件是同一个语言。
+      if (selected) {
+        tab.setBackground(
+            new android.graphics.drawable.InsetDrawable(
+                tab.getBackground(), dp(4), dp(5), dp(4), dp(5)));
+      }
       tab.setOnClickListener(
           v -> {
             selectedTab = n;
@@ -1002,12 +1009,13 @@ public final class MainActivity extends Activity {
         // 选中态画在图标外圈。整卡描边会把两行名称一起圈进来，卡片又窄，描出来是个细长的
         // 怪形状，而且名称换行就顶到框上；只圈图标既像「挑了这一卷」，也不会被文字撑变形。
         FrameLayout iconBox = new FrameLayout(this);
-        int inset = dp(3);
+        int inset = dp(2);
         iconBox.setPadding(inset, inset, inset, inset);
         iconBox.addView(badge, new FrameLayout.LayoutParams(-1, -1));
-        GradientDrawable ring =
-            box(selected ? AppStyle.withAlpha(ACCENT, .12f) : Color.TRANSPARENT, AppStyle.R_SMALL);
-        if (selected) ring.setStroke(Math.max(1, dp(1.8f)), ACCENT);
+        // 环要贴着图标才像「选中」，中间留 3dp 再加橙色底会读成内外两层框。
+        // 圆角跟图标自身的 8dp 对齐后再缩进 2dp，两段弧才同心。
+        GradientDrawable ring = box(Color.TRANSPARENT, AppStyle.R_SMALL);
+        if (selected) ring.setStroke(Math.max(1, dp(1.6f)), ACCENT);
         iconBox.setBackground(ring);
         add(card, iconBox, -1, iconHeight);
         TextView name = text(shortName(stock.name), AppStyle.TYPE_MICRO, selected ? ACCENT : INK);
@@ -1149,9 +1157,12 @@ public final class MainActivity extends Activity {
       LinearLayout format = horizontal();
       TextView label = text("胶片画幅", AppStyle.TYPE_LABEL, INK);
       format.addView(label, new LinearLayout.LayoutParams(0, dp(40), 1));
-      TextView pick = button(formatName() + "", ACCENT, AppStyle.CONTROL);
+      TextView pick = button(formatName(), ACCENT, AppStyle.CONTROL);
       pick.setTextSize(AppStyle.TYPE_LABEL);
-      pick.setPadding(dp(14), 0, dp(14), 0);
+      pick.setPadding(dp(16), 0, dp(16), 0);
+      // 宽度跟着文字走，小屏 + 大字号时容易被父容器挤到省略号；锁一个下限宽度，
+      // 再给它一点与标签的距离，就不至于贴着「胶片画幅」还被截断。
+      pick.setMinWidth(dp(96));
       pick.setSingleLine(true);
       pick.setEllipsize(android.text.TextUtils.TruncateAt.END);
       pick.setMinHeight(0);
@@ -1167,7 +1178,9 @@ public final class MainActivity extends Activity {
                         buildPanel();
                       })
                   .show());
-      add(format, pick, -2, 40);
+      LinearLayout.LayoutParams pickLayout = new LinearLayout.LayoutParams(-2, dp(40));
+      pickLayout.leftMargin = dp(10);
+      format.addView(pick, pickLayout);
       add(editor, format, -1, 40);
       gap(editor, 9);
       rule(editor);
@@ -1665,9 +1678,10 @@ public final class MainActivity extends Activity {
   }
 
   private String formatName() {
-    return settings.optInt("film_format_mm", 36) == 60
-        ? "中画幅 · 60 mm"
-        : settings.optInt("film_format_mm", 36) == 18 ? "小画幅 · 18 mm" : "135 · 36 mm";
+    // 值框里只放物理宽度，格式全称留给对话框——「135 · 36 mm」在值框里会被截成
+    // 「135 · 36…」，反而看不出是什么。
+    int mm = settings.optInt("film_format_mm", 36);
+    return mm == 60 ? "60 mm" : mm == 18 ? "18 mm" : "36 mm";
   }
 
   private void slider(
