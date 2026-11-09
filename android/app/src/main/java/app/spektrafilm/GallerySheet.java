@@ -120,7 +120,7 @@ final class GallerySheet extends Dialog {
     view.setPadding(dp(12), 0, dp(12), 0);
     view.setOnClickListener(v -> run.run());
     view.setFocusable(true);
-    AppStyle.action(view, color, Color.TRANSPARENT, 18);
+    AppStyle.action(view, color, Color.TRANSPARENT, AppStyle.R_ACTION);
     return view;
   }
 

@@ -426,7 +426,7 @@ public final class MainActivity extends Activity {
             : background == ACCENT
                 ? ACCENT
                 : background == AppStyle.SELECTED ? AppStyle.SELECTED : AppStyle.CONTROL,
-        AppStyle.R_CAPSULE);
+        AppStyle.R_ACTION);
     v.setMinHeight(dp(44));
     controls.add(v);
     return v;
@@ -527,8 +527,6 @@ public final class MainActivity extends Activity {
     titleLayout.leftMargin = titleLayout.rightMargin = dp(98);
     toolbar.addView(title, titleLayout);
     exportButton = button("显影准备中…", AppStyle.BG, ACCENT);
-    // 96×48 做成胶囊半径 24，边角太软不精致；16dp 的圆角矩形更利落。
-    AppStyle.action(exportButton, AppStyle.BG, ACCENT, 16);
     exportButton.setTextSize(AppStyle.TYPE_LABEL);
     exportButton.setPadding(dp(8), 0, dp(8), 0);
     exportButton.setSingleLine(true);
@@ -877,7 +875,7 @@ public final class MainActivity extends Activity {
         compareButton,
         comparing ? ACCENT : INK,
         comparing ? AppStyle.CONTROL : Color.TRANSPARENT,
-        18);
+        AppStyle.R_ACTION);
   }
 
   private void buildPanel() {
@@ -1008,7 +1006,7 @@ public final class MainActivity extends Activity {
         iconBox.setPadding(inset, inset, inset, inset);
         iconBox.addView(badge, new FrameLayout.LayoutParams(-1, -1));
         GradientDrawable ring =
-            box(selected ? AppStyle.withAlpha(ACCENT, .12f) : Color.TRANSPARENT, 12);
+            box(selected ? AppStyle.withAlpha(ACCENT, .12f) : Color.TRANSPARENT, 8);
         if (selected) ring.setStroke(Math.max(1, dp(1.8f)), ACCENT);
         iconBox.setBackground(ring);
         add(card, iconBox, -1, iconHeight);

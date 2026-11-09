@@ -37,15 +37,17 @@ final class AppStyle {
   static final int TYPE_MICRO = 11, TYPE_LABEL = 12, TYPE_BODY = 13,
       TYPE_TITLE = 15, TYPE_HEADING = 18, TYPE_BRAND = 30;
 
-  // 圆角阶梯：小控件 10、卡片 22、面板与弹层 26、胶囊容器 28。按钮一律走胶囊（半高）。
+  // 圆角阶梯（面类）：小控件 10、卡片 22、面板与弹层 26、胶囊容器 28。
+  // 动作类不走阶梯，统一用 action() 的 R_ACTION 比例档，见下面。
   static final float R_CONTROL = 10, R_CARD = 22, R_SHEET = 26, R_PILL = 28;
 
   // 触控基准：主操作 48、常规 44。低于 44 的只留给纯展示元素。
   static final int TOUCH_PRIMARY = 48, TOUCH_MIN = 44;
 
-  // 传给 action() 表示「做成胶囊」；给具体数值就按该半径的圆角矩形画。
-  // 注意和上面圆角阶梯里的 R_PILL = 28（胶囊容器的圆角）区分：那个是画形状用的数值。
-  static final float R_CAPSULE = 999f;
+  // 传给 action() 的三个档：R_ACTION 按高度比例（38→13、44→15、48→16），让大小按钮成同
+  // 一族；R_CAPSULE 是完整胶囊；给具体数值就是固定圆角。
+  // 注意与上面圆角阶梯里的 R_PILL = 28（胶囊容器的圆角）区分：那个是画形状用的数值。
+  static final float R_ACTION = -1f, R_CAPSULE = 999f;
 
   /** Same colour at a different opacity, for wells and overlays. */
   static int withAlpha(int color, float alpha) {
@@ -72,7 +74,7 @@ final class AppStyle {
 
   static void action(TextView view, int color, int fill, float radius) {
     Context context = view.getContext();
-    // 传 R_PILL 才是胶囊；给具体半径就是圆角矩形（导出这类大按钮用 16dp 更利落）。
+    // 三种：R_CAPSULE 完整胶囊、R_ACTION 按高度比例、具体数值按该半径画。
     boolean capsule = radius >= 100f;
     StateListDrawable states = new StateListDrawable();
     states.addState(
@@ -109,14 +111,16 @@ final class AppStyle {
 
   private static GradientDrawable actionShape(
       Context context, int color, float radius, boolean capsule) {
-    if (!capsule) return shape(context, color, radius, false);
+    if (!capsule && radius > 0) return shape(context, color, radius, false);
+    final boolean proportional = !capsule;
     GradientDrawable drawable =
         new GradientDrawable() {
           @Override
           protected void onBoundsChange(Rect bounds) {
             super.onBoundsChange(bounds);
-            // Match the export button's semicircular ends at every actual button height.
-            setCornerRadius(Math.min(bounds.width(), bounds.height()) / 2f);
+            float shortSide = Math.min(bounds.width(), bounds.height());
+            // 胶囊取半高；比例档取短边的 0.33，这样 38/44/48 三种高度看起来是同一族圆角。
+            setCornerRadius(proportional ? shortSide * .33f : shortSide / 2f);
           }
         };
     drawable.setColor(color);
