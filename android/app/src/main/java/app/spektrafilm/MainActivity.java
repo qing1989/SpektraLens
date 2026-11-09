@@ -218,6 +218,8 @@ public final class MainActivity extends Activity {
                       fileLabel.setText(filename);
                       refreshStrip();
                       photo.images(source, null);
+                      // 恢复会话时首页大图也要用显影后的样子（卡片在 refreshHistory 里自带）。
+                      syncHeroLook();
                     } else Bitmaps.release(first.bitmap);
                   }
                   if (activeImport == null) {
@@ -829,7 +831,8 @@ public final class MainActivity extends Activity {
           restored == null ? new File(getFilesDir(), "source.img") : new File(restored.path);
       if (candidate.isFile()) heroFile = candidate;
     }
-    homeImages.bind(homeHero, heroFile, null, true);
+    homeImages.bind(
+        homeHero, heroFile, restored == null ? null : developedLook(restored.id), null, true);
     add(content, hero, -1, 240);
     gap(content, 16);
     TextView start = button("导入照片，开始显影", AppStyle.BG, ACCENT);
@@ -860,9 +863,31 @@ public final class MainActivity extends Activity {
       flowingBackground.setVisibility(View.VISIBLE);
       homeScreen.setVisibility(View.VISIBLE);
       editorScreen.setVisibility(View.GONE);
+      saveDevelopedLook();
       refreshHistory();
       homeImages.loadVisible();
     }
+  }
+
+  /**
+   * 编辑器退回首页时，把当前显影效果落成小图（先入 io 队列，后面的卡片加载才能读到新文件），
+   * 并让首页大图改用显影后的样子。示例照片不入库，没有卡片，跳过。
+   */
+  private void saveDevelopedLook() {
+    if (developed == null || developed.isRecycled()) return;
+    Frame frame = findFrame(activeId);
+    if (frame == null) return;
+    homeImages.storeDeveloped(frame.id, developed);
+    syncHeroLook();
+  }
+
+  private void syncHeroLook() {
+    if (homeHero != null && sourceFile != null)
+      homeImages.bind(homeHero, sourceFile, developedLook(activeId), null, true);
+  }
+
+  private File developedLook(String id) {
+    return id == null ? null : new File(new File(getFilesDir(), "developed"), id + ".jpg");
   }
 
   private void showEditor() {
@@ -2253,7 +2278,7 @@ public final class MainActivity extends Activity {
     }
     source = image.bitmap;
     if (homeHero != null) {
-      boolean changed = homeImages.bind(homeHero, image.file, null, true);
+      boolean changed = homeImages.bind(homeHero, image.file, null, null, true);
       if (changed
           || homeHero.getDrawable() == null
           || (homeHero.getDrawable() instanceof BitmapDrawable shown
@@ -2309,9 +2334,14 @@ public final class MainActivity extends Activity {
     ArrayList<GalleryPhotos.Photo> imported = new ArrayList<>();
     for (Frame frame : library) {
       File thumbnail = new File(new File(getFilesDir(), "thumbnails"), frame.id + ".jpg");
+      File look = developedLook(frame.id);
       imported.add(
           GalleryPhotos.Photo.imported(
-              frame.id, frame.name, thumbnail.isFile() ? thumbnail : new File(frame.path)));
+              frame.id,
+              frame.name,
+              look.isFile()
+                  ? look
+                  : thumbnail.isFile() ? thumbnail : new File(frame.path)));
     }
     File demo = new File(getCacheDir(), "demo.jpg");
     if (demo.isFile()) imported.add(GalleryPhotos.Photo.imported("demo", "内置示例照片", demo));
@@ -2598,6 +2628,7 @@ public final class MainActivity extends Activity {
             adopt(loaded);
             filename = job.name;
             activeId = id;
+            syncHeroLook();
             library.add(
                 0, new Frame(id, filename, original.getAbsolutePath(), settings.toString()));
             undoStack.clear();
@@ -2984,6 +3015,7 @@ public final class MainActivity extends Activity {
         homeImages.bind(
             image,
             new File(frame.path),
+            developedLook(frame.id),
             new File(new File(getFilesDir(), "thumbnails"), frame.id + ".jpg"),
             false);
         LinearLayout names = vertical();
@@ -3042,9 +3074,11 @@ public final class MainActivity extends Activity {
               if (exporting) return;
               library.remove(frame);
               new File(frame.path).delete();
+              new File(new File(getFilesDir(), "developed"), frame.id + ".jpg").delete();
               saveLibrary();
               refreshHistory();
               homeImages.remove(new File(frame.path));
+              homeImages.removeDeveloped(frame.id);
               refreshStrip();
               if (activeId.equals(frame.id)) loadDemoAction();
             })
@@ -3095,6 +3129,7 @@ public final class MainActivity extends Activity {
                   adopt(b);
                   developed = null;
                   activeId = frame.id;
+                  syncHeroLook();
                   filename = frame.name;
                   try {
                     settings =

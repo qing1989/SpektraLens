@@ -48,13 +48,16 @@ final class HomePhotoImages implements AutoCloseable {
     final ImageView view;
     final File original, legacy;
     final boolean hero;
+    // 编辑器退出时存下的显影效果小图；没编辑过的底片没有这个文件，显示原片。
+    File developed;
     int requestedWidth, requestedHeight;
     int failures;
     boolean waitingForRaw;
 
-    Item(ImageView view, File original, File legacy, boolean hero) {
+    Item(ImageView view, File original, File developed, File legacy, boolean hero) {
       this.view = view;
       this.original = original;
+      this.developed = developed;
       this.legacy = legacy;
       this.hero = hero;
     }
@@ -121,11 +124,17 @@ final class HomePhotoImages implements AutoCloseable {
     loadVisible();
   }
 
-  boolean bind(ImageView view, File original, File legacy, boolean hero) {
+  boolean bind(ImageView view, File original, File developed, File legacy, boolean hero) {
     Item existing = items.get(view);
-    if (existing != null && Objects.equals(existing.original, original)) return false;
+    if (existing != null && Objects.equals(existing.original, original)) {
+      if (Objects.equals(existing.developed, developed)) return false;
+      // 照片没换、显影效果换了（编辑后回首页）：只换来源并强制下次加载。
+      existing.developed = developed;
+      existing.requestedWidth = existing.requestedHeight = 0;
+      return false;
+    }
     if (running != null && running.item.view == view) running.current = false;
-    items.put(view, new Item(view, original, legacy, hero));
+    items.put(view, new Item(view, original, developed, legacy, hero));
     return true;
   }
 
@@ -141,6 +150,55 @@ final class HomePhotoImages implements AutoCloseable {
           File[] files = cache.listFiles((dir, name) -> name.startsWith(prefix));
           if (files != null) for (File file : files) file.delete();
         });
+  }
+
+  /** 底片从历史里移除时，把它名下的显影小图缓存一并清掉。 */
+  void removeDeveloped(String id) {
+    io.execute(
+        () -> {
+          File[] files = cache.listFiles((dir, name) -> name.startsWith("developed-" + id + ".jpg"));
+          if (files != null) for (File file : files) file.delete();
+        });
+  }
+
+  /**
+   * 编辑器退回首页时存一张显影效果小图（最长边 1024，覆盖首页大图与卡片的真实显示尺寸），
+   * 首页从此不碰渲染引擎也能显示编辑后的样子。原片位图随时可能被编辑器回收，所以先在
+   * 主线程降采样出一份副本再交给 io 线程；本方法要在首页卡片加载之前调用，io 单线程
+   * 先写后读，卡片读到的才是新文件。
+   */
+  void storeDeveloped(String id, Bitmap image) {
+    if (closed || id == null || image == null || image.isRecycled()) return;
+    float scale = Math.min(1, 1024f / Math.max(image.getWidth(), image.getHeight()));
+    int w = Math.max(1, Math.round(image.getWidth() * scale));
+    int h = Math.max(1, Math.round(image.getHeight() * scale));
+    Bitmap scaled = Bitmap.createScaledBitmap(image, w, h, true);
+    if (scaled == image) scaled = image.copy(Bitmap.Config.ARGB_8888, false);
+    if (scaled == null) return;
+    final Bitmap small = scaled;
+    io.execute(
+        () -> {
+          writeDeveloped(id, small);
+          Bitmaps.release(small);
+          main.post(() -> { if (!closed) loadVisible(); });
+        });
+  }
+
+  private void writeDeveloped(String id, Bitmap small) {
+    try {
+      File dir = new File(context.getFilesDir(), "developed");
+      if (!dir.isDirectory() && !dir.mkdirs()) return;
+      File temp = File.createTempFile("look-", ".pending", dir);
+      try (FileOutputStream out = new FileOutputStream(temp)) {
+        if (!small.compress(Bitmap.CompressFormat.JPEG, 88, out)) {
+          temp.delete();
+          return;
+        }
+      }
+      if (!temp.renameTo(new File(dir, id + ".jpg"))) temp.delete();
+    } catch (IOException ex) {
+      Log.w("SpektraLensAndroid", "Developed thumbnail unavailable", ex);
+    }
   }
 
   void loadVisible() {
@@ -215,6 +273,31 @@ final class HomePhotoImages implements AutoCloseable {
 
   private Bitmap load(Request request) throws Exception {
     Item item = request.item;
+    // 编辑过的底片优先显示显影后的样子：1024px 小图直接按视图尺寸居中裁切（面积平均降
+    // 采样，和原片路径同一套几何），再进 PNG 缓存，滚动回来即时显示。没有或读不出来，
+    // 回落原片解码，行为与从前完全一致。
+    if (item.developed != null && item.developed.isFile()) {
+      String lookKey =
+          "developed-"
+              + item.developed.getName()
+              + "-"
+              + item.developed.length()
+              + "-"
+              + item.developed.lastModified();
+      File lookTarget =
+          new File(cache, lookKey + "-" + request.width + "x" + request.height + ".png");
+      Bitmap saved = read(lookTarget);
+      if (saved != null) {
+        lookTarget.setLastModified(System.currentTimeMillis());
+        return saved;
+      }
+      Bitmap look = read(item.developed);
+      if (look != null) {
+        look = HomeImageDecoder.crop(look, request.width, request.height);
+        if (request.current) save(lookTarget, look);
+        return look;
+      }
+    }
     File original = item.original;
     String key =
         original == null
@@ -226,7 +309,9 @@ final class HomePhotoImages implements AutoCloseable {
       target.setLastModified(System.currentTimeMillis());
       return saved;
     }
-    Bitmap fallback = read(item.legacy);
+    // 已有显影效果时不再闪显原片占位图，避免「原图→显影图」的跳变。
+    Bitmap fallback =
+        item.developed == null || !item.developed.isFile() ? read(item.legacy) : null;
     if (fallback != null) {
       main.post(
           () -> {
