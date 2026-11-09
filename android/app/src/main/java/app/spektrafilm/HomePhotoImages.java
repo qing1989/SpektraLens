@@ -27,6 +27,8 @@ import org.json.JSONObject;
 /** Loads only visible home images, one at a time. All view state belongs to the main thread. */
 final class HomePhotoImages implements AutoCloseable {
   private static final long CACHE_BYTES = 48L * 1024 * 1024;
+  /** A decode that keeps failing would retry on every layout pass; give up after a few tries. */
+  private static final int MAX_FAILURES = 3;
   private final Context context;
   private final Handler main;
   private final ScrollView scroll;
@@ -45,6 +47,7 @@ final class HomePhotoImages implements AutoCloseable {
     final File original, legacy;
     final boolean hero;
     int requestedWidth, requestedHeight;
+    int failures;
     boolean waitingForRaw;
 
     Item(ImageView view, File original, File legacy, boolean hero) {
@@ -76,8 +79,17 @@ final class HomePhotoImages implements AutoCloseable {
     this.scroll = scroll;
     this.rawWorker = rawWorker;
     cache = new File(context.getCacheDir(), "home-images-v1");
+    // A previous run killed mid-write leaves image-*.pending behind; the size cap below only
+    // covered the finished PNGs, so those temp files used to pile up forever.
+    io.execute(this::sweepPending);
     scroll.getViewTreeObserver().addOnGlobalLayoutListener(layoutListener);
     scroll.setOnScrollChangeListener((v, x, y, oldX, oldY) -> loadVisible());
+  }
+
+  private void sweepPending() {
+    File[] files = cache.listFiles();
+    if (files == null) return;
+    for (File file : files) if (file.getName().endsWith(".pending")) file.delete();
   }
 
   void setRenderer(SpectralRenderer renderer) {
@@ -87,6 +99,7 @@ final class HomePhotoImages implements AutoCloseable {
     this.renderer = renderer;
     if (renderer == null) return;
     for (Item item : items.values()) {
+      item.failures = 0;
       if (item.waitingForRaw) {
         item.requestedWidth = item.requestedHeight = 0;
         item.waitingForRaw = false;
@@ -142,6 +155,7 @@ final class HomePhotoImages implements AutoCloseable {
           && (width != running.width || height != running.height)) running.current = false;
       if (running == null
           && next == null
+          && item.failures < MAX_FAILURES
           && (width != item.requestedWidth || height != item.requestedHeight)) {
         next = new Request(item, width, height, renderer);
       }
@@ -177,7 +191,12 @@ final class HomePhotoImages implements AutoCloseable {
       }
     } else {
       if (bitmap != null) bitmap.recycle();
-      if (items.get(item.view) == item) item.requestedWidth = item.requestedHeight = 0;
+      if (items.get(item.view) == item) {
+        // Reset both so the next layout pass retries. Leaving them set made a failed decode look
+        // like a finished one: the cell stayed blank until it scrolled out and back in.
+        if (bitmap == null && request.current) item.failures++;
+        item.requestedWidth = item.requestedHeight = 0;
+      }
     }
     loadVisible();
   }
@@ -265,7 +284,9 @@ final class HomePhotoImages implements AutoCloseable {
         if (!image.compress(Bitmap.CompressFormat.PNG, 100, out)) return;
       }
       if (!temp.renameTo(target)) return;
-      File[] files = cache.listFiles((dir, name) -> name.endsWith(".png"));
+      // Count every file in the directory, not just *.png: leftover temp files were invisible to
+      // the cap before this change.
+      File[] files = cache.listFiles();
       if (files == null) return;
       Arrays.sort(files, Comparator.comparingLong(File::lastModified).reversed());
       long bytes = 0;
