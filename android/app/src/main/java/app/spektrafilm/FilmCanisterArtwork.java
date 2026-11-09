@@ -84,18 +84,21 @@ final class FilmCanisterArtwork {
     // Paper edge catching the light, then the accent rule that ties the family names together.
     fill(withAlpha(mix(coat, WHITE, .26f), .5f));
     c.drawRect(0, DIVIDER - .8f, WIDTH, DIVIDER + .85f, p);
+    int push = stock.optInt("push");
     fill(accent);
-    rect.set(18, 57.6f, 82, 60.2f);
+    // 有 push 角标时把标线收短，把右下角完整让给角标，避免两者叠在一起。
+    rect.set(18, 57.6f, push > 0 ? 56 : 82, 60.2f);
     c.drawRoundRect(rect, 1.3f, 1.3f, p);
 
-    int push = stock.optInt("push");
     p.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
     if (push > 0) {
+      // 角标放大到 32×18：仍在图标内（圆角裁切半径 13，右上角圆心 (87,67)，
+      // 角标右下角 (90,74.5) 到圆心 8.1 < 13，不会被裁掉），字号 8.6 → 11。
       fill(accent);
-      rect.set(66, 59, 90, 72);
-      c.drawRoundRect(rect, 6.5f, 6.5f, p);
+      rect.set(58, 56.5f, 90, 74.5f);
+      c.drawRoundRect(rect, 9, 9, p);
       fill(inkOf(accent));
-      centered("+" + push, 78, 68.8f, 8.6f, 22);
+      centered("+" + push, 74, 69.8f, 11, 26);
     } else {
       fill(withAlpha(ink, .38f));
       tracked(maker(id), 50, 68.4f, 6.4f, 2f, 60);

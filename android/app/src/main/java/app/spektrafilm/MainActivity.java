@@ -407,6 +407,9 @@ public final class MainActivity extends Activity {
   private TextView button(String title, int color, int background) {
     TextView v = text(title, AppStyle.TYPE_BODY, color);
     v.setGravity(Gravity.CENTER);
+    // 按钮里折行必然压到上下留白，所以默认锁单行，放不下就用省略号。
+    v.setSingleLine(true);
+    v.setEllipsize(android.text.TextUtils.TruncateAt.END);
     v.setPadding(dp(14), dp(8), dp(14), dp(8));
     AppStyle.action(
         v,
@@ -459,6 +462,8 @@ public final class MainActivity extends Activity {
     b.setTypeface(null, Typeface.BOLD);
     r.addView(b, new LinearLayout.LayoutParams(0, dp(28), 1));
     TextView c = text(detail, AppStyle.TYPE_MICRO, MUTED);
+    c.setSingleLine(true);
+    c.setEllipsize(android.text.TextUtils.TruncateAt.END);
     add(r, c, -2, 28);
     add(editor, r, -1, -2);
     gap(editor, 9);
@@ -682,10 +687,13 @@ public final class MainActivity extends Activity {
       chrome += child.getMeasuredHeight() > 0 ? child.getMeasuredHeight() : dp(26);
     }
     int total = body + chrome;
-    if (total != panelContentHeight) {
-      panelContentHeight = total;
-      updatePanelHeight();
-    }
+    boolean changed = total != panelContentHeight;
+    panelContentHeight = total;
+    // 从别的页切回来时，面板可能还停在展开态；新页内容装得下就自动收回，
+    // 不用用户再点一次箭头。
+    boolean collapsed = panelExpanded && total <= 332;
+    if (collapsed) panelExpanded = false;
+    if (changed || collapsed) updatePanelHeight();
   }
 
   private void updatePanelHeight() {
@@ -1065,6 +1073,8 @@ public final class MainActivity extends Activity {
       paperTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
       add(names, paperTitle, -1, 30);
       paperSub = text(stock == null ? "" : maker(stock) + " · 光谱印相材料", AppStyle.TYPE_MICRO, MUTED);
+      paperSub.setSingleLine(true);
+      paperSub.setEllipsize(android.text.TextUtils.TruncateAt.END);
       add(names, paperSub, -1, 24);
       material.addView(names, new LinearLayout.LayoutParams(0, -2, 1));
       material.setOnClickListener(v -> chooseStock(false));
@@ -1265,6 +1275,8 @@ public final class MainActivity extends Activity {
       add(editor, holder[0], -1, 215);
       controls.add(holder[0]);
       TextView hint = text("点按添加 · 拖动调整 · 长按删除内部点", AppStyle.TYPE_MICRO, MUTED);
+    hint.setSingleLine(true);
+    hint.setEllipsize(android.text.TextUtils.TruncateAt.END);
       add(editor, hint, -1, 28);
       TextView clear = button("重置当前曲线", MUTED, AppStyle.CONTROL);
       add(editor, clear, -1, 36);
@@ -1447,6 +1459,8 @@ public final class MainActivity extends Activity {
                     * .48));
     add(body, crop, -1, height);
     TextView hint = text("拖动四角调整 · 拖动内部移动 · 应用后可撤销", AppStyle.TYPE_MICRO, MUTED);
+    hint.setSingleLine(true);
+    hint.setEllipsize(android.text.TextUtils.TruncateAt.END);
     hint.setPadding(dp(6), 0, 0, 0);
     add(body, hint, -1, 32);
     new Haptics.DialogBuilder(this)
@@ -1784,7 +1798,10 @@ public final class MainActivity extends Activity {
     return name.replace("Kodak ", "")
         .replace("Fujifilm ", "")
         .replace("Professional ", "")
-        .replace("Crystal Archive Type II", "Crystal Archive");
+        .replace("Crystal Archive Type II", "Crystal Archive")
+        // Push 版本的名字带「(Push 1)」，在 71dp 的卡片里必然折行；图标上已经有 +1/+2 角标，
+        // 名字只留型号即可，完整名称仍在 contentDescription 里。
+        .replaceAll("\\s*\\(Push [12]\\)$", "");
   }
 
   private String maker(Stock s) {
