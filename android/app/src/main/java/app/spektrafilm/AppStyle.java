@@ -43,6 +43,10 @@ final class AppStyle {
   // 触控基准：主操作 48、常规 44。低于 44 的只留给纯展示元素。
   static final int TOUCH_PRIMARY = 48, TOUCH_MIN = 44;
 
+  // 传给 action() 表示「做成胶囊」；给具体数值就按该半径的圆角矩形画。
+  // 注意和上面圆角阶梯里的 R_PILL = 28（胶囊容器的圆角）区分：那个是画形状用的数值。
+  static final float R_CAPSULE = 999f;
+
   /** Same colour at a different opacity, for wells and overlays. */
   static int withAlpha(int color, float alpha) {
     return (color & 0x00ffffff) | (Math.round(Math.max(0, Math.min(1, alpha)) * 255) << 24);
@@ -68,9 +72,8 @@ final class AppStyle {
 
   static void action(TextView view, int color, int fill, float radius) {
     Context context = view.getContext();
-    // Every action is a capsule: the export button set the reference shape, so the radius argument
-    // is now only kept for call-site readability.
-    boolean capsule = true;
+    // 传 R_PILL 才是胶囊；给具体半径就是圆角矩形（导出这类大按钮用 16dp 更利落）。
+    boolean capsule = radius >= 100f;
     StateListDrawable states = new StateListDrawable();
     states.addState(
         new int[] {-android.R.attr.state_enabled},

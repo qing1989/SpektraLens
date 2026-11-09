@@ -416,7 +416,7 @@ public final class MainActivity extends Activity {
             : background == ACCENT
                 ? ACCENT
                 : background == AppStyle.SELECTED ? AppStyle.SELECTED : AppStyle.CONTROL,
-        20);
+        AppStyle.R_CAPSULE);
     v.setMinHeight(dp(44));
     controls.add(v);
     return v;
@@ -515,6 +515,8 @@ public final class MainActivity extends Activity {
     titleLayout.leftMargin = titleLayout.rightMargin = dp(98);
     toolbar.addView(title, titleLayout);
     exportButton = button("显影准备中…", AppStyle.BG, ACCENT);
+    // 96×48 做成胶囊半径 24，边角太软不精致；16dp 的圆角矩形更利落。
+    AppStyle.action(exportButton, AppStyle.BG, ACCENT, 16);
     exportButton.setTextSize(AppStyle.TYPE_LABEL);
     exportButton.setPadding(dp(8), 0, dp(8), 0);
     exportButton.setSingleLine(true);
