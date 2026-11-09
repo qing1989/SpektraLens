@@ -288,26 +288,22 @@ void text(Image16 &im, const std::string &value, int x, int y, int size, const f
 // 的、周围有一圈同色的晕。字形也不是字体，是七段数码管（廉价机型用点阵）。
 // 这里的几何照搬上游 overscan.cpp 的 seven_seg_polys：段宽 .52h、笔画 .14h、
 // 8° 斜切；光晕用掩膜做三层可分离模糊，颜色跟随面板里选的日期颜色。
-struct SegQuad {
-    float x[4], y[4];
+// 段的几何保存成「字形空间」（x 向右、y 从基线向上，未斜切），光栅化时再反斜切回
+// 像素空间。这样每个像素都能算出到段边缘的精确距离，覆盖率是连续值，而不是原先
+// 2×2 采样得到的 0/.25/.5/.75/1 五档——放大后能看见台阶的就是这五档。
+struct SegRect {
+    float x0, up, w, hh;  // 左下角与尺寸，未斜切
 };
 
-void add_seven_seg(const std::string &value, float h, float x0, float baseline,
-                   std::vector<SegQuad> &out) {
+const float kSkew = std::tan(8.f * pi / 180.f);
+
+void add_seven_seg(const std::string &value, float h, float penX, std::vector<SegRect> &out) {
     static const char *kSeg[10] = {"abcdef", "bc", "abged", "abgcd", "fgbc",
                                    "afgcd", "afgedc", "abc", "abcdefg", "abcdfg"};
     const float w = .52f * h, th = .14f * h, gap = .6f * th;
-    const float skew = std::tan(8.f * pi / 180.f);
-    float x = x0;
+    float x = penX;
     auto box = [&](float bx, float up, float bw, float bh) {
-        SegQuad q;
-        const float px[4] = {bx, bx + bw, bx + bw, bx};
-        const float py[4] = {up, up, up + bh, up + bh};
-        for (int i = 0; i < 4; i++) {
-            q.x[i] = px[i] + skew * py[i];
-            q.y[i] = baseline - py[i];
-        }
-        out.push_back(q);
+        out.push_back(SegRect{bx, up, bw, bh});
     };
     for (char ch : value) {
         if (ch == ' ') {
@@ -350,17 +346,11 @@ float seven_seg_width(const std::string &value, float h) {
     return std::max(0.f, x - .28f * h);
 }
 
-bool inside(const SegQuad &q, float px, float py) {
-    int sign = 0;
-    for (int i = 0; i < 4; i++) {
-        int j = (i + 1) & 3;
-        float cross = (q.x[j] - q.x[i]) * (py - q.y[i]) - (q.y[j] - q.y[i]) * (px - q.x[i]);
-        if (std::fabs(cross) < 1e-6f) continue;
-        int s = cross > 0 ? 1 : -1;
-        if (sign == 0) sign = s;
-        else if (sign != s) return false;
-    }
-    return true;
+// 圆角矩形的有符号距离：<0 在内部，>0 在外部，单位是像素。
+float sd_round_box(float px, float py, float cx, float cy, float hx, float hy, float r) {
+    float dx = std::fabs(px - cx) - hx + r, dy = std::fabs(py - cy) - hy + r;
+    float ox = std::max(dx, 0.f), oy = std::max(dy, 0.f);
+    return std::sqrt(ox * ox + oy * oy) + std::min(std::max(dx, dy), 0.f) - r;
 }
 
 void blur_axis(std::vector<float> &v, int w, int h, int r, bool horizontal) {
@@ -412,42 +402,56 @@ void date(Image16 &im, const spk::Json &j, int ix, int iy, int iw, int ih) {
     float x0 = left ? ix + inset : ix + iw - inset - w;
     float baseline = top ? iy + inset + h : iy + ih - inset;
 
-    std::vector<SegQuad> quads;
-    add_seven_seg(value, h, x0, baseline, quads);
-    if (quads.empty()) return;
+    std::vector<SegRect> segs;
+    add_seven_seg(value, h, x0, segs);
+    if (segs.empty()) return;
 
     float c[3] = {1, .40f, .08f};
     if (j.at("date_color").as_string() == "white")
         c[1] = c[2] = .94f;
     float strength = num(j, "date_intensity", 1, .1, 2) * .8f;
 
-    // 掩膜：以水印为中心留出光晕的余量，2×2 超采样做抗锯齿。
-    // 缓冲要装得下最外层的光晕，否则边缘会被硬切出一道痕迹。
-    int pad = std::max(6, int(h * .85f));
-    int mw = int(std::ceil(w)) + pad * 2 + 2, mh = int(h) + pad * 2 + 2;
+    // 掩膜：以水印为中心留出光晕的余量。缓冲要装得下最外层的光晕，
+    // 否则边缘会被硬切出一道痕迹。
+    int pad = std::max(5, int(h * .85f));
+    int mw = int(std::ceil(w)) + pad * 2 + 3, mh = int(h) + pad * 2 + 3;
     int ox = int(std::floor(x0)) - pad, oy = int(std::floor(baseline - h)) - pad;
     std::vector<float> mask(size_t(mw) * mh, 0.f);
-    for (const SegQuad &q : quads) {
-        float minx = q.x[0], maxx = q.x[0], miny = q.y[0], maxy = q.y[0];
-        for (int i = 1; i < 4; i++) {
-            minx = std::min(minx, q.x[i]);
-            maxx = std::max(maxx, q.x[i]);
-            miny = std::min(miny, q.y[i]);
-            maxy = std::max(maxy, q.y[i]);
+
+    // 逐段按有符号距离算覆盖率：每个像素都得到 0–1 之间的连续值，
+    // 斜切出来的长边因此是一条平滑的过渡带，而不是每像素一级的台阶。
+    for (const SegRect &s : segs) {
+        float cxs[4] = {s.x0, s.x0 + s.w, s.x0 + s.w, s.x0};
+        float ups[4] = {s.up, s.up, s.up + s.hh, s.up + s.hh};
+        float minx = 1e9f, maxx = -1e9f, miny = 1e9f, maxy = -1e9f;
+        for (int i = 0; i < 4; i++) {
+            float ix = cxs[i] + kSkew * ups[i], iy = baseline - ups[i];
+            minx = std::min(minx, ix); maxx = std::max(maxx, ix);
+            miny = std::min(miny, iy); maxy = std::max(maxy, iy);
         }
-        int px0 = std::max(0, int(std::floor(minx)) - ox), px1 = std::min(mw - 1, int(std::ceil(maxx)) - ox);
-        int py0 = std::max(0, int(std::floor(miny)) - oy), py1 = std::min(mh - 1, int(std::ceil(maxy)) - oy);
+        int px0 = std::max(0, int(std::floor(minx)) - ox - 1);
+        int px1 = std::min(mw - 1, int(std::ceil(maxx)) - ox + 1);
+        int py0 = std::max(0, int(std::floor(miny)) - oy - 1);
+        int py1 = std::min(mh - 1, int(std::ceil(maxy)) - oy + 1);
+        // 端头给一点圆角：真实 LED 段被面罩压过后不是刀切的直角。
+        float r = std::min(s.w, s.hh) * .18f;
+        float cx = s.x0 + s.w * .5f, cy = s.up + s.hh * .5f;
         for (int py = py0; py <= py1; py++) {
+            float iy = float(py + oy) + .5f, up = baseline - iy;
             for (int px = px0; px <= px1; px++) {
-                float fx = float(px + ox), fy = float(py + oy), cover = 0.f;
-                for (int sy = 0; sy < 2; sy++)
-                    for (int sx = 0; sx < 2; sx++)
-                        if (inside(q, fx + .25f + .5f * sx, fy + .25f + .5f * sy)) cover += .25f;
+                float gx = float(px + ox) + .5f - kSkew * up;
+                float d = sd_round_box(gx, up, cx, cy, s.w * .5f, s.hh * .5f, r);
+                float cover = std::clamp(.5f - d, 0.f, 1.f);
+                if (cover <= 0.f) continue;
                 float &cell = mask[size_t(py) * mw + px];
                 cell = std::min(1.f, cell + cover);
             }
         }
     }
+    // 乳剂散射：这一小段光本来就带一点光学柔化。1 像素的三抽头模糊贴合真实曝光，
+    // 也把斜切边残留的台阶彻底抹平；只在笔画够粗（全分辨率输出）时做，
+    // 预览尺寸下会把细笔画糊掉。
+    if (.14f * h >= 5.f) blur(mask, mw, mh, 1);
 
     // 三层模糊 ≈ 高斯：近晕贴着笔画，远晕铺开成一片暖光。
     std::vector<float> glowA = mask, glowB = mask, glowC = mask;
