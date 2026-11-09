@@ -32,9 +32,10 @@ final class AppStyle {
       CURVE_G = 0xff99c786,
       CURVE_B = 0xff85baff;
 
-  // 字号阶梯。新增界面只从这六档里选，别再插 13/17 这种中间值。
-  static final int TYPE_MICRO = 10, TYPE_LABEL = 11, TYPE_BODY = 12,
-      TYPE_TITLE = 14, TYPE_HEADING = 16, TYPE_BRAND = 28;
+  // 字号阶梯。新增界面只从这六档里选，别再插 12.5 这种中间值。
+  // 2026-11-09 整体上调一档：小字 10→11、标签 11→12、正文 12→13、标题 14→15、板块 16→18、品牌 28→30。
+  static final int TYPE_MICRO = 11, TYPE_LABEL = 12, TYPE_BODY = 13,
+      TYPE_TITLE = 15, TYPE_HEADING = 18, TYPE_BRAND = 30;
 
   // 圆角阶梯：小控件 10、卡片 22、面板与弹层 26、胶囊容器 28。按钮一律走胶囊（半高）。
   static final float R_CONTROL = 10, R_CARD = 22, R_SHEET = 26, R_PILL = 28;
@@ -86,6 +87,19 @@ final class AppStyle {
             new int[][] {new int[] {-android.R.attr.state_enabled}, new int[] {}},
             new int[] {DISABLED, color}));    view.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
     view.setIncludeFontPadding(false);
+    // A capsule needs breathing room. With WRAP_CONTENT width and no padding the pill comes out
+    // exactly as wide as its text, so the glyphs sit on the curved ends and read as spilling out of
+    // the shape — that was visible on the「全部 8 款」chip. Auto-width actions therefore always keep
+    // at least half their height on each side.
+    view.addOnLayoutChangeListener(
+        (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+          ViewGroup.LayoutParams params = v.getLayoutParams();
+          if (params == null || params.width != ViewGroup.LayoutParams.WRAP_CONTENT) return;
+          int minimum = Math.round(v.getHeight() / 2f);
+          if (v.getPaddingLeft() >= minimum && v.getPaddingRight() >= minimum) return;
+          int horizontal = Math.max(minimum, Math.max(v.getPaddingLeft(), v.getPaddingRight()));
+          v.setPadding(horizontal, v.getPaddingTop(), horizontal, v.getPaddingBottom());
+        });
     view.setFocusable(true);
     view.setClickable(true);
   }
@@ -109,7 +123,7 @@ final class AppStyle {
   static void field(EditText input) {
     input.setTextColor(INK);
     input.setHintTextColor(MUTED);
-    input.setTextSize(15);
+    input.setTextSize(16);
     input.setPadding(dp(input.getContext(), 14), 0, dp(input.getContext(), 14), 0);
     input.setBackground(shape(input.getContext(), FIELD, 14, true));
     input.setBackgroundTintList(null);
@@ -138,7 +152,7 @@ final class AppStyle {
                 TextView message = dialog.findViewById(android.R.id.message);
                 if (message != null) {
                   message.setTextColor(INK);
-                  message.setTextSize(14);
+                  message.setTextSize(15);
                   message.setLineSpacing(dp(dialog.getContext(), 4), 1);
                 }
                 for (int which :
@@ -152,7 +166,7 @@ final class AppStyle {
                   boolean primary = which == AlertDialog.BUTTON_POSITIVE;
                   action(button, primary ? BG : INK, primary ? ACCENT : Color.TRANSPARENT, 20);
                   button.setAllCaps(false);
-                  button.setTextSize(13);
+                  button.setTextSize(14);
                   button.setMinHeight(dp(dialog.getContext(), 44));
                   button.setMinWidth(primary ? 2 * dp(dialog.getContext(), 44) : 0);
                   button.setMinimumWidth(primary ? 2 * dp(dialog.getContext(), 44) : 0);

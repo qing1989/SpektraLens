@@ -40,6 +40,8 @@ public final class MainActivity extends Activity {
   private PanelHandle panelHandle;
   private OnBackInvokedCallback backCallback;
   private boolean panelExpanded;
+  private ScrollView panelScroll;
+  private int panelContentHeight;
   private float panelDragY;
   private int panelDragHeight;
   private boolean panelDragging;
@@ -607,7 +609,7 @@ public final class MainActivity extends Activity {
     panelLayout.setMargins(dp(12), dp(4), dp(12), 0);
     toolsColumn.addView(panel, panelLayout);
     buildPanel();
-    LinearLayout.LayoutParams navigation = new LinearLayout.LayoutParams(-1, dp(56));
+    LinearLayout.LayoutParams navigation = new LinearLayout.LayoutParams(-1, dp(58));
     navigation.setMargins(dp(12), dp(10), dp(12), dp(10));
     toolsColumn.addView(tabRow, navigation);
     updateEditorLayout();
@@ -650,7 +652,38 @@ public final class MainActivity extends Activity {
             ? Math.round(editorScreen.getHeight() / getResources().getDisplayMetrics().density)
             : getResources().getConfiguration().screenHeightDp;
     int limit = Math.max(96, height - 284);
-    return Math.min(limit, expanded ? Math.min(470, Math.round(height * .58f)) : 286);
+    // 胶片页调完曝光就没有别的控件了，固定 286 会在底部留一块空白。收起态按内容高度走：
+    // 内容矮就缩到内容高，内容高到 320 以上才回到「固定高度 + 展开箭头」的老行为。
+    int compact = Math.max(150, Math.min(320, panelContentHeight > 0 ? panelContentHeight : 286));
+    if (!expanded) return Math.min(limit, compact);
+    int roomy = Math.min(470, Math.round(height * .58f));
+    return Math.min(limit, Math.max(roomy, compact));
+  }
+
+  /** Measures the panel body so the collapsed sheet can shrink to whatever the tab actually shows. */
+  private void fitPanelToContent() {
+    if (panel == null || panelScroll == null || editor == null) return;
+    int width =
+        panelScroll.getWidth() - panelScroll.getPaddingLeft() - panelScroll.getPaddingRight();
+    if (width <= 0) {
+      width = getResources().getDisplayMetrics().widthPixels - dp(12) * 2;
+    }
+    editor.measure(
+        View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+    int body =
+        editor.getMeasuredHeight() + panelScroll.getPaddingTop() + panelScroll.getPaddingBottom();
+    int chrome = 0;
+    for (int i = 0; i < panel.getChildCount(); i++) {
+      View child = panel.getChildAt(i);
+      if (child == panelScroll) continue;
+      chrome += child.getMeasuredHeight() > 0 ? child.getMeasuredHeight() : dp(26);
+    }
+    int total = body + chrome;
+    if (total != panelContentHeight) {
+      panelContentHeight = total;
+      updatePanelHeight();
+    }
   }
 
   private void updatePanelHeight() {
@@ -660,7 +693,12 @@ public final class MainActivity extends Activity {
     layout.weight = wideEditor() ? 1 : 0;
     panel.requestLayout();
     if (panelHandle != null) {
-      boolean available = !wideEditor() && panelHeight(true) > panelHeight(false) + 12;
+      // 只有「内容真的装不下」才给展开箭头；胶片页内容正好等于面板高度，不给多余入口。
+      boolean available =
+          !wideEditor()
+              && (panelContentHeight > 0
+                  ? panelContentHeight > panelHeight(false) + 12
+                  : panelHeight(true) > panelHeight(false) + 12);
       panelHandle.setEnabled(available && !exporting);
       panelHandle.setVisibility(available ? View.VISIBLE : View.GONE);
       panelHandle.setContentDescription(panelExpanded ? "收起调节面板" : "展开调节面板");
@@ -742,9 +780,9 @@ public final class MainActivity extends Activity {
     TextView logo = text(getString(R.string.app_name), AppStyle.TYPE_BRAND, INK);
     logo.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
     logo.setLetterSpacing(-.035f);
-    add(branding, logo, -1, 40);
+    add(branding, logo, -1, 44);
     TextView cn = text("随身的胶片实验室", AppStyle.TYPE_LABEL, MUTED);
-    add(branding, cn, -1, 26);
+    add(branding, cn, -1, 28);
     head.addView(branding, new LinearLayout.LayoutParams(0, -2, 1));
     TextView help = button("关于", MUTED, BG);
     help.setTextSize(AppStyle.TYPE_LABEL);
@@ -782,14 +820,14 @@ public final class MainActivity extends Activity {
     gap(content, 12);
     TextView privacy = text("RAW / JPEG / PNG / HEIC\n本机处理 · 自动保存调整 · 保留原照片", AppStyle.TYPE_MICRO, MUTED);
     privacy.setLineSpacing(dp(4), 1);
-    add(content, privacy, -1, 48);
+    add(content, privacy, -1, 54);
     gap(content, 24);
     LinearLayout historyHead = horizontal();
     TextView recent = text("最近的底片", AppStyle.TYPE_HEADING, INK);
     recent.setTypeface(null, Typeface.BOLD);
-    historyHead.addView(recent, new LinearLayout.LayoutParams(0, dp(36), 1));
+    historyHead.addView(recent, new LinearLayout.LayoutParams(0, dp(40), 1));
     recentCount = text(library.size() + " 张", AppStyle.TYPE_MICRO, MUTED);
-    add(historyHead, recentCount, -2, 36);
+    add(historyHead, recentCount, -2, 40);
     add(content, historyHead, -1, -2);
     gap(content, 9);
     historyList = vertical();
@@ -842,7 +880,7 @@ public final class MainActivity extends Activity {
       boolean selected = selectedTab == n || (n == 0 && selectedTab == 1);
       TextView tab =
           button(labels[i], selected ? ACCENT : MUTED, selected ? AppStyle.SELECTED : BG);
-      tab.setTextSize(AppStyle.TYPE_BODY);
+      tab.setTextSize(AppStyle.TYPE_TITLE);
       tab.setPadding(0, 0, 0, 0);
       tab.setMinHeight(0);
       tab.setSelected(selected);
@@ -854,11 +892,16 @@ public final class MainActivity extends Activity {
       tabRow.addView(tab, new LinearLayout.LayoutParams(0, -1, 1));
     }
     ScrollView scroll = new ScrollView(this);
+    panelScroll = scroll;
     scroll.setFillViewport(true);
     scroll.setVerticalScrollBarEnabled(false);
     panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     editor = vertical();
     editor.setPadding(dp(14), 0, dp(14), dp(10));
+    // 任何一页内容变化都重新量一次，面板高度才能跟着当前页的功能走。
+    editor.addOnLayoutChangeListener(
+        (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
+            panel.post(this::fitPanelToContent));
     scroll.addView(editor);
     updatePanelHeight();
     if (selectedTab <= 1) {
@@ -879,9 +922,9 @@ public final class MainActivity extends Activity {
               selectedTab = mode;
               buildPanel();
             });
-        modes.addView(tab, new LinearLayout.LayoutParams(0, dp(40), 1));
+        modes.addView(tab, new LinearLayout.LayoutParams(0, dp(42), 1));
       }
-      add(editor, modes, -1, 40);
+      add(editor, modes, -1, 42);
       gap(editor, 8);
     }
     if (selectedTab == 0) {
@@ -895,11 +938,11 @@ public final class MainActivity extends Activity {
                 category.equals(filmCategory) ? AppStyle.CONTROL : BG);
         chip.setTextSize(AppStyle.TYPE_MICRO);
         chip.setSelected(category.equals(filmCategory));
-        chip.setPadding(dp(6), 0, dp(6), 0);
+        chip.setPadding(dp(10), 0, dp(10), 0);
         chip.setSingleLine(true);
         chip.setHorizontallyScrolling(false);
         chip.setAutoSizeTextTypeUniformWithConfiguration(
-            9, 10, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
+            10, 12, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
         chip.setMinHeight(0);
         chip.setOnClickListener(
             v -> {
@@ -912,6 +955,17 @@ public final class MainActivity extends Activity {
       }
       add(editor, filters, -1, 40);
       gap(editor, 8);
+      // 一屏正好放四张：卡片吃掉全部可用宽度，卡片间隔收到 4dp、内部只留 2dp，
+      // 图标就能长到卡宽的 80%（100×80 画布），比原来 45dp 的小图大三分之一。
+      int screenDp = getResources().getConfiguration().screenWidthDp;
+      if (wideEditor()) screenDp = Math.round(screenDp / 2.1f);
+      final int cardGap = 4;
+      final int stride = Math.max(64, (screenDp - 52) / 4);
+      final int cardWidth = stride - cardGap;
+      final int iconHeight = Math.round(cardWidth * .80f);
+      final int labelHeight = 33;
+      final int cardHeight = iconHeight + labelHeight + 4 + 4 + 8;
+
       HorizontalScrollView filmScroll = new HorizontalScrollView(this);
       filmScroll.setHorizontalScrollBarEnabled(false);
       filmScroll.setClipToPadding(false);
@@ -925,19 +979,23 @@ public final class MainActivity extends Activity {
         boolean selected = stock.id.equals(settings.optString("film_stock"));
         if (selected) selectedPosition = position;
         LinearLayout card = vertical();
-        card.setPadding(dp(4), dp(5), dp(4), dp(5));
+        card.setPadding(dp(2), dp(4), dp(2), dp(4));
         GradientDrawable shape = box(selected ? AppStyle.CONTROL : Color.TRANSPARENT, AppStyle.R_CARD);
         shape.setStroke(Math.max(1, dp(.8f)), selected ? ACCENT : Color.TRANSPARENT);
         card.setBackground(shape);
         card.setSelected(selected);
         card.setFocusable(true);
         FilmBadge badge = new FilmBadge(this, stock.id, stock.name, false);
-        add(card, badge, -1, 45);
+        add(card, badge, -1, iconHeight);
         TextView name = text(shortName(stock.name), AppStyle.TYPE_MICRO, selected ? ACCENT : INK);
         name.setMaxLines(2);
         name.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        add(card, name, -1, 34);
+        name.setLineSpacing(dp(1), 1f);
+        // 图标与文字之间留一口气，贴着图标会显得拥挤。
+        LinearLayout.LayoutParams nameLayout = new LinearLayout.LayoutParams(-1, dp(labelHeight));
+        nameLayout.topMargin = dp(8);
+        card.addView(name, nameLayout);
         card.setTooltipText(stock.name);
         card.setContentDescription("胶片 " + stock.name + (selected ? "，已选" : ""));
         card.setOnClickListener(
@@ -947,22 +1005,20 @@ public final class MainActivity extends Activity {
               buildPanel();
             });
         controls.add(card);
-        int cardWidth = narrowControls() ? 76 : 82;
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(cardWidth), dp(92));
-        lp.rightMargin = dp(6);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(cardWidth), dp(cardHeight));
+        lp.rightMargin = dp(cardGap);
         filmCards.addView(card, lp);
         position++;
       }
-      add(editor, filmScroll, -1, 94);
-      final int offset = selectedPosition * dp(narrowControls() ? 82 : 88);
+      add(editor, filmScroll, -1, cardHeight + 2);
+      final int offset = selectedPosition * dp(stride);
       filmScroll
           .getViewTreeObserver()
           .addOnGlobalLayoutListener(
               new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
                 public void onGlobalLayout() {
                   if (filmScroll.getWidth() > 0) {
-                    int stride = dp(narrowControls() ? 82 : 88);
-                    filmScroll.scrollTo(Math.max(0, offset - stride), 0);
+                    filmScroll.scrollTo(Math.max(0, offset - dp(stride)), 0);
                     filmScroll.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                   }
                 }
@@ -977,14 +1033,14 @@ public final class MainActivity extends Activity {
       }
       LinearLayout heading = horizontal();
       TextView title = text("印相材料", AppStyle.TYPE_BODY, INK);
-      heading.addView(title, new LinearLayout.LayoutParams(0, dp(30), 1));
+      heading.addView(title, new LinearLayout.LayoutParams(0, dp(40), 1));
       TextView pick = button("全部 8 款", ACCENT, AppStyle.CONTROL);
-      pick.setPadding(0, 0, 0, 0);
+      pick.setPadding(dp(16), 0, dp(16), 0);
       pick.setMinHeight(0);
-      pick.setTextSize(AppStyle.TYPE_MICRO);
+      pick.setTextSize(AppStyle.TYPE_LABEL);
       pick.setOnClickListener(v -> chooseStock(false));
-      add(heading, pick, -2, 30);
-      add(editor, heading, -1, 30);
+      add(heading, pick, -2, 40);
+      add(editor, heading, -1, 40);
       gap(editor, 6);
       Stock stock = find(papers, settings.optString("print_stock"));
       LinearLayout material = horizontal();
@@ -1039,10 +1095,10 @@ public final class MainActivity extends Activity {
           "auto_exposure_method");
       LinearLayout format = horizontal();
       TextView label = text("胶片画幅", AppStyle.TYPE_LABEL, INK);
-      format.addView(label, new LinearLayout.LayoutParams(0, dp(39), 1));
+      format.addView(label, new LinearLayout.LayoutParams(0, dp(40), 1));
       TextView pick = button(formatName() + "", ACCENT, AppStyle.CONTROL);
-      pick.setTextSize(AppStyle.TYPE_MICRO);
-      pick.setPadding(dp(9), 0, dp(9), 0);
+      pick.setTextSize(AppStyle.TYPE_LABEL);
+      pick.setPadding(dp(14), 0, dp(14), 0);
       pick.setMinHeight(0);
       pick.setOnClickListener(
           v ->
@@ -1056,8 +1112,8 @@ public final class MainActivity extends Activity {
                         buildPanel();
                       })
                   .show());
-      add(format, pick, -2, 32);
-      add(editor, format, -1, 39);
+      add(format, pick, -2, 40);
+      add(editor, format, -1, 40);
       gap(editor, 9);
       rule(editor);
       gap(editor, 8);
