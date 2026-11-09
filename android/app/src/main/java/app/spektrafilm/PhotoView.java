@@ -12,6 +12,22 @@ import android.view.ViewConfiguration;
 
 /** Both the before/after canvas and saved file use encoded sRGB pixels. */
 public final class PhotoView extends View {
+  private static final float FRAME_PAD_DP = 12;
+  private static final float FRAME_SHADOW_DP = 4;
+  private static final float DIVIDER_STROKE_DP = 2;
+  private static final float DIVIDER_GRAB_DP = 24;
+  private static final float KNOB_RADIUS_DP = 13;
+  private static final float KNOB_TEXT_DP = 12;
+  private static final float KNOB_BASELINE_DP = 4;
+  private static final float LABEL_WIDTH_DP = 40;
+  private static final float LABEL_HEIGHT_DP = 23;
+  private static final float LABEL_TEXT_DP = 10;
+  private static final float LABEL_INSET_DP = 8;
+  private static final float LABEL_RIGHT_OFFSET_DP = 48;
+  private static final float LABEL_BASELINE_DP = 16;
+  private static final String LABEL_ORIGINAL = "原图";
+  private static final String LABEL_DEVELOPED = "显影";
+
   private final Paint paint = new Paint(3);
   private final RectF frame = new RectF();
   private final RectF visibleFrame = new RectF();
@@ -80,6 +96,10 @@ public final class PhotoView extends View {
     invalidate();
   }
 
+  private float density() {
+    return getResources().getDisplayMetrics().density;
+  }
+
   private void zoomAt(
       float requested, float focusX, float focusY, float previousX, float previousY) {
     float next = Math.max(1, Math.min(6, requested));
@@ -88,7 +108,7 @@ public final class PhotoView extends View {
     offsetY = focusY - getHeight() / 2f - (previousY - getHeight() / 2f - offsetY) * factor;
     zoom = next;
     if (zoom == 1) offsetX = offsetY = 0;
-    updateFrame();
+    clampOffsets();
     invalidate();
   }
 
@@ -104,6 +124,12 @@ public final class PhotoView extends View {
   }
 
   @Override
+  protected void onSizeChanged(int w, int h, int oldWidth, int oldHeight) {
+    super.onSizeChanged(w, h, oldWidth, oldHeight);
+    clampOffsets();
+  }
+
+  @Override
   protected void onDraw(Canvas c) {
     super.onDraw(c);
     c.drawColor(Color.BLACK);
@@ -111,8 +137,15 @@ public final class PhotoView extends View {
     if (image == null) return;
     updateFrame();
     if (frame.isEmpty()) return;
+    float density = density();
+    float shadow = FRAME_SHADOW_DP * density;
     paint.setColor(Color.BLACK);
-    c.drawRect(frame.left + 3, frame.top + 5, frame.right + 3, frame.bottom + 5, paint);
+    c.drawRect(
+        frame.left + shadow * .75f,
+        frame.top + shadow,
+        frame.right + shadow * .75f,
+        frame.bottom + shadow,
+        paint);
     c.drawBitmap(image, null, frame, paint);
     if (compare && before != null && after != null) {
       float x = dividerX();
@@ -121,22 +154,44 @@ public final class PhotoView extends View {
       c.drawBitmap(before, null, frame, paint);
       c.restore();
       paint.setColor(0xddffffff);
-      paint.setStrokeWidth(2);
+      paint.setStrokeWidth(DIVIDER_STROKE_DP * density);
       c.drawLine(x, visibleFrame.top, x, visibleFrame.bottom, paint);
-      c.drawCircle(
-          x, visibleFrame.centerY(), 13 * getResources().getDisplayMetrics().density, paint);
+      c.drawCircle(x, visibleFrame.centerY(), KNOB_RADIUS_DP * density, paint);
       paint.setColor(0xff171717);
-      paint.setTextSize(12 * getResources().getDisplayMetrics().density);
+      paint.setTextSize(KNOB_TEXT_DP * density);
       paint.setTextAlign(Paint.Align.CENTER);
-      c.drawText(
-          "↔", x, visibleFrame.centerY() + 4 * getResources().getDisplayMetrics().density, paint);
-      label(c, "原图", visibleFrame.left + 8, visibleFrame.top + 8);
+      c.drawText("↔", x, visibleFrame.centerY() + KNOB_BASELINE_DP * density, paint);
       label(
           c,
-          "显影",
-          visibleFrame.right - 48 * getResources().getDisplayMetrics().density,
-          visibleFrame.top + 8);
+          LABEL_ORIGINAL,
+          visibleFrame.left + LABEL_INSET_DP * density,
+          visibleFrame.top + LABEL_INSET_DP * density);
+      label(
+          c,
+          LABEL_DEVELOPED,
+          visibleFrame.right - LABEL_RIGHT_OFFSET_DP * density,
+          visibleFrame.top + LABEL_INSET_DP * density);
     }
+  }
+
+  /**
+   * Keeps panning inside the image. Called from touch and size changes, never from onDraw, so
+   * drawing no longer mutates state.
+   */
+  private void clampOffsets() {
+    Bitmap image = after != null ? after : before;
+    if (image == null || getWidth() == 0 || getHeight() == 0) return;
+    float pad = FRAME_PAD_DP * density();
+    float scale =
+        Math.max(
+            0,
+            Math.min(
+                (getWidth() - pad * 2) / image.getWidth(),
+                (getHeight() - pad * 2) / image.getHeight()));
+    float w = image.getWidth() * scale * zoom, h = image.getHeight() * scale * zoom;
+    float limitX = Math.max(0, (w - getWidth()) / 2), limitY = Math.max(0, (h - getHeight()) / 2);
+    offsetX = Math.max(-limitX, Math.min(limitX, offsetX));
+    offsetY = Math.max(-limitY, Math.min(limitY, offsetY));
   }
 
   private void updateFrame() {
@@ -146,7 +201,7 @@ public final class PhotoView extends View {
       visibleFrame.setEmpty();
       return;
     }
-    float pad = 12 * getResources().getDisplayMetrics().density;
+    float pad = FRAME_PAD_DP * density();
     float scale =
         Math.max(
             0,
@@ -154,14 +209,6 @@ public final class PhotoView extends View {
                 (getWidth() - pad * 2) / image.getWidth(),
                 (getHeight() - pad * 2) / image.getHeight()));
     float w = image.getWidth() * scale * zoom, h = image.getHeight() * scale * zoom;
-    offsetX =
-        Math.max(
-            -Math.max(0, (w - getWidth()) / 2),
-            Math.min(Math.max(0, (w - getWidth()) / 2), offsetX));
-    offsetY =
-        Math.max(
-            -Math.max(0, (h - getHeight()) / 2),
-            Math.min(Math.max(0, (h - getHeight()) / 2), offsetY));
     frame.set(
         (getWidth() - w) / 2 + offsetX,
         (getHeight() - h) / 2 + offsetY,
@@ -176,13 +223,13 @@ public final class PhotoView extends View {
   }
 
   private void label(Canvas c, String s, float x, float y) {
-    float d = getResources().getDisplayMetrics().density;
+    float d = density();
     paint.setColor(0xc0101010);
-    c.drawRoundRect(x, y, x + 40 * d, y + 23 * d, 4 * d, 4 * d, paint);
+    c.drawRoundRect(x, y, x + LABEL_WIDTH_DP * d, y + LABEL_HEIGHT_DP * d, 4 * d, 4 * d, paint);
     paint.setColor(Color.WHITE);
     paint.setTextAlign(Paint.Align.LEFT);
-    paint.setTextSize(10 * d);
-    c.drawText(s, x + 9 * d, y + 16 * d, paint);
+    paint.setTextSize(LABEL_TEXT_DP * d);
+    c.drawText(s, x + LABEL_INSET_DP * d + d, y + LABEL_BASELINE_DP * d, paint);
   }
 
   @Override
@@ -196,9 +243,7 @@ public final class PhotoView extends View {
       updateFrame();
       dragDivider =
           compare
-              && (zoom == 1
-                  || Math.abs(e.getX() - dividerX())
-                      <= 24 * getResources().getDisplayMetrics().density);
+              && (zoom == 1 || Math.abs(e.getX() - dividerX()) <= DIVIDER_GRAB_DP * density());
     }
     scale.onTouchEvent(e);
     taps.onTouchEvent(e);
@@ -231,6 +276,7 @@ public final class PhotoView extends View {
       } else if (zoom > 1) {
         offsetX += e.getX() - lastX;
         offsetY += e.getY() - lastY;
+        clampOffsets();
       }
       lastX = e.getX();
       lastY = e.getY();
