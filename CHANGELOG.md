@@ -1,8 +1,8 @@
 # 更新记录
 
-## v0.3.7 · 本地测试版
+## v0.3.8
 
-版本号对应 `android/app/build.gradle` 中的 `versionName`；包名始终为 `app.spektrafilm`，以兼容覆盖安装与既有编辑记录。
+版本号对应 `android/app/build.gradle` 中的 `versionName`；包名始终为 `app.spektrafilm`，以兼容覆盖安装与既有编辑记录。（0.3.7 只存在过本地测试包，未发布，其内容并入本节。）
 
 ### 顶栏、导航与选中态
 
