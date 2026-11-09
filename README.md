@@ -3,6 +3,7 @@
 **把一间光谱胶片实验室装进口袋。**
 
 [![版本](https://img.shields.io/badge/version-0.3.5-ff7a1a?style=flat-square)](CHANGELOG.md)
+[![下载](https://img.shields.io/badge/download-APK%20v0.3.5-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
 [![平台](https://img.shields.io/badge/Android-10%2B-3ddc84?style=flat-square&logo=android&logoColor=white)](#兼容性)
 [![渲染](https://img.shields.io/badge/Vulkan-GPU%20%2B%20CPU%20%E5%9B%9E%E9%80%80-4a90d9?style=flat-square)](#工作原理)
 [![离线](https://img.shields.io/badge/100%25-%E6%9C%AC%E5%9C%B0%E6%98%BE%E5%BD%B1-8a8a8a?style=flat-square)](#为什么不是滤镜)
@@ -116,7 +117,15 @@ flowchart LR
 | 构建 | Gradle 8.11.1 / AGP 8.9.2 / NDK 27.2.12479018 / CMake 3.22.1 |
 | 体积 | APK 约 32 MB |
 
-## 快速开始
+## 下载安装
+
+从 [Releases](https://github.com/qing1989/SpektraLens/releases/latest) 下载最新 `app-debug.apk`（约 32 MB）：
+
+- 要求 Android 10+、arm64 设备；允许「安装未知来源应用」后直接安装
+- 安装包为 **debug 签名**，供体验与测试；与自行构建的正式签名包不互通，切换需先卸载
+- 每个版本的 SHA-256 与变更说明见对应 Release 页面
+
+## 从源码构建
 
 ```sh
 git clone https://github.com/qing1989/SpektraLens.git
