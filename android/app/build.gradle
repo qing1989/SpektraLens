@@ -32,4 +32,9 @@ android {
     buildTypes { release { minifyEnabled false } }
 }
 
-dependencies { implementation 'androidx.exifinterface:exifinterface:1.4.2' }
+dependencies {
+    implementation 'androidx.exifinterface:exifinterface:1.4.2'
+    // exifinterface's @RestrictTo annotations need this on the compile classpath; without it javac
+    // reports "unknown enum constant Scope.LIBRARY" four times.
+    compileOnly 'androidx.annotation:annotation:1.8.1'
+}
