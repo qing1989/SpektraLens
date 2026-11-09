@@ -8,6 +8,7 @@
 [![渲染](https://img.shields.io/badge/Vulkan-GPU%20%2B%20CPU%20%E5%9B%9E%E9%80%80-4a90d9?style=flat-square)](#工作原理)
 [![离线](https://img.shields.io/badge/100%25-%E6%9C%AC%E5%9C%B0%E6%98%BE%E5%BD%B1-8a8a8a?style=flat-square)](#为什么不是滤镜)
 [![许可](https://img.shields.io/badge/license-GPL--3.0--or--later-blue?style=flat-square)](LICENSE)
+[![CI](https://github.com/qing1989/SpektraLens/actions/workflows/android.yml/badge.svg)](https://github.com/qing1989/SpektraLens/actions/workflows/android.yml)
 
 SpektraLens 是一个**本地运行的光谱胶片模拟器**。它不复用任何预设滤镜或 LUT，而是把真实胶片的光谱响应曲线搬进手机：380–780 nm、每 5 nm 一个采样点、共 81 个波长，逐波长积分感光层、染料层与相纸的响应，再还原成 sRGB 图像。
 
