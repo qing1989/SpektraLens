@@ -1,153 +1,188 @@
 # SpektraLens
 
-项目于 2026-11-05 统一更名为 **SpektraLens**。桌面及系统显示名称、首页、关于页、导出与分享文件、预览页面和后续交付文件均使用新名称。当前开发版本为 **0.3.5**；已交付的 v0.3.3 及更早文件按原名称保留。
+**把一间光谱胶片实验室装进口袋。**
 
-Android 安装标识继续使用 `app.spektrafilm`，以兼容覆盖安装、已有照片及编辑记录。新导出照片保存到 `Pictures/SpektraLens`，文件名以 `SpektraLens_` 开头；旧照片仍可使用。上游 `spektrafilm`、`SpektraLab` 和 `SpektraLab-Android` 的项目名、源码路径、版权与许可证保持原始署名。
+[![版本](https://img.shields.io/badge/version-0.3.5-ff7a1a?style=flat-square)](CHANGELOG.md)
+[![平台](https://img.shields.io/badge/Android-10%2B-3ddc84?style=flat-square&logo=android&logoColor=white)](#兼容性)
+[![渲染](https://img.shields.io/badge/Vulkan-GPU%20%2B%20CPU%20%E5%9B%9E%E9%80%80-4a90d9?style=flat-square)](#渲染后端)
+[![离线](https://img.shields.io/badge/100%25-%E6%9C%AC%E5%9C%B0%E6%98%BE%E5%BD%B1-8a8a8a?style=flat-square)](#为什么不是滤镜)
+[![许可](https://img.shields.io/badge/license-GPL--3.0--or--later-blue?style=flat-square)](LICENSE)
 
-基于 [spektrafilm](https://github.com/andreavolpato/spektrafilm) 的光谱胶片模型与 [SpektraLab](https://github.com/JamesQiu2005/SpektraLab) C++ / Vulkan 引擎制作的 Android 应用。光谱显影、RAW 解码、调色与照片编码均在本机运行，不需要服务器。
+SpektraLens 是一个**本地运行的光谱胶片模拟器**。它不复用任何预设滤镜或 LUT，而是把真实胶片的光谱响应曲线搬进手机：380–780 nm、每 5 nm 一个采样点、共 81 个波长，逐波长积分感光层、染料层与相纸的响应，再还原成 sRGB 图像。
 
-支持 RAW 导入、从原文件重新显影的原尺寸导出、扫描调色、触控曲线、片边日期，以及颗粒和光晕等模拟控制。采用黑灰底与橙色重点、大预览和底部工具布局；所有构建均使用同一套原创胶卷图标。
+RAW 解码、光谱显影、调色、颗粒与光晕合成、编码写盘全部在设备端完成。**没有服务器、没有账号、不上传照片。**
 
-## 公开源码与构建
+<p align="center">
+  <img src="docs/images/01-home.jpg" width="26%" alt="首页" />
+  <img src="docs/images/02-film.jpg" width="26%" alt="胶片选择" />
+  <img src="docs/images/06-texture.jpg" width="26%" alt="质感控制" />
+</p>
 
-当前开发版本 v0.3.5，面向 Android 10+、64 位 Vulkan 设备。本项目是独立 Android 移植；模型、引擎、库和材料数据的原作者、许可及固定版本见 [UPSTREAMS.md](UPSTREAMS.md)、[NOTICE](NOTICE) 和 [来源与许可](THIRD_PARTY_NOTICES.md)。
+---
 
-当前 20 款胶片均使用 SpektraLens 原创胶卷图标。卷芯、圆柱标签、金属压边和片头由原生 Canvas 绘制，每款按目录型号单独配色。新图的实现、型号清单和许可见[胶卷图标说明](docs/图标映射.md)。历史版本的 GRLife 图标及含原图的旧安装包继续按原授权存档。
+## 为什么不是滤镜
 
-仓库包含一个固定版本的 SpektraLab 子模块，SwiftShader 完整源 ZIP 使用 Git LFS。克隆后先执行：
+| | 常见胶片滤镜 | SpektraLens |
+|---|---|---|
+| 原理 | 3×3 矩阵或 LUT 查表 | 81 波长光谱积分，物理胶片模型 |
+| 数据 | 制作者反复调色试出的近似 | 上游实测胶片光谱密度数据，未修改 |
+| 结果 | 换一张照片就失准 | 曝光、光源色温、胶片型号各自独立作用 |
+| 处理位置 | 常需上传云端 | 全程在手机 GPU / CPU 上计算 |
 
-```sh
-git submodule update --init --recursive
-git lfs install --local
-git lfs pull
+## 界面
+
+<p align="center">
+  <img src="docs/images/01-home.jpg" width="23%" alt="首页" />
+  <img src="docs/images/02-film.jpg" width="23%" alt="胶片面板" />
+  <img src="docs/images/03-paper.jpg" width="23%" alt="相纸与印相" />
+</p>
+<p align="center">
+  <sub><b>首页</b> 导入或继续最近的底片 · <b>胶片</b> 20 款胶片与胶片曝光 · <b>相纸</b> 8 款印相材料与滤色</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/04-curve.jpg" width="23%" alt="曲线调整" />
+  <img src="docs/images/05-border.jpg" width="23%" alt="片边与日期" />
+  <img src="docs/images/06-texture.jpg" width="23%" alt="质感" />
+</p>
+<p align="center">
+  <sub><b>调整</b> 曲线 / HSL / 色彩平衡 / 暗角 · <b>边框</b> 齿孔、白边、即时相纸与日期 · <b>质感</b> 颗粒、光晕与物理画幅</sub>
+</p>
+
+> 截图取自 v0.3.3；v0.3.5 起应用统一更名为 SpektraLens，界面与交互未变。
+
+## 功能
+
+**胶片与相纸**
+
+- 20 款彩色胶片：Kodak Portra 160/400/800（含 Push 1 / Push 2）、Ektar 100、Gold 200、Ultramax 400、Ektachrome 100、Kodachrome 64、Vision3 50D/200T/250D/500T、Verita 200D；Fujifilm C200、Pro 400H、X-Tra 400、Provia 100F、Velvia 100
+- 8 款相纸与拷贝片：Kodak Endura / Supra / Ultra / Portra Endura、Ektacolor Edge、Vision 2383 / Premier 2393、Fujifilm Crystal Archive Type II
+- 负片走完整印相链路（亮度 + 洋红/黄色滤色），反转片直接扫描；切换胶片自动联动推荐相纸与分类
+
+<p align="center">
+  <img src="docs/images/film-canisters.png" width="70%" alt="20 款胶片图标" />
+  <br/>
+  <sub>20 款胶卷图标全部由 Canvas 代码绘制，无位图素材</sub>
+</p>
+
+**显影与调色**
+
+- 基础：曝光、对比度、亮度、阴影/高光、黑白场、饱和度、冷暖与色调
+- 曲线：RGB、亮度、R/G/B 共 5 组，点击加点、拖动调整、长按删点
+- 色彩平衡（四区）、HSL 八色分色、暗角
+- 整组扫描调色可一键旁路，便于对比原始显影结果
+
+**质感与呈现**
+
+- 银盐颗粒、高光光晕、光晕增益、乳剂散射、防光晕层、显影耦合、密度曲线、镜头/扫描柔化、相纸炫光与预闪
+- 物理画幅（135 / 120 等）、自动测光（默认关闭，可手动开启）
+- 片边：135 黑色/暖色齿孔、白边、即时相纸，编号与英文题注，日期位置/颜色/字号/亮度可调
+
+**输入与输出**
+
+- RAW：`.DNG` `.NEF` `.RAF` `.ARW` 等，LibRaw 原尺寸 AHD 去马赛克，使用传感器数据而非内嵌预览
+- 普通：JPEG / PNG / HEIC 等系统解码格式
+- 导出：sRGB JPEG（8 位 q96）、PNG / TIFF（16 位），从原文件重新显影、不放大小图；保留可读 EXIF 与 ICC，不复制 GPS
+- 每张照片独立编辑记录，30 步会话撤销/重做；导出配方与输入输出 SHA-256 存档，便于复现
+
+## 工作原理
+
+```mermaid
+flowchart LR
+    A[RAW / JPEG / HEIC] --> B[LibRaw 解码<br/>AHD 去马赛克]
+    B --> C[线性 ProPhoto 输入]
+    C --> D[光谱显影<br/>380–780nm · 81 波长]
+    D --> E{负片?}
+    E -- 是 --> F[相纸印相<br/>亮度 + CMY 滤色]
+    E -- 否 --> G[反转片直接扫描]
+    F --> H[sRGB]
+    G --> H
+    H --> I[扫描后调色<br/>曲线 / HSL / 色彩平衡]
+    I --> J[颗粒 / 光晕 / 片边]
+    J --> K[JPEG · PNG16 · TIFF16]
 ```
 
-使用 JDK 17、Android SDK 35、Build Tools 35.0.0、NDK 27.2.12479018 和 CMake 3.22.1。设置 `JAVA_HOME`、`ANDROID_HOME` 指向本机安装目录，然后运行：
+显影在后端独立进程中执行：优先尝试设备 GPU，通过严格数值自检后启用；初始化超时或失败则切换到随包 SwiftShader CPU 驱动。两类后端使用同一份材料数据与着色器，切换后结果一致性由仪器测试比对。
 
-```sh
-python3 scripts/build.py -PpublicBuild=true :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
-```
+## 技术栈
 
-APK 位于 `android/app/build/outputs/apk/debug/app-debug.apk`。开发和公开构建均排除历史 GRLife 原图。系统 GPU 与随包 CPU Vulkan 驱动均可使用；CPU 驱动对应的完整源 ZIP、依赖许可、构建脚本均保留，也可运行 `python3 scripts/build_swiftshader.py` 重新构建。不要把包含保留素材的历史 APK、源码包或截图发布到公开仓库或 Release。
-
-编辑参数滑杆采用名称、渐变轨道、白色胶囊滑块和数值框的同行布局，配色随参数语义变化，见[滑杆界面说明](docs/滑杆界面.md)。
-
-当前界面采用用户选定的 C「轻盈浮层」方案：首页、独立参数面板、底部工具栏、三列图库、弹窗与输入框共用黑灰橙色样式。参数面板可点击或拖动把手展开/收起；见 [C 方案界面说明](docs/C方案界面.md)。
-
-照片预览的双指缩放跟随手势中心，双击以点击处放大或复位，对比模式的捏合手势不会误拖分界线。启动时按安装包内容校验显影资源，覆盖安装后更新旧资源缓存；见[照片预览与资源校验](docs/照片预览与资源校验.md)。
-
-## v0.3.3 界面与照片预览
-
-当时的私人交付保留了 11 张授权 GRLife PNG 和 7 款补绘标签；安装包及对应源码仅作本次授权范围内的本地交付。
-
-- 首页、编辑器、手机图库与弹窗统一为 C「轻盈浮层」样式；橙色主按钮为横向胶囊，窄屏及放大字体下操作区自动换行。
-- 编辑滑杆采用语义渐变轨道、白色胶囊滑块和数值框；首页使用固定横幅，竖图按中心裁切。
-- 新照片自动测光默认关闭，裁切入口暂时隐藏；普通导入重置参数，导出后的“再编辑一张”才复用参数。
-- 双指和双击缩放跟随操作位置，进度提示不再挤动照片；启动校验并更新显影资源缓存。
-- 修复重启后从最近底片打开上次照片时遗漏显影的问题，恢复已保存的编辑参数并生成预览。
-
-包名与签名沿用既有版本，versionCode 从 11 提升到 12，支持覆盖安装。历史交付文件保留。
-
-## v0.3.2 工作流修正
-
-首页主图已恢复之前的 240dp 固定横幅，横图、竖图都按图片中心裁切填满。
-
-当前源码已按后续反馈将自动测光默认改为关闭，并暂时移除裁切工具，底部仅保留“胶片、调整、边框、质感”。已有照片的几何参数继续保留读取，后续再恢复裁切入口；此前交付的 v0.3.2 安装包未重新生成。对原始 Python、桌面 Metal、Android Vulkan 的胶片效果核对见[显影对照记录](docs/胶片显影对照.md)。
-
-1. 手机图库按拍摄时间从新到旧排列；无拍摄时间时回退到修改/入库时间，并在应用内落实排序，兼容忽略查询排序的相册提供方。
-2. 普通新导入使用全新默认编辑参数，不继承上一张调整；已存底片仍恢复自己的编辑记录，取消或失败不改上一张照片。
-3. 最近底片显示文件格式和实际文件大小，标题去掉图片后缀，原文件名保留。
-4. 选择胶卷会联动上方分类标签和该胶片推荐的默认相纸，恢复历史时分类同步。
-5. 相纸卡片下提示：相纸与已选择的胶片联动，默认无需选择。
-6. 新照片自动测光默认关闭；手动开启时，初始方式为中央加权。相机 JPG 已含曝光决定，避免导入时再次自动改变亮暗。
-7. 导出成功提供“回到首页”和“再编辑一张”。后者明确复用刚导出照片的全部编辑参数；普通导入仍恢复默认，取消不会留下隐藏的复用状态。
-8. 页面和弹窗的点击调用系统触感反馈，力度与能力由设备决定，尊重系统开关，不强制设置自定义振幅。
-
-## v0.3.1 界面修正与导出性能
-
-启动图标使用琥珀橙胶片弯成的 S 形，配炭黑背景，提供 Android 自适应前景与主题单色图层。原图、遮罩和小尺寸预览、生成提示词及复现步骤见 [启动图标素材](design/app-icon/v1/README.md)。
-
-所有参数滑块按滑块圆点宽度留足左右空间，最小值、最大值均完整显示。编辑器去掉底部的引擎状态和诊断文字行；诊断保留在首页“关于 → 处理诊断”。首页移除“试用示例”和“继续编辑”按钮，最近照片与编辑记录仍可打开；主预览按照照片自身比例显示完整画面，不再固定高度裁切。
-
-修复调试安装包中原生调色和编码未开启编译优化的问题，在保留调试与 GPU 自检的同时启用 `-O2`，继续禁用 fast-math 与浮点融合。原尺寸、JPEG 质量和模型参数保持原有设置。Android 15 arm64 模拟器上，同一张 4000×3000、12.2 MB JPEG 的两次平均导出耗时从 17.176 秒降至 8.007 秒，基准输出 SHA-256 完全一致；此基准关闭颗粒、光晕与炫光，另有开启效果的独立基准。这不是 OPPO 真机测速。细分数据见 [导出性能排查](docs/导出性能排查.md)。
-
-导出现在记录排队、原文件读取、光谱显影、调色、编码写文件、写相册、记录校验等耗时，并保留前后实际后端和回退原因。可从“关于 → 处理诊断 → 复制诊断”查看最近一次导出，记录保留在本机。
-
-## v0.3.0 照片编辑页
-
-参考 PhotonCam 官方照片编辑展示与用户确认的方向，采用黑灰底、橙色重点、圆润的纯文字按钮。导出移至顶部，底部固定“胶片、调整、裁切、边框、质感”五个主工具；相纸位于“胶片 → 相纸与印相”，基础、曲线、色彩平衡、HSL 与暗角位于“调整”内。原先的全部控制和输出能力保留，功能位置见 [编辑页设计与映射](docs/PhotonCam编辑页设计.md)。
-
-照片下方“照片”打开手机相册的底部三列图库，可上拉展开、切换相册，并从“已导入”切换应用照片与示例；对比、撤销/重做与缩放复位继续可用。编辑页使用静态黑灰背景，首页自动动效随显示与前后台恢复/暂停。保留 v0.2.4 的全部图标清理、七款统一补绘及返回首页的预览释放修复。
-
-首次打开手机图库时请求系统图片权限，兼容全部、部分与拒绝授权。拒绝后不反复自动请求，仍有系统单选器和文件选择入口；RAW 文件继续从文件入口选择。图库没有拍照格子或视频。
-
-## v0.2.4 图标与界面清理
-
-补绘 C200、Provia 100F、Velvia 100、X-Tra 400、Verita 200D、Vision3 200T、Vision3 50D 七款标签；沿用现有 GRLife 标签的竖排型号与色块，并共用胶卷外壳。20 款均有匹配图标，授权原图保持原字节。详见 [图标映射](docs/图标映射.md)。
-
-操作按钮统一使用纯文字，去除文字旁的加号、箭头和下拉标识；清理相纸占位图案和缩略图栏重复入口，撤销/重做随可用历史显示。首页保留“关于”文字入口；处理诊断位于“关于 → 处理诊断”。背景动效自动随应用前后台启停，界面不提供动效开关。逐页检查见 [界面图标检查](docs/界面图标检查.md)。
-
-## v0.2.3 移动 GPU 与故障恢复
-
-采用 [SAINTTaiYi/SpektraLab-Android v1.3.3j](https://github.com/SAINTTaiYi/SpektraLab-Android/tree/v1.3.3j) 的部分 GPU 移植，并补齐窗口调度、边界和内存所有权。自动模式先尝试本机 GPU，通过严格数值自检后显影；初始化超过 15 秒或失败，切换随包 CPU 兼容显影。渲染/导出期间遇到驱动、缓冲区范围错误或进程退出，会重新打开当前照片并在 CPU 重试一次。不会扩大手机报告的缓冲区上限。超出 GPU 窗口处理能力的大图可以回退，CPU 仍受总内存限制。
-
-首页“关于 → 处理诊断 → 切换显影模式”，可选择自动、重新尝试 GPU 或兼容显影；选择会保存在本机。旧版手动选择的兼容模式会保留，需要从这里切回自动才能尝试新版 GPU。诊断包含设备、数学自检、实际模式及回退原因；不自动上传。
-
-GPU 与 CPU 引擎分别位于私有进程。保留原有普通照片读取队列、字节进度、取消和无进展超时。导出在显影进程内重新解码原文件，降低编辑器的大 Bitmap 内存和跨进程传输；源文件、光谱材料数据、图库与调整参数保持原有格式。
-
-本次为社区 GPU 代码的选择性适配，未接入社区客户端的更新/遥测、UI、全新胶片库或其他功能。来源、差异与重建见 [移动 GPU 移植说明](docs/移动GPU移植.md)。实体 OPPO PLP110 / API 37 仍需安装后验证，模拟器结果不能证明该手机已恢复。
-
-## 使用
-
-1. 首页导入照片，或从“最近的底片”打开已有照片。普通图片可从相册选择；RAW 请选“从文件选择”，该入口允许选择 `.DNG`、`.NEF`、`.RAF`、`.ARW` 等文件，实际相机支持由 LibRaw 决定。导入会保存原文件副本，不会改写相册源文件。
-2. “胶片”选择 20 款彩色胶片，设置胶片曝光。v0.2 对齐 SpektraLab 产品曝光行为，胶片曝光会影响成片明暗。反转片直接扫描，切换后相纸面板显示对应说明。
-3. “胶片 → 相纸与印相”选择 8 款印相材料，设置印相亮度、洋红和黄色滤色；这些控制只参与负片印相。
-4. “调整”可切换基础、曲线、色彩平衡、HSL 分色、暗角。曲线包含 RGB、亮度和 R/G/B 通道；点击添加点、拖动调整、长按删除内部点。开关可暂时旁路整组扫描调色。
-5. “边框”提供 135 黑色/暖色齿孔、白边、即时相纸，支持编号与英文题注；日期可自填或使用文件中的拍摄日期，并调整位置、颜色、字号和亮度。片边增加画布尺寸，导出前会显示最终尺寸。
-6. “质感”提供颗粒、光晕及增益、散射、防光晕层、显影耦合、密度曲线、镜头/扫描柔化、相纸炫光/预闪、自动测光与物理画幅。
-7. 点击“导出照片”，重新读取原文件显影，可保存 JPEG、16 位 PNG、16 位 TIFF，或分享 JPEG。保存位置为 `Pictures/SpektraLens`；部分相册无法显示 TIFF 缩略图，可从文件管理器打开。导出配方、输入与输出 SHA-256 保存在应用私有 `files/exports/*.json`，最近一次记录另存为 `files/last_export.json`。
-8. “照片”菜单切换图库照片，各照片保存独立编辑参数；重启后可继续。长按首页历史卡片可移除应用内副本。背景动效自动运行；离开应用自动暂停，返回后恢复。
-
-## 当前能力与边界
-
-| 范围 | 当前工作区 |
+| 层 | 实现 |
 |---|---|
-| 胶片/相纸 | 20 款彩色胶片、8 款相纸/拷贝片；测量数据未修改 |
-| 光谱引擎 | 380–780 nm，5 nm 间隔，81 波长；float32 C++ / Vulkan；GPU 或随包 SwiftShader CPU |
-| RAW | LibRaw 0.22.2：原尺寸 AHD 去马赛克、拍摄白平衡、16 位兼容策略，线性 ProPhoto 送入引擎；不使用内嵌预览代替传感器数据 |
-| 普通输入 | Android ImageDecoder 支持的 JPEG、PNG、HEIC 等；应用方向并转换到 sRGB |
-| 尺寸 | 预览最长边 1024；导出从原文件重新计算，移除旧 2560 上限，不放大小图；受可用内存及 Vulkan 缓冲区限制 |
-| 调色 | 扫描后 sRGB 处理：冷暖/色调、曝光、对比度、亮度、阴影/高光、黑白场、饱和度、四区色彩平衡、八色 HSL、五组曲线、暗角 |
-| 几何 | 裁切、旋转、翻转与拉直工具暂不开放；已有照片的几何记录继续用于预览与导出 |
-| 呈现 | 可导出的片边与日期叠加层；不是桌面版负片曝光级物理片边/日期后背模型 |
-| 输出 | sRGB JPEG（8 位、质量 96）、PNG/TIFF（16 位）；保留可读取的部分拍摄 EXIF 与方向为正的输出尺寸，JPEG/TIFF 含 ICC；不复制 GPS |
-| 图库 | 原文件副本、缩略图、逐照片编辑记录，30 步会话撤销/重做 |
-| 尚未覆盖 | 黑白/CineStill 新配置、半格拼接、批量工作流、局部蒙版、场景纬度映射、数字中间片、专业输出色域/软打样与完整上游逐像素 parity |
+| 应用 | Java，Android 10+（API 29+），64 位 |
+| 引擎 | C++ / Vulkan compute，float32，35 个 GLSL compute shader |
+| 光谱模型 | 380–780 nm，5 nm 步进，81 波长 |
+| RAW | LibRaw 0.22.2（固定源码随仓库） |
+| CPU 回退 | SwiftShader（双 ABI 预编译 + 完整源码 ZIP） |
+| 构建 | Gradle 8.11.1 / AGP 8.9.2 / NDK 27.2.12479018 / CMake 3.22.1 |
+| 体积 | APK 约 32 MB |
 
-RAW 的“16 位兼容策略”包含 LibRaw 整数去马赛克及通道裁切，并非全浮点 RAW 处理或高光恢复。扫描调色的冷暖/色调不是 RAW 解码前的物理色温调整。16 位输出保留本次浮点显影后的量化精度，不能恢复 8 位源照片里没有的信息。
-
-导出前按源像素数估算可用内存；不足时保留照片和编辑参数并提示重试，不自动缩小输出。这个估算无法覆盖所有驱动与操作系统内存行为，极大图仍可能触及设备上限。
-
-## 构建与测试
-
-需要 JDK 17、Python 3.9+、Android SDK platform/build-tools 35、NDK 27.2.12479018、CMake 3.22.1。Gradle Wrapper 8.11.1，AGP 8.9.2，AndroidX ExifInterface 1.4.2。LibRaw 全部固定源码已包含于 `third_party`，配置阶段不用下载。SwiftShader 两份 ABI 的预编译库与固定源码 ZIP 也包含在交付中。
+## 快速开始
 
 ```sh
-export JAVA_HOME=/absolute/path/to/jdk17
-export ANDROID_HOME=/absolute/path/to/Android/sdk
-python3 scripts/build.py :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
-python3 scripts/device_tests.py --fetch-camera-fixture
-python3 scripts/package.py
+git clone https://github.com/qing1989/SpektraLens.git
+cd SpektraLens
+git submodule update --init --recursive
+git lfs install --local && git lfs pull   # 拉取 SwiftShader 源码包
+
+export JAVA_HOME=/path/to/jdk17
+export ANDROID_HOME=/path/to/Android/sdk
+python3 scripts/build.py -PpublicBuild=true :app:assembleDebug
 ```
 
-构建脚本先校验基线并在 `.tooling/android-engine-source` 应用 `patches/android-gpu-v0.2.3.patch`，复制原始引擎数据、编译 35 个 GLSL compute shader，再调用 Gradle。仅需要代理时设置 `SPEKTRALENS_BUILD_PROXY`，不会修改系统网络设置。本工作区可复用相邻“听书 App”的 JDK/Gradle 缓存；独立源码包使用环境变量和自带 Wrapper 即可。
+产物位于 `android/app/build/outputs/apk/debug/app-debug.apk`。
 
-需要重建 CPU 兼容库时，先运行 `python3 scripts/build_swiftshader.py`，再构建 APK。该脚本校验并解压 `third_party/SwiftShader-cddb5c91-source.zip`，使用同一 NDK 编译两个 ABI；完整编译需较长时间。详细参数见 [兼容显影实现](docs/兼容显影实现.md)。
+- 需要 JDK 17、Python 3.9+、Android SDK platform / build-tools 35
+- 首次构建会校验基线、应用 `patches/android-gpu-v0.2.3.patch`、复制引擎数据并编译 shader，耗时较长
+- 重建 CPU 兼容库：`python3 scripts/build_swiftshader.py`
+- 设备仪器测试：`python3 scripts/device_tests.py`（含 DNG / NEF 原尺寸导出校验）
 
-设备测试调用实际 APK 中的 JNI 与 SPIR-V，含无内嵌预览 DNG、真实 Nikon NEF、原尺寸导出和编码校验。Nikon 相机样片仅下载到 `.tooling` 作本地测试，不打包到交付物；下载使用固定 rawpy commit 和 SHA-256。生成 DNG 的脚本只依赖 Python 标准库。
+## 兼容性
 
-## 来源与许可
+| 项 | 说明 |
+|---|---|
+| 系统 | Android 10 及以上，arm64-v8a |
+| GPU | Vulkan 1.1+；不可用时自动回退 CPU 渲染 |
+| 预览 | 最长边 1024 |
+| 导出 | 受可用内存与 Vulkan 缓冲上限约束，导出前按源像素估算，不足时提示重试而不静默缩图 |
+| 暂未开放 | 裁切 / 旋转 / 拉直 / 翻转、局部蒙版、批量处理、黑白与 CineStill 配置、半格拼接 |
 
-程序按 GPL-3.0-or-later 发布。保留 SpektraLab 原始 checkout；Android 新增适配层、界面和扫描后处理。胶片数据沿用上游署名与许可，当前胶卷绘制代码、标签定义和本项目渲染出的图标按 GPL-3.0-or-later 提供。历史 GRLife 图标仍适用原授权。LibRaw 采用 LGPL-2.1 选项，完整源码、版权及许可随交付提供。详细说明见 [来源与许可](THIRD_PARTY_NOTICES.md) 与 [图标映射](docs/图标映射.md)。
+已知问题与逐版修正记录见 [CHANGELOG.md](CHANGELOG.md)；能力边界与实现细节见 [docs/](docs/)。
 
-开发期间可运行 `python3 scripts/preview_android.py`，在终端给出的本机地址只读查看模拟器当前画面。预览服务只监听 127.0.0.1，默认面向 emulator-5554，不连接实体手机或上传画面。
+## 项目结构
+
+```
+android/          应用与 JNI 适配层
+SpektraLab/       C++ / Vulkan 引擎（git submodule）
+third_party/      LibRaw、SwiftShader 源码与预编译库
+patches/          引擎侧 Android 适配补丁
+scripts/          构建、打包、设备测试、资源校验
+docs/             界面规范、显影对照、性能与兼容性记录
+design/           启动图标与视觉设计稿
+```
+
+## 文档
+
+- [胶片显影对照](docs/胶片显影对照.md) — 原始 Python / 桌面 Metal / Android Vulkan 三端数值核对
+- [兼容显影实现](docs/兼容显影实现.md) — SwiftShader CPU 后端
+- [移动 GPU 移植](docs/移动GPU移植.md) — 社区 GPU 代码的适配范围与差异
+- [胶卷图标说明](docs/图标映射.md) — 20 款图标的绘制规则与清单
+- [C 方案界面](docs/C方案界面.md) · [滑杆界面](docs/滑杆界面.md) — 视觉与交互规范
+- [照片预览与资源校验](docs/照片预览与资源校验.md) — 手势、缩放与启动时资源校验
+- [导出性能排查](docs/导出性能排查.md) — 逐阶段耗时与优化记录
+
+## 致谢与许可
+
+本项目的胶片模型、显影引擎与材料数据来自开源上游：
+
+- [andreavolpato/spektrafilm](https://github.com/andreavolpato/spektrafilm) — 光谱胶片模型与原始 Python 实现
+- [JamesQiu2005/SpektraLab](https://github.com/JamesQiu2005/SpektraLab) — C++ / Vulkan 引擎
+- [SAINTTaiYi/SpektraLab-Android](https://github.com/SAINTTaiYi/SpektraLab-Android) — 移动 GPU 移植参考
+- LibRaw — RAW 解码（LGPL-2.1）
+
+程序与界面的 Android 适配层、扫描后处理、胶卷图标绘制代码按 **GPL-3.0-or-later** 发布。胶片与相纸测量数据沿用上游署名与许可（CC BY-SA 4.0），未作修改。
+
+固定版本、完整署名与第三方许可见 [UPSTREAMS.md](UPSTREAMS.md)、[NOTICE](NOTICE)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+---
+
+<sub>SpektraLens 是独立第三方项目，与 Kodak、Fujifilm 及其他商标持有人无隶属关系。胶片与相纸名称仅用于说明所模拟的材料。</sub>
