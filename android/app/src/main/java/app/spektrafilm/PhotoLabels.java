@@ -40,6 +40,7 @@ final class PhotoLabels {
       if (!EXT.matcher(name).find()
           && (header.startsWith("II*\u0000") || header.startsWith("MM\u0000*"))) return "TIFF";
     } catch (IOException ignored) {
+      // 读不到文件头就按扩展名判断
     }
     Matcher extension = EXT.matcher(name);
     if (!extension.find()) return "RAW / 图片";

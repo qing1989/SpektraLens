@@ -49,12 +49,14 @@ final class PhotoImportJob {
               try {
                 signal.cancel();
               } catch (RuntimeException ignored) {
+                // 已经取消的任务再次取消会抛，忽略
               }
               Closeable c = input;
               if (c != null)
                 try {
                   c.close();
                 } catch (IOException ignored) {
+                  // 收尾时关闭失败无法补救，忽略
                 }
             },
             "SpektraLens-import-cancel")

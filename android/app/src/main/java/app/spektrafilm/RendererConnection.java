@@ -108,6 +108,7 @@ final class RendererConnection implements AutoCloseable {
       try {
         previous.unlinkToDeath(recipient, 0);
       } catch (java.util.NoSuchElementException ignored) {
+        // 进程已死时该注册已被系统移除，忽略
       }
     }
     retiring.remove(mode, previous);
@@ -168,6 +169,7 @@ final class RendererConnection implements AutoCloseable {
       try {
         context.unbindService(connection);
       } catch (IllegalArgumentException ignored) {
+        // 服务已经断开，重复解绑会抛，忽略
       }
     bound = false;
     if (child > 0 && child != android.os.Process.myPid() && live != null && live.isBinderAlive()) {

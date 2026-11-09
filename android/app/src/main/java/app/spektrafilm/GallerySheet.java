@@ -308,6 +308,7 @@ final class GallerySheet extends Dialog {
                   filter(false);
                 });
           } catch (OperationCanceledException ignored) {
+            // 用户取消加载，不是错误
           } catch (Exception error) {
             main.post(
                 () -> {

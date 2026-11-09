@@ -143,12 +143,12 @@ public class RendererService extends Service {
       if (bitmap.getConfig() != Bitmap.Config.ARGB_8888) {
         Bitmap converted = bitmap.copy(Bitmap.Config.ARGB_8888, true);
         if (converted == null) throw new java.io.IOException("无法转换原照片");
-        bitmap.recycle();
+        Bitmaps.release(bitmap);
         bitmap = converted;
       }
       NativeEngine.open(engine, bitmap, params);
     } finally {
-      bitmap.recycle();
+      Bitmaps.release(bitmap);
     }
   }
 

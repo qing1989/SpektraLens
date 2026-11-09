@@ -196,7 +196,7 @@ public final class MainActivity extends Activity {
             ui(
                 () -> {
                   if (boot != engineBootGeneration) {
-                    if (first != null) first.bitmap.recycle();
+                    if (first != null) Bitmaps.release(first.bitmap);
                     return;
                   }
                   ready = true;
@@ -214,7 +214,7 @@ public final class MainActivity extends Activity {
                       fileLabel.setText(filename);
                       refreshStrip();
                       photo.images(source, null);
-                    } else first.bitmap.recycle();
+                    } else Bitmaps.release(first.bitmap);
                   }
                   if (activeImport == null) {
                     if (source != null && editorScreen.getVisibility() == View.VISIBLE)
@@ -267,6 +267,7 @@ public final class MainActivity extends Activity {
             else stage = "加载计算驱动";
           }
         } catch (Exception ignored) {
+          // 状态行只是文案，键名解析失败就保持上一段说明
         }
       }
       setStatus(
@@ -1891,16 +1892,16 @@ public final class MainActivity extends Activity {
                   ui(
                       () -> {
                         if (ticket != revision) {
-                          image.recycle();
-                          before.recycle();
+                          Bitmaps.release(image);
+                          Bitmaps.release(before);
                           return;
                         }
                         Bitmap old = developed, oldBefore = compared;
                         developed = image;
                         compared = before;
                         photo.images(before, image);
-                        if (old != null && old != image) old.recycle();
-                        if (oldBefore != null) oldBefore.recycle();
+                        if (old != image) Bitmaps.release(old);
+                        Bitmaps.release(oldBefore);
                         setStatus(
                             String.format(
                                 Locale.CHINA,
@@ -2034,7 +2035,7 @@ public final class MainActivity extends Activity {
         if (out.bitmap.getConfig() != Bitmap.Config.ARGB_8888) {
           Bitmap normalised = out.bitmap.copy(Bitmap.Config.ARGB_8888, true);
           if (normalised == null) throw new IOException("无法转换照片预览");
-          out.bitmap.recycle();
+          Bitmaps.release(out.bitmap);
           out.bitmap = normalised;
         }
         try {
@@ -2066,6 +2067,7 @@ public final class MainActivity extends Activity {
               exif.getAttributeDouble(
                   androidx.exifinterface.media.ExifInterface.TAG_FOCAL_LENGTH, 0));
         } catch (Exception ignored) {
+          // 单条 EXIF 缺失不影响导入，按默认值继续
         }
       }
       if (out.bitmap == null) throw new IOException("照片解码没有返回图像");
@@ -2078,11 +2080,11 @@ public final class MainActivity extends Activity {
   private void adopt(LoadedPhoto image) {
     Bitmap previous = source;
     if (developed != null) {
-      developed.recycle();
+      Bitmaps.release(developed);
       developed = null;
     }
     if (compared != null) {
-      compared.recycle();
+      Bitmaps.release(compared);
       compared = null;
     }
     source = image.bitmap;
@@ -2107,7 +2109,7 @@ public final class MainActivity extends Activity {
           () ->
               ui(
                   () -> {
-                    if (previous != source) previous.recycle();
+                    if (previous != source) Bitmaps.release(previous);
                   }));
   }
 
@@ -2404,7 +2406,7 @@ public final class MainActivity extends Activity {
       main.post(
           () -> {
             if (destroyed || activeImport != job || job.cancelled.get()) {
-              loaded.bitmap.recycle();
+              Bitmaps.release(loaded.bitmap);
               original.delete();
               new File(new File(getFilesDir(), "thumbnails"), id + ".jpg").delete();
               return;
@@ -2465,7 +2467,7 @@ public final class MainActivity extends Activity {
             }
           });
     } catch (Throwable ex) {
-      loaded.bitmap.recycle();
+      Bitmaps.release(loaded.bitmap);
       if (stored != null) stored.delete();
       throw ex;
     }
@@ -2584,6 +2586,7 @@ public final class MainActivity extends Activity {
         copy(in, out);
         diagnostic += "\n\n引擎 " + backend + "：\n" + out.toString("UTF-8");
       } catch (IOException ignored) {
+        // 引擎日志读不到不影响诊断主内容
       }
     }
     SpectralRenderer current = renderer;
@@ -2601,6 +2604,7 @@ public final class MainActivity extends Activity {
       copy(in, out);
       diagnostic += "\n\n最近一次导出：\n" + out.toString("UTF-8");
     } catch (IOException ignored) {
+      // 还没生成导出追踪文件时忽略
     }
     diagnostic += "\n启动错误：" + prefs.getString("last_engine_error", "无");
     final String message = diagnostic;
@@ -2707,6 +2711,7 @@ public final class MainActivity extends Activity {
         defaults();
         committed = settings.toString();
       } catch (JSONException ignored) {
+        // 帧记录里的参数损坏时退回默认值
       }
   }
 
@@ -2759,7 +2764,7 @@ public final class MainActivity extends Activity {
     try (OutputStream out = new FileOutputStream(new File(dir, id + ".jpg"))) {
       small.compress(Bitmap.CompressFormat.JPEG, 85, out);
     } finally {
-      if (small != image) small.recycle();
+      if (small != image) Bitmaps.release(small);
     }
   }
 
@@ -2827,6 +2832,7 @@ public final class MainActivity extends Activity {
           Stock s = find(films, new JSONObject(frame.params).optString("film_stock"));
           if (s != null) stock = shortName(s.name);
         } catch (Exception ignored) {
+          // 历史记录引用的胶片已不存在，保留原来的标签
         }
         TextView look = text(stock, 10, ACCENT);
         look.setSingleLine(true);
@@ -2883,6 +2889,7 @@ public final class MainActivity extends Activity {
         try {
           settings = new JSONObject(initialSettings);
         } catch (JSONException ignored) {
+          // 外部传入的参数不可解析时用默认值
         }
         defaults();
         filmCategory = category(find(films, settings.optString("film_stock")));
@@ -2907,7 +2914,7 @@ public final class MainActivity extends Activity {
             ui(
                 () -> {
                   if (ticket != revision) {
-                    b.bitmap.recycle();
+                    Bitmaps.release(b.bitmap);
                     return;
                   }
                   adopt(b);
