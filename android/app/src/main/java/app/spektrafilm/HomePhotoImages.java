@@ -35,6 +35,8 @@ final class HomePhotoImages implements AutoCloseable {
   private final File cache;
   private final ExecutorService io = Executors.newSingleThreadExecutor();
   private final ExecutorService rawWorker;
+  /** Preview width cap; smaller on devices whose heap cannot hold a 2048px preview comfortably. */
+  private final int maxEdge;
   private final LinkedHashMap<ImageView, Item> items = new LinkedHashMap<>();
   private final Rect visibleRect = new Rect();
   private final ViewTreeObserver.OnGlobalLayoutListener layoutListener = this::loadVisible;
@@ -78,6 +80,7 @@ final class HomePhotoImages implements AutoCloseable {
     this.main = main;
     this.scroll = scroll;
     this.rawWorker = rawWorker;
+    this.maxEdge = HomeImageDecoder.maxEdge(context);
     cache = new File(context.getCacheDir(), "home-images-v1");
     // A previous run killed mid-write leaves image-*.pending behind; the size cap below only
     // covered the finished PNGs, so those temp files used to pile up forever.
@@ -146,8 +149,7 @@ final class HomePhotoImages implements AutoCloseable {
       }
       if (view.getWidth() == 0 || view.getHeight() == 0) continue;
       double scale =
-          Math.min(
-              1, HomeImageDecoder.MAX_EDGE / (double) Math.max(view.getWidth(), view.getHeight()));
+          Math.min(1, maxEdge / (double) Math.max(view.getWidth(), view.getHeight()));
       int width = Math.max(1, (int) Math.round(view.getWidth() * scale));
       int height = Math.max(1, (int) Math.round(view.getHeight() * scale));
       if (running != null
@@ -190,7 +192,7 @@ final class HomePhotoImages implements AutoCloseable {
         item.waitingForRaw = false;
       }
     } else {
-      if (bitmap != null) bitmap.recycle();
+      Bitmaps.release(bitmap);
       if (items.get(item.view) == item) {
         // Reset both so the next layout pass retries. Leaving them set made a failed decode look
         // like a finished one: the cell stayed blank until it scrolled out and back in.
@@ -222,7 +224,7 @@ final class HomePhotoImages implements AutoCloseable {
                 && request.current
                 && items.get(item.view) == item
                 && item.view.getDrawable() == null) item.view.setImageBitmap(fallback);
-            else fallback.recycle();
+            else Bitmaps.release(fallback);
           });
     }
     if (!request.current) return null;

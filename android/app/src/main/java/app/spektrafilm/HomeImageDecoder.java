@@ -2,6 +2,8 @@
 // Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
+import android.app.ActivityManager;
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.ColorSpace;
 import android.graphics.ImageDecoder;
@@ -11,7 +13,20 @@ import java.io.IOException;
 /** Center-crop at display size, retaining extra samples for antialiasing before reduction. */
 final class HomeImageDecoder {
   static final int MAX_EDGE = 2048;
+  /** 4 GB 级别的机器大盘只有 256 MB 上下，首页预览没必要按 2048 解码。 */
+  static final int LOW_MEMORY_MAX_EDGE = 1280;
+
   private static final double MAX_DECODE_PIXELS = 6_000_000;
+
+  /** Budget-aware preview width: keeps big previews on roomy devices, shrinks them on tight ones. */
+  static int maxEdge(Context context) {
+    ActivityManager manager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+    // largeHeap is on, so the large class is the real budget for this process.
+    int heapMb = manager == null ? 256 : manager.getLargeMemoryClass();
+    if (heapMb <= 256) return LOW_MEMORY_MAX_EDGE;
+    if (heapMb <= 384) return 1536;
+    return MAX_EDGE;
+  }
 
   static Bitmap decode(ImageDecoder.Source source, int width, int height) throws IOException {
     Bitmap crop =
@@ -37,7 +52,7 @@ final class HomeImageDecoder {
     Rect region = centerCrop(image.getWidth(), image.getHeight(), width, height);
     Bitmap cropped =
         Bitmap.createBitmap(image, region.left, region.top, region.width(), region.height());
-    if (cropped != image) image.recycle();
+    if (cropped != image) Bitmaps.release(image);
     return finish(cropped, width, height);
   }
 
@@ -55,38 +70,69 @@ final class HomeImageDecoder {
     int h = Math.max(1, (int) Math.round(crop.getHeight() * scale));
     if (w != crop.getWidth() || h != crop.getHeight()) {
       Bitmap reduced = areaResize(crop, w, h);
-      crop.recycle();
+      Bitmaps.release(crop);
       crop = reduced;
     }
     crop.setDensity(Bitmap.DENSITY_NONE);
     return crop;
   }
 
+  /**
+   * Area-average downscale: every source pixel contributes in proportion to how much of it falls
+   * inside the destination pixel, so fine grain averages out instead of aliasing.
+   *
+   * <p>One {@code getPixels}/{@code setPixels} pair with pre-computed overlap weights. The previous
+   * version called {@code setPixels} once per output row and recomputed min/max for every sample.
+   */
   private static Bitmap areaResize(Bitmap bitmap, int width, int height) {
     int w = bitmap.getWidth(), h = bitmap.getHeight();
-    int[] pixels = new int[w * h], row = new int[width];
+    int[] pixels = new int[w * h];
     bitmap.getPixels(pixels, 0, w, 0, 0, w, h);
-    Bitmap result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+    int[] out = new int[width * height];
+
     double stepX = w / (double) width, stepY = h / (double) height;
     double area = stepX * stepY;
+
+    // Per-axis overlap: which source cells cover a destination cell, and by how much.
+    int maxSpan = (int) Math.ceil(Math.max(stepX, stepY)) + 2;
+    double[] xWeight = new double[maxSpan], yWeight = new double[maxSpan];
+    int[] xFrom = new int[width], xSpan = new int[width];
+    for (int x = 0; x < width; x++) {
+      double left = x * stepX, right = Math.min(w, left + stepX);
+      xFrom[x] = (int) left;
+      xSpan[x] = Math.max(1, (int) Math.ceil(right) - xFrom[x]);
+      for (int i = 0; i < xSpan[x]; i++) {
+        double cell = xFrom[x] + i;
+        xWeight[i] = Math.min(right, cell + 1) - Math.max(left, cell);
+      }
+    }
+
     for (int y = 0; y < height; y++) {
-      double top = y * stepY, bottom = Math.min(h, (y + 1) * stepY);
+      double top = y * stepY, bottom = Math.min(h, top + stepY);
+      int from = (int) top;
+      int span = Math.max(1, (int) Math.ceil(bottom) - from);
+      for (int j = 0; j < span; j++) {
+        double cell = from + j;
+        yWeight[j] = Math.min(bottom, cell + 1) - Math.max(top, cell);
+      }
+      int rowStart = y * width;
       for (int x = 0; x < width; x++) {
-        double left = x * stepX, right = Math.min(w, (x + 1) * stepX);
         double alpha = 0, red = 0, green = 0, blue = 0;
-        for (int sy = (int) top; sy < bottom; sy++) {
-          double wy = Math.min(bottom, sy + 1) - Math.max(top, sy);
-          for (int sx = (int) left; sx < right; sx++) {
-            double weight = wy * (Math.min(right, sx + 1) - Math.max(left, sx));
-            int color = pixels[sy * w + sx];
-            double a = weight * (color >>> 24);
-            alpha += a;
-            red += a * ((color >>> 16) & 255);
-            green += a * ((color >>> 8) & 255);
-            blue += a * (color & 255);
+        int firstColumn = xFrom[x], columns = xSpan[x];
+        for (int j = 0; j < span; j++) {
+          double weightY = yWeight[j];
+          int row = (from + j) * w + firstColumn;
+          for (int i = 0; i < columns; i++) {
+            int color = pixels[row + i];
+            // Premultiply by the source alpha so transparent edges do not darken the average.
+            double weight = weightY * xWeight[i] * (color >>> 24);
+            alpha += weight;
+            red += weight * ((color >>> 16) & 255);
+            green += weight * ((color >>> 8) & 255);
+            blue += weight * (color & 255);
           }
         }
-        row[x] =
+        out[rowStart + x] =
             alpha == 0
                 ? 0
                 : ((int) Math.round(alpha / area) << 24)
@@ -94,8 +140,10 @@ final class HomeImageDecoder {
                     | ((int) Math.round(green / alpha) << 8)
                     | (int) Math.round(blue / alpha);
       }
-      result.setPixels(row, 0, width, 0, y, width, 1);
     }
+
+    Bitmap result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+    result.setPixels(out, 0, width, 0, 0, width, height);
     return result;
   }
 }
