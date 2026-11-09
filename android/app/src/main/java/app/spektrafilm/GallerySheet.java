@@ -236,7 +236,7 @@ final class GallerySheet extends Dialog {
               albumId = "";
               filter(true);
             });
-    footer.addView(sourceButton, new LinearLayout.LayoutParams(0, dp(42), 1));
+    footer.addView(sourceButton, new LinearLayout.LayoutParams(0, dp(44), 1));
     footer.addView(
         action(
             "从文件选择",
@@ -245,7 +245,7 @@ final class GallerySheet extends Dialog {
               dismiss();
               listener.files();
             }),
-        new LinearLayout.LayoutParams(0, dp(42), 1));
+        new LinearLayout.LayoutParams(0, dp(44), 1));
     root.addView(footer);
     setContentView(root);
   }

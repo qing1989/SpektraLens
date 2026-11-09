@@ -91,6 +91,8 @@ public final class MainActivity extends Activity {
   private String committed;
   private TextView undoButton, redoButton;
   private TextView recentCount;
+  /** 上一次渲染历史列表时的内容指纹，用来跳过无意义的重建。 */
+  private String historySignature;
 
   private static final class Frame {
     String id, name, path, params;
@@ -393,7 +395,7 @@ public final class MainActivity extends Activity {
     return v;
   }
 
-  private GradientDrawable box(int color, int radius) {
+  private GradientDrawable box(int color, float radius) {
     GradientDrawable d = new GradientDrawable();
     d.setColor(color);
     d.setCornerRadius(dp(radius));
@@ -401,7 +403,7 @@ public final class MainActivity extends Activity {
   }
 
   private TextView button(String title, int color, int background) {
-    TextView v = text(title, 13, color);
+    TextView v = text(title, AppStyle.TYPE_BODY, color);
     v.setGravity(Gravity.CENTER);
     v.setPadding(dp(14), dp(8), dp(14), dp(8));
     AppStyle.action(
@@ -448,13 +450,13 @@ public final class MainActivity extends Activity {
   private void section(String index, String name, String detail) {
     gap(editor, 25);
     LinearLayout r = horizontal();
-    TextView a = text(index, 11, ACCENT);
+    TextView a = text(index, AppStyle.TYPE_LABEL, ACCENT);
     a.setTypeface(Typeface.MONOSPACE);
     add(r, a, 33, 28);
-    TextView b = text(name, 17, INK);
+    TextView b = text(name, AppStyle.TYPE_HEADING, INK);
     b.setTypeface(null, Typeface.BOLD);
     r.addView(b, new LinearLayout.LayoutParams(0, dp(28), 1));
-    TextView c = text(detail, 10, MUTED);
+    TextView c = text(detail, AppStyle.TYPE_MICRO, MUTED);
     add(r, c, -2, 28);
     add(editor, r, -1, -2);
     gap(editor, 9);
@@ -493,7 +495,7 @@ public final class MainActivity extends Activity {
     FrameLayout toolbar = new FrameLayout(this);
     add(header, toolbar, -1, 48);
     TextView back = button("返回", INK, BG);
-    back.setTextSize(12);
+    back.setTextSize(AppStyle.TYPE_BODY);
     back.setPadding(0, 0, 0, 0);
     back.setSingleLine(true);
     back.setContentDescription("返回首页");
@@ -501,7 +503,7 @@ public final class MainActivity extends Activity {
     toolbar.addView(
         back,
         new FrameLayout.LayoutParams(dp(48), dp(44), Gravity.START | Gravity.CENTER_VERTICAL));
-    TextView title = text("照片编辑", 14, INK);
+    TextView title = text("照片编辑", AppStyle.TYPE_TITLE, INK);
     title.setGravity(Gravity.CENTER);
     title.setTypeface(null, Typeface.BOLD);
     title.setSingleLine(true);
@@ -510,8 +512,8 @@ public final class MainActivity extends Activity {
     // Equal insets reserve the wider action on both sides, so the title stays on the screen axis.
     titleLayout.leftMargin = titleLayout.rightMargin = dp(98);
     toolbar.addView(title, titleLayout);
-    exportButton = button("显影准备中…", 0xff101010, ACCENT);
-    exportButton.setTextSize(11);
+    exportButton = button("显影准备中…", AppStyle.BG, ACCENT);
+    exportButton.setTextSize(AppStyle.TYPE_LABEL);
     exportButton.setPadding(dp(8), 0, dp(8), 0);
     exportButton.setSingleLine(true);
     exportButton.setTypeface(null, Typeface.BOLD);
@@ -519,7 +521,7 @@ public final class MainActivity extends Activity {
     exportButton.setEnabled(false);
     toolbar.addView(
         exportButton,
-        new FrameLayout.LayoutParams(dp(94), dp(38), Gravity.END | Gravity.CENTER_VERTICAL));
+        new FrameLayout.LayoutParams(dp(96), dp(48), Gravity.END | Gravity.CENTER_VERTICAL));
     add(editorScreen, header, -1, -2);
     editorBody = new LinearLayout(this);
     editorScreen.addView(editorBody, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -536,20 +538,20 @@ public final class MainActivity extends Activity {
     progress = new ProgressBar(this);
     add(statusRow, progress, 12, 12);
     add(statusRow, new View(this), 7, 1);
-    status = text("准备中", 10, MUTED);
+    status = text("准备中", AppStyle.TYPE_MICRO, MUTED);
     status.setSingleLine(true);
     status.setEllipsize(android.text.TextUtils.TruncateAt.END);
     status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-    statusRow.addView(status, new LinearLayout.LayoutParams(0, dp(26), 1));
+    statusRow.addView(status, new LinearLayout.LayoutParams(0, dp(30), 1));
     TextView zoom = button("适应画面", MUTED, BG);
     zoom.setPadding(0, 0, 0, 0);
     zoom.setMinHeight(0);
-    zoom.setTextSize(11);
+    zoom.setTextSize(AppStyle.TYPE_LABEL);
     zoom.setOnClickListener(
         v -> {
           photo.resetZoom();
         });
-    AppStyle.surface(statusRow, 0xf2222225, 14);
+    AppStyle.surface(statusRow, AppStyle.withAlpha(AppStyle.SURFACE, .95f), AppStyle.R_CONTROL);
     FrameLayout.LayoutParams feedback = new FrameLayout.LayoutParams(-1, dp(28), Gravity.BOTTOM);
     feedback.setMargins(dp(12), 0, dp(12), dp(6));
     photoStage.addView(statusRow, feedback);
@@ -557,27 +559,27 @@ public final class MainActivity extends Activity {
     LinearLayout meta = horizontal();
     meta.setPadding(dp(12), 0, dp(12), 0);
     photoPickerButton = button("照片", INK, BG);
-    photoPickerButton.setTextSize(11);
+    photoPickerButton.setTextSize(AppStyle.TYPE_LABEL);
     photoPickerButton.setPadding(0, 0, 0, 0);
     photoPickerButton.setMinHeight(0);
     photoPickerButton.setOnClickListener(v -> choosePhoto());
     add(meta, photoPickerButton, 48, 44);
     refreshStrip();
-    fileLabel = text(filename, 10, MUTED);
+    fileLabel = text(filename, AppStyle.TYPE_MICRO, MUTED);
     fileLabel.setSingleLine(true);
     fileLabel.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
     // Keep source details available without crowding the compact photo action bar.
     fileLabel.setVisibility(View.GONE);
     meta.addView(fileLabel, new LinearLayout.LayoutParams(0, dp(44), 1));
     undoButton = button("撤销", MUTED, BG);
-    undoButton.setTextSize(11);
+    undoButton.setTextSize(AppStyle.TYPE_LABEL);
     undoButton.setPadding(0, 0, 0, 0);
     undoButton.setMinHeight(0);
     undoButton.setContentDescription("撤销");
     undoButton.setOnClickListener(v -> historyStep(false));
     add(meta, undoButton, 44, 44);
     redoButton = button("重做", MUTED, BG);
-    redoButton.setTextSize(11);
+    redoButton.setTextSize(AppStyle.TYPE_LABEL);
     redoButton.setPadding(0, 0, 0, 0);
     redoButton.setMinHeight(0);
     redoButton.setContentDescription("重做");
@@ -586,7 +588,7 @@ public final class MainActivity extends Activity {
     meta.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
     add(meta, zoom, 64, 44);
     compareButton = button("对比原图", INK, BG);
-    compareButton.setTextSize(11);
+    compareButton.setTextSize(AppStyle.TYPE_LABEL);
     compareButton.setMinHeight(0);
     compareButton.setPadding(dp(8), 0, dp(8), 0);
     compareButton.setOnClickListener(
@@ -598,9 +600,9 @@ public final class MainActivity extends Activity {
     add(previewColumn, meta, -1, 44);
     tabRow = horizontal();
     tabRow.setPadding(dp(6), dp(4), dp(6), dp(4));
-    AppStyle.surface(tabRow, AppStyle.SURFACE, 28);
+    AppStyle.surface(tabRow, AppStyle.SURFACE, AppStyle.R_PILL);
     panel = vertical();
-    AppStyle.surface(panel, AppStyle.SURFACE, 26);
+    AppStyle.surface(panel, AppStyle.SURFACE, AppStyle.R_SHEET);
     LinearLayout.LayoutParams panelLayout = new LinearLayout.LayoutParams(-1, dp(panelHeight()));
     panelLayout.setMargins(dp(12), dp(4), dp(12), 0);
     toolsColumn.addView(panel, panelLayout);
@@ -672,7 +674,7 @@ public final class MainActivity extends Activity {
     panelHandle.setClickable(true);
     controls.add(panelHandle);
     View grip = new View(this);
-    grip.setBackground(box(0xff74747e, 2));
+    grip.setBackground(box(AppStyle.GRIP, 2));
     FrameLayout.LayoutParams gripLayout =
         new FrameLayout.LayoutParams(dp(30), dp(3), Gravity.CENTER);
     panelHandle.addView(grip, gripLayout);
@@ -737,15 +739,15 @@ public final class MainActivity extends Activity {
     scroll.addView(content);
     LinearLayout head = horizontal();
     LinearLayout branding = vertical();
-    TextView logo = text(getString(R.string.app_name), 28, INK);
+    TextView logo = text(getString(R.string.app_name), AppStyle.TYPE_BRAND, INK);
     logo.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
     logo.setLetterSpacing(-.035f);
-    add(branding, logo, -1, 38);
-    TextView cn = text("随身的胶片实验室", 11, MUTED);
-    add(branding, cn, -1, 24);
+    add(branding, logo, -1, 40);
+    TextView cn = text("随身的胶片实验室", AppStyle.TYPE_LABEL, MUTED);
+    add(branding, cn, -1, 26);
     head.addView(branding, new LinearLayout.LayoutParams(0, -2, 1));
     TextView help = button("关于", MUTED, BG);
-    help.setTextSize(11);
+    help.setTextSize(AppStyle.TYPE_LABEL);
     help.setPadding(0, 0, 0, 0);
     help.setSingleLine(true);
     help.setContentDescription("关于、许可与支持范围");
@@ -754,7 +756,7 @@ public final class MainActivity extends Activity {
     add(content, head, -1, -2);
     gap(content, 24);
     FrameLayout hero = new FrameLayout(this);
-    AppStyle.surface(hero, AppStyle.SURFACE, 24);
+    AppStyle.surface(hero, AppStyle.SURFACE, AppStyle.R_CARD);
     hero.setClipToOutline(true);
     homeHero = new ImageView(this);
     homeHero.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -772,22 +774,22 @@ public final class MainActivity extends Activity {
     homeImages.bind(homeHero, heroFile, null, true);
     add(content, hero, -1, 240);
     gap(content, 16);
-    TextView start = button("导入照片，开始显影", 0xff0a0a0a, ACCENT);
-    start.setTextSize(14);
+    TextView start = button("导入照片，开始显影", AppStyle.BG, ACCENT);
+    start.setTextSize(AppStyle.TYPE_TITLE);
     start.setTypeface(null, Typeface.BOLD);
     start.setOnClickListener(v -> importPhoto());
     add(content, start, -1, 54);
     gap(content, 12);
-    TextView privacy = text("RAW / JPEG / PNG / HEIC\n本机处理 · 自动保存调整 · 保留原照片", 10, MUTED);
+    TextView privacy = text("RAW / JPEG / PNG / HEIC\n本机处理 · 自动保存调整 · 保留原照片", AppStyle.TYPE_MICRO, MUTED);
     privacy.setLineSpacing(dp(4), 1);
-    add(content, privacy, -1, 42);
+    add(content, privacy, -1, 48);
     gap(content, 24);
     LinearLayout historyHead = horizontal();
-    TextView recent = text("最近的底片", 16, INK);
+    TextView recent = text("最近的底片", AppStyle.TYPE_HEADING, INK);
     recent.setTypeface(null, Typeface.BOLD);
-    historyHead.addView(recent, new LinearLayout.LayoutParams(0, dp(34), 1));
-    recentCount = text(library.size() + " 张", 10, MUTED);
-    add(historyHead, recentCount, -2, 34);
+    historyHead.addView(recent, new LinearLayout.LayoutParams(0, dp(36), 1));
+    recentCount = text(library.size() + " 张", AppStyle.TYPE_MICRO, MUTED);
+    add(historyHead, recentCount, -2, 36);
     add(content, historyHead, -1, -2);
     gap(content, 9);
     historyList = vertical();
@@ -840,7 +842,7 @@ public final class MainActivity extends Activity {
       boolean selected = selectedTab == n || (n == 0 && selectedTab == 1);
       TextView tab =
           button(labels[i], selected ? ACCENT : MUTED, selected ? AppStyle.SELECTED : BG);
-      tab.setTextSize(12);
+      tab.setTextSize(AppStyle.TYPE_BODY);
       tab.setPadding(0, 0, 0, 0);
       tab.setMinHeight(0);
       tab.setSelected(selected);
@@ -868,7 +870,7 @@ public final class MainActivity extends Activity {
                 i == 0 ? "胶片型号" : "相纸与印相",
                 selectedTab == i ? ACCENT : MUTED,
                 selectedTab == i ? AppStyle.SELECTED : BG);
-        tab.setTextSize(11);
+        tab.setTextSize(AppStyle.TYPE_LABEL);
         tab.setPadding(0, 0, 0, 0);
         tab.setMinHeight(0);
         tab.setSelected(selectedTab == i);
@@ -877,9 +879,9 @@ public final class MainActivity extends Activity {
               selectedTab = mode;
               buildPanel();
             });
-        modes.addView(tab, new LinearLayout.LayoutParams(0, dp(36), 1));
+        modes.addView(tab, new LinearLayout.LayoutParams(0, dp(40), 1));
       }
-      add(editor, modes, -1, 36);
+      add(editor, modes, -1, 40);
       gap(editor, 8);
     }
     if (selectedTab == 0) {
@@ -891,7 +893,7 @@ public final class MainActivity extends Activity {
                 category,
                 category.equals(filmCategory) ? INK : MUTED,
                 category.equals(filmCategory) ? AppStyle.CONTROL : BG);
-        chip.setTextSize(10);
+        chip.setTextSize(AppStyle.TYPE_MICRO);
         chip.setSelected(category.equals(filmCategory));
         chip.setPadding(dp(6), 0, dp(6), 0);
         chip.setSingleLine(true);
@@ -904,11 +906,11 @@ public final class MainActivity extends Activity {
               filmCategory = category;
               buildPanel();
             });
-        LinearLayout.LayoutParams chipLayout = new LinearLayout.LayoutParams(0, dp(34), 1);
+        LinearLayout.LayoutParams chipLayout = new LinearLayout.LayoutParams(0, dp(40), 1);
         chipLayout.rightMargin = dp(3);
         filters.addView(chip, chipLayout);
       }
-      add(editor, filters, -1, 34);
+      add(editor, filters, -1, 40);
       gap(editor, 8);
       HorizontalScrollView filmScroll = new HorizontalScrollView(this);
       filmScroll.setHorizontalScrollBarEnabled(false);
@@ -924,18 +926,18 @@ public final class MainActivity extends Activity {
         if (selected) selectedPosition = position;
         LinearLayout card = vertical();
         card.setPadding(dp(4), dp(5), dp(4), dp(5));
-        GradientDrawable shape = box(selected ? AppStyle.CONTROL : Color.TRANSPARENT, 18);
+        GradientDrawable shape = box(selected ? AppStyle.CONTROL : Color.TRANSPARENT, AppStyle.R_CARD);
         shape.setStroke(Math.max(1, dp(.8f)), selected ? ACCENT : Color.TRANSPARENT);
         card.setBackground(shape);
         card.setSelected(selected);
         card.setFocusable(true);
         FilmBadge badge = new FilmBadge(this, stock.id, stock.name, false);
         add(card, badge, -1, 45);
-        TextView name = text(shortName(stock.name), 10, selected ? ACCENT : INK);
+        TextView name = text(shortName(stock.name), AppStyle.TYPE_MICRO, selected ? ACCENT : INK);
         name.setMaxLines(2);
         name.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        add(card, name, -1, 31);
+        add(card, name, -1, 34);
         card.setTooltipText(stock.name);
         card.setContentDescription("胶片 " + stock.name + (selected ? "，已选" : ""));
         card.setOnClickListener(
@@ -946,12 +948,12 @@ public final class MainActivity extends Activity {
             });
         controls.add(card);
         int cardWidth = narrowControls() ? 76 : 82;
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(cardWidth), dp(88));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(cardWidth), dp(92));
         lp.rightMargin = dp(6);
         filmCards.addView(card, lp);
         position++;
       }
-      add(editor, filmScroll, -1, 90);
+      add(editor, filmScroll, -1, 94);
       final int offset = selectedPosition * dp(narrowControls() ? 82 : 88);
       filmScroll
           .getViewTreeObserver()
@@ -974,12 +976,12 @@ public final class MainActivity extends Activity {
         return;
       }
       LinearLayout heading = horizontal();
-      TextView title = text("印相材料", 13, INK);
+      TextView title = text("印相材料", AppStyle.TYPE_BODY, INK);
       heading.addView(title, new LinearLayout.LayoutParams(0, dp(30), 1));
-      TextView pick = button("全部 8 款", ACCENT, 0xe60a0a0a);
+      TextView pick = button("全部 8 款", ACCENT, AppStyle.CONTROL);
       pick.setPadding(0, 0, 0, 0);
       pick.setMinHeight(0);
-      pick.setTextSize(10);
+      pick.setTextSize(AppStyle.TYPE_MICRO);
       pick.setOnClickListener(v -> chooseStock(false));
       add(heading, pick, -2, 30);
       add(editor, heading, -1, 30);
@@ -987,21 +989,21 @@ public final class MainActivity extends Activity {
       Stock stock = find(papers, settings.optString("print_stock"));
       LinearLayout material = horizontal();
       material.setPadding(dp(14), dp(10), dp(14), dp(10));
-      material.setBackground(box(AppStyle.CONTROL, 18));
+      material.setBackground(box(AppStyle.CONTROL, AppStyle.R_CARD));
       LinearLayout names = vertical();
-      paperTitle = text(stock == null ? "" : shortName(stock.name), 15, INK);
+      paperTitle = text(stock == null ? "" : shortName(stock.name), AppStyle.TYPE_TITLE, INK);
       paperTitle.setSingleLine(true);
       paperTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
-      add(names, paperTitle, -1, 27);
-      paperSub = text(stock == null ? "" : maker(stock) + " · 光谱印相材料", 9, MUTED);
-      add(names, paperSub, -1, 20);
+      add(names, paperTitle, -1, 30);
+      paperSub = text(stock == null ? "" : maker(stock) + " · 光谱印相材料", AppStyle.TYPE_MICRO, MUTED);
+      add(names, paperSub, -1, 24);
       material.addView(names, new LinearLayout.LayoutParams(0, -2, 1));
       material.setOnClickListener(v -> chooseStock(false));
       controls.add(material);
-      add(editor, material, -1, 70);
-      TextView linkedPaper = text("相纸与已选择的胶片联动，默认无需选择", 10, MUTED);
+      add(editor, material, -1, 78);
+      TextView linkedPaper = text("相纸与已选择的胶片联动，默认无需选择", AppStyle.TYPE_MICRO, MUTED);
       linkedPaper.setMaxLines(2);
-      add(editor, linkedPaper, -1, 34);
+      add(editor, linkedPaper, -1, 40);
       gap(editor, 14);
       slider("print_brightness", "印相亮度", -2, 2, .05, " EV");
       slider("m_filter_shift", "洋红滤色", -.25, .25, .01, "");
@@ -1011,10 +1013,10 @@ public final class MainActivity extends Activity {
     } else if (selectedTab == 4) {
       buildFramePanel();
     } else {
-      TextView intro = text("质感从胶片计算而来", 12, INK);
-      add(editor, intro, -1, 25);
-      TextView note = text("以物理画幅缩放颗粒与光晕，保留各胶片的特性。", 9, MUTED);
-      add(editor, note, -1, 24);
+      TextView intro = text("质感从胶片计算而来", AppStyle.TYPE_BODY, INK);
+      add(editor, intro, -1, 28);
+      TextView note = text("以物理画幅缩放颗粒与光晕，保留各胶片的特性。", AppStyle.TYPE_MICRO, MUTED);
+      add(editor, note, -1, 28);
       gap(editor, 8);
       slider("grain_amount", "银盐颗粒", 0, 2, .05, " ×");
       slider("halation_amount", "高光光晕", 0, 4, .1, " ×");
@@ -1036,10 +1038,10 @@ public final class MainActivity extends Activity {
           new String[] {"center_weighted", "average", "median"},
           "auto_exposure_method");
       LinearLayout format = horizontal();
-      TextView label = text("胶片画幅", 11, INK);
+      TextView label = text("胶片画幅", AppStyle.TYPE_LABEL, INK);
       format.addView(label, new LinearLayout.LayoutParams(0, dp(39), 1));
-      TextView pick = button(formatName() + "", ACCENT, 0xff202020);
-      pick.setTextSize(10);
+      TextView pick = button(formatName() + "", ACCENT, AppStyle.CONTROL);
+      pick.setTextSize(AppStyle.TYPE_MICRO);
       pick.setPadding(dp(9), 0, dp(9), 0);
       pick.setMinHeight(0);
       pick.setOnClickListener(
@@ -1059,7 +1061,7 @@ public final class MainActivity extends Activity {
       gap(editor, 9);
       rule(editor);
       gap(editor, 8);
-      TextView reset = button("恢复默认显影参数", MUTED, 0xeb111111);
+      TextView reset = button("恢复默认显影参数", MUTED, AppStyle.CONTROL);
       reset.setOnClickListener(
           v ->
               new Haptics.DialogBuilder(this)
@@ -1073,9 +1075,9 @@ public final class MainActivity extends Activity {
   }
 
   private void panelNote(String title, String detail) {
-    TextView t = text(title, 13, INK);
+    TextView t = text(title, AppStyle.TYPE_BODY, INK);
     add(editor, t, -1, 30);
-    TextView d = text(detail, 10, MUTED);
+    TextView d = text(detail, AppStyle.TYPE_MICRO, MUTED);
     d.setLineSpacing(dp(3), 1);
     add(editor, d, -1, -2);
     gap(editor, 12);
@@ -1084,7 +1086,7 @@ public final class MainActivity extends Activity {
   private void toggle(String key, String label, boolean fallback) {
     Switch sw = new Switch(this);
     sw.setText(label);
-    sw.setTextSize(12);
+    sw.setTextSize(AppStyle.TYPE_BODY);
     sw.setTextColor(INK);
     sw.setChecked(settings.optBoolean(key, fallback));
     sw.setPadding(0, dp(6), 0, dp(6));
@@ -1100,8 +1102,8 @@ public final class MainActivity extends Activity {
   private void choice(String title, String[] names, String[] ids, String key) {
     String current = settings.optString(key, ids[0]);
     int index = Arrays.asList(ids).indexOf(current);
-    TextView pick = button(title + "   " + names[Math.max(0, index)] + "", ACCENT, 0xeb161616);
-    pick.setTextSize(11);
+    TextView pick = button(title + "   " + names[Math.max(0, index)] + "", ACCENT, AppStyle.CONTROL);
+    pick.setTextSize(AppStyle.TYPE_LABEL);
     pick.setMinHeight(0);
     add(editor, pick, -1, 39);
     gap(editor, 9);
@@ -1129,7 +1131,7 @@ public final class MainActivity extends Activity {
               name.equals("HSL 分色") ? "HSL" : name,
               gradeSection.equals(name) ? ACCENT : MUTED,
               gradeSection.equals(name) ? AppStyle.SELECTED : BG);
-      tab.setTextSize(10);
+      tab.setTextSize(AppStyle.TYPE_MICRO);
       tab.setPadding(0, 0, 0, 0);
       tab.setMinHeight(0);
       tab.setSelected(gradeSection.equals(name));
@@ -1159,7 +1161,7 @@ public final class MainActivity extends Activity {
           names = {"RGB 总曲线", "亮度曲线", "红通道", "绿通道", "蓝通道"};
       TextView channel =
           button(
-              names[Math.max(0, Arrays.asList(ids).indexOf(curveChannel))] + "", INK, 0xff202020);
+              names[Math.max(0, Arrays.asList(ids).indexOf(curveChannel))] + "", INK, AppStyle.CONTROL);
       add(editor, channel, -1, 36);
       channel.setOnClickListener(
           v ->
@@ -1175,10 +1177,10 @@ public final class MainActivity extends Activity {
       String key = "curve_" + curveChannel;
       int color =
           curveChannel.equals("r")
-              ? 0xfff28179
+              ? AppStyle.CURVE_R
               : curveChannel.equals("g")
-                  ? 0xff99c786
-                  : curveChannel.equals("b") ? 0xff85baff : ACCENT;
+                  ? AppStyle.CURVE_G
+                  : curveChannel.equals("b") ? AppStyle.CURVE_B : ACCENT;
       final CurveEditor[] holder = new CurveEditor[1];
       holder[0] =
           new CurveEditor(
@@ -1191,9 +1193,9 @@ public final class MainActivity extends Activity {
               });
       add(editor, holder[0], -1, 215);
       controls.add(holder[0]);
-      TextView hint = text("点按添加 · 拖动调整 · 长按删除内部点", 9, MUTED);
+      TextView hint = text("点按添加 · 拖动调整 · 长按删除内部点", AppStyle.TYPE_MICRO, MUTED);
       add(editor, hint, -1, 28);
-      TextView clear = button("重置当前曲线", MUTED, 0xff161616);
+      TextView clear = button("重置当前曲线", MUTED, AppStyle.CONTROL);
       add(editor, clear, -1, 36);
       clear.setOnClickListener(
           v -> {
@@ -1212,7 +1214,7 @@ public final class MainActivity extends Activity {
           button(
               "区域   " + names[Math.max(0, Arrays.asList(ids).indexOf(balanceZone))] + "",
               INK,
-              0xff202020);
+              AppStyle.CONTROL);
       add(editor, zone, -1, 38);
       zone.setOnClickListener(
           v ->
@@ -1237,7 +1239,7 @@ public final class MainActivity extends Activity {
           button(
               "色彩   " + names[Math.max(0, Arrays.asList(ids).indexOf(hslBand))] + "",
               INK,
-              0xff202020);
+              AppStyle.CONTROL);
       add(editor, band, -1, 38);
       band.setOnClickListener(
           v ->
@@ -1288,8 +1290,8 @@ public final class MainActivity extends Activity {
     crop.setOnClickListener(v -> cropDialog());
     LinearLayout row = horizontal();
     for (String label : new String[] {"左转 90°", "右转 90°"}) {
-      TextView b = button(label, INK, 0xff161616);
-      b.setTextSize(11);
+      TextView b = button(label, INK, AppStyle.CONTROL);
+      b.setTextSize(AppStyle.TYPE_LABEL);
       row.addView(b, new LinearLayout.LayoutParams(0, dp(38), 1));
       b.setOnClickListener(
           v -> {
@@ -1304,7 +1306,7 @@ public final class MainActivity extends Activity {
     toggle("geo_flip_h", "水平翻转", false);
     toggle("geo_flip_v", "垂直翻转", false);
     slider("geo_angle", "拉直", -45, 45, .1, " °");
-    TextView reset = button("恢复完整构图", MUTED, 0xff161616);
+    TextView reset = button("恢复完整构图", MUTED, AppStyle.CONTROL);
     add(editor, reset, -1, 39);
     reset.setOnClickListener(
         v -> {
@@ -1330,7 +1332,7 @@ public final class MainActivity extends Activity {
             (float) (settings.optDouble("geo_x", 0) + settings.optDouble("geo_w", 1)),
             (float) (settings.optDouble("geo_y", 0) + settings.optDouble("geo_h", 1)));
     CropEditor crop = new CropEditor(this, source, initial);
-    TextView ratio = button("比例：自由裁切", ACCENT, 0xff202020);
+    TextView ratio = button("比例：自由裁切", ACCENT, AppStyle.CONTROL);
     add(body, ratio, -1, 39);
     ratio.setOnClickListener(
         v ->
@@ -1373,7 +1375,7 @@ public final class MainActivity extends Activity {
                     / getResources().getDisplayMetrics().density
                     * .48));
     add(body, crop, -1, height);
-    TextView hint = text("拖动四角调整 · 拖动内部移动 · 应用后可撤销", 10, MUTED);
+    TextView hint = text("拖动四角调整 · 拖动内部移动 · 应用后可撤销", AppStyle.TYPE_MICRO, MUTED);
     hint.setPadding(dp(6), 0, 0, 0);
     add(body, hint, -1, 32);
     new Haptics.DialogBuilder(this)
@@ -1415,7 +1417,7 @@ public final class MainActivity extends Activity {
     LinearLayout body = vertical();
     body.setPadding(dp(20), dp(6), dp(20), dp(6));
     add(body, input, -1, 48);
-    TextView note = text(allowed, 10, MUTED);
+    TextView note = text(allowed, AppStyle.TYPE_MICRO, MUTED);
     add(body, note, -1, -2);
     AlertDialog dialog =
         new Haptics.DialogBuilder(this)
@@ -1456,7 +1458,7 @@ public final class MainActivity extends Activity {
         slider("edge_frame_number", "底片编号", 1, 99, 1, "");
       if (settings.optString("edge_style").equals("instant")) {
         TextView caption =
-            button("相纸题注  " + settings.optString("edge_caption", "添加英文或数字"), INK, 0xff161616);
+            button("相纸题注  " + settings.optString("edge_caption", "添加英文或数字"), INK, AppStyle.CONTROL);
         add(editor, caption, -1, 39);
         caption.setOnClickListener(
             v -> editTextValue("edge_caption", "相纸题注", 42, "支持英文、数字、空格及 - . /，最多 42 字符"));
@@ -1464,13 +1466,13 @@ public final class MainActivity extends Activity {
     }
     gap(editor, 8);
     toggle("date_enabled", "显示日期", false);
-    TextView date = button("日期文字  " + settings.optString("date_text"), INK, 0xff161616);
+    TextView date = button("日期文字  " + settings.optString("date_text"), INK, AppStyle.CONTROL);
     add(editor, date, -1, 39);
     gap(editor, 8);
     date.setOnClickListener(
         v -> editTextValue("date_text", "日期文字", 24, "支持英文、数字、空格及 - . /，最多 24 字符"));
     if (sourceMetadata.optLong("timestamp") > 0) {
-      TextView shot = button("使用原片拍摄日期", ACCENT, 0xff161616);
+      TextView shot = button("使用原片拍摄日期", ACCENT, AppStyle.CONTROL);
       add(editor, shot, -1, 36);
       gap(editor, 8);
       shot.setOnClickListener(
@@ -1550,13 +1552,13 @@ public final class MainActivity extends Activity {
   private void slider(
       String key, String label, double min, double max, double step, String suffix) {
     LinearLayout line = horizontal();
-    TextView name = text(label, 12, INK);
+    TextView name = text(label, AppStyle.TYPE_BODY, INK);
     name.setGravity(Gravity.CENTER_VERTICAL);
     name.setMaxLines(2);
     name.setEllipsize(android.text.TextUtils.TruncateAt.END);
     boolean narrow = narrowControls();
     add(line, name, narrow ? 66 : 76, 48);
-    TextView value = text("", 11, 0xffd4d4d9);
+    TextView value = text("", AppStyle.TYPE_LABEL, AppStyle.VALUE);
     value.setTypeface(Typeface.MONOSPACE);
     value.setGravity(Gravity.CENTER);
     value.setSingleLine(true);
@@ -1565,7 +1567,7 @@ public final class MainActivity extends Activity {
     value.setPadding(dp(4), 0, dp(4), 0);
     value.setAutoSizeTextTypeUniformWithConfiguration(
         8, 11, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
-    GradientDrawable valueBox = box(AppStyle.FIELD, 10);
+    GradientDrawable valueBox = box(AppStyle.FIELD, AppStyle.R_CONTROL);
     valueBox.setStroke(Math.max(1, dp(.6f)), AppStyle.OUTLINE);
     value.setBackground(valueBox);
     AdjustmentSeekBar bar = new AdjustmentSeekBar(this, sliderColors(key));
@@ -1577,7 +1579,7 @@ public final class MainActivity extends Activity {
     trackLayout.leftMargin = dp(4);
     trackLayout.rightMargin = dp(6);
     line.addView(bar, trackLayout);
-    add(line, value, narrow ? 68 : 72, 30);
+    add(line, value, narrow ? 68 : 72, 32);
     add(editor, line, -1, 56);
     sliders.put(key, bar);
     values.put(key, value);
@@ -2781,19 +2783,29 @@ public final class MainActivity extends Activity {
 
   private void refreshHistory() {
     if (historyList == null) return;
-    if (recentCount != null) recentCount.setText(library.size() + " 张");
+    if (recentCount != null)
+      recentCount.setText(library.size() + " 张 · 长按可删除");
+    // Rebuilding every card also rebuilds every ImageView, so returning from the editor used to
+    // re-decode the whole strip and visibly reshuffle it. Only rebuild when something changed.
+    StringBuilder signature = new StringBuilder();
+    for (Frame frame : library)
+      signature.append(frame.id).append(':').append(frame.path).append(':')
+          .append(frame.params).append(';');
+    String current = signature.toString();
+    if (current.equals(historySignature) && historyList.getChildCount() > 0) return;
+    historySignature = current;
     controls.removeIf(v -> descendant(v, historyList));
     homeImages.clearCards();
     historyList.removeAllViews();
     if (library.isEmpty()) {
       LinearLayout empty = vertical();
       empty.setPadding(dp(16), dp(15), dp(16), dp(15));
-      AppStyle.surface(empty, AppStyle.SURFACE, 22);
-      TextView title = text("你的第一张底片，还在等光。", 12, INK);
+      AppStyle.surface(empty, AppStyle.SURFACE, AppStyle.R_CARD);
+      TextView title = text("你的第一张底片，还在等光。", AppStyle.TYPE_BODY, INK);
       add(empty, title, -1, 26);
-      TextView detail = text("导入照片后，可在这里继续上次的编辑。", 10, MUTED);
+      TextView detail = text("导入照片后，可在这里继续上次的编辑。", AppStyle.TYPE_MICRO, MUTED);
       add(empty, detail, -1, 24);
-      add(historyList, empty, -1, 80);
+      add(historyList, empty, -1, 88);
       return;
     }
     for (int i = 0; i < library.size(); i += 2) {
@@ -2802,7 +2814,7 @@ public final class MainActivity extends Activity {
       for (int k = i; k < Math.min(i + 2, library.size()); k++) {
         Frame frame = library.get(k);
         LinearLayout card = vertical();
-        AppStyle.surface(card, AppStyle.SURFACE, 22);
+        AppStyle.surface(card, AppStyle.SURFACE, AppStyle.R_CARD);
         card.setClipToOutline(true);
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -2814,10 +2826,10 @@ public final class MainActivity extends Activity {
             false);
         LinearLayout names = vertical();
         names.setPadding(dp(12), dp(10), dp(12), dp(12));
-        TextView name = text(PhotoLabels.title(frame.name), 12, INK);
+        TextView name = text(PhotoLabels.title(frame.name), AppStyle.TYPE_BODY, INK);
         name.setSingleLine(true);
         name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        add(names, name, -1, 23);
+        add(names, name, -1, 26);
         File original = new File(frame.path);
         TextView details =
             text(
@@ -2826,7 +2838,7 @@ public final class MainActivity extends Activity {
                     + android.text.format.Formatter.formatShortFileSize(this, original.length()),
                 10,
                 MUTED);
-        add(names, details, -1, 18);
+        add(names, details, -1, 22);
         String stock = "已保存调整";
         try {
           Stock s = find(films, new JSONObject(frame.params).optString("film_stock"));
@@ -2834,14 +2846,15 @@ public final class MainActivity extends Activity {
         } catch (Exception ignored) {
           // 历史记录引用的胶片已不存在，保留原来的标签
         }
-        TextView look = text(stock, 10, ACCENT);
+        TextView look = text(stock, AppStyle.TYPE_MICRO, ACCENT);
         look.setSingleLine(true);
         look.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        add(names, look, -1, 20);
+        add(names, look, -1, 24);
         add(card, names, -1, -2);
         card.setOnClickListener(v -> openFrame(frame));
         card.setOnLongClickListener(
             v -> {
+              v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
               confirmRemove(frame);
               return true;
             });
@@ -3228,7 +3241,7 @@ public final class MainActivity extends Activity {
               (d, n) -> {
                 try {
                   ScrollView s = new ScrollView(this);
-                  TextView t = text(readAsset("licenses/" + names[n]), 11, INK);
+                  TextView t = text(readAsset("licenses/" + names[n]), AppStyle.TYPE_LABEL, INK);
                   t.setPadding(dp(20), dp(16), dp(20), dp(16));
                   s.addView(t);
                   new Haptics.DialogBuilder(this)

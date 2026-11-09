@@ -23,7 +23,29 @@ final class AppStyle {
       OUTLINE = 0xff39393f,
       INK = 0xfff4f4f6,
       MUTED = 0xffa1a1aa,
-      ACCENT = 0xffff7a1a;
+      ACCENT = 0xffff7a1a,
+      GRIP = 0xff74747e,
+      DISABLED = 0xff8a8a93,
+      VALUE = 0xffd4d4d9,
+      // 曲线通道色：只用于曲线图与图例，别拿去当正文色。
+      CURVE_R = 0xfff28179,
+      CURVE_G = 0xff99c786,
+      CURVE_B = 0xff85baff;
+
+  // 字号阶梯。新增界面只从这六档里选，别再插 13/17 这种中间值。
+  static final int TYPE_MICRO = 10, TYPE_LABEL = 11, TYPE_BODY = 12,
+      TYPE_TITLE = 14, TYPE_HEADING = 16, TYPE_BRAND = 28;
+
+  // 圆角阶梯：小控件 10、卡片 22、面板与弹层 26、胶囊容器 28。按钮一律走胶囊（半高）。
+  static final float R_CONTROL = 10, R_CARD = 22, R_SHEET = 26, R_PILL = 28;
+
+  // 触控基准：主操作 48、常规 44。低于 44 的只留给纯展示元素。
+  static final int TOUCH_PRIMARY = 48, TOUCH_MIN = 44;
+
+  /** Same colour at a different opacity, for wells and overlays. */
+  static int withAlpha(int color, float alpha) {
+    return (color & 0x00ffffff) | (Math.round(Math.max(0, Math.min(1, alpha)) * 255) << 24);
+  }
 
   static int dp(Context context, float value) {
     return Math.round(value * context.getResources().getDisplayMetrics().density);
@@ -45,7 +67,9 @@ final class AppStyle {
 
   static void action(TextView view, int color, int fill, float radius) {
     Context context = view.getContext();
-    boolean capsule = fill == ACCENT;
+    // Every action is a capsule: the export button set the reference shape, so the radius argument
+    // is now only kept for call-site readability.
+    boolean capsule = true;
     StateListDrawable states = new StateListDrawable();
     states.addState(
         new int[] {-android.R.attr.state_enabled},
@@ -60,8 +84,7 @@ final class AppStyle {
     view.setTextColor(
         new ColorStateList(
             new int[][] {new int[] {-android.R.attr.state_enabled}, new int[] {}},
-            new int[] {0xff71717a, color}));
-    view.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+            new int[] {DISABLED, color}));    view.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
     view.setIncludeFontPadding(false);
     view.setFocusable(true);
     view.setClickable(true);
