@@ -4,7 +4,7 @@
 
 [![版本](https://img.shields.io/badge/version-0.3.5-ff7a1a?style=flat-square)](CHANGELOG.md)
 [![平台](https://img.shields.io/badge/Android-10%2B-3ddc84?style=flat-square&logo=android&logoColor=white)](#兼容性)
-[![渲染](https://img.shields.io/badge/Vulkan-GPU%20%2B%20CPU%20%E5%9B%9E%E9%80%80-4a90d9?style=flat-square)](#渲染后端)
+[![渲染](https://img.shields.io/badge/Vulkan-GPU%20%2B%20CPU%20%E5%9B%9E%E9%80%80-4a90d9?style=flat-square)](#工作原理)
 [![离线](https://img.shields.io/badge/100%25-%E6%9C%AC%E5%9C%B0%E6%98%BE%E5%BD%B1-8a8a8a?style=flat-square)](#为什么不是滤镜)
 [![许可](https://img.shields.io/badge/license-GPL--3.0--or--later-blue?style=flat-square)](LICENSE)
 
@@ -89,17 +89,17 @@ RAW 解码、光谱显影、调色、颗粒与光晕合成、编码写盘全部�
 
 ```mermaid
 flowchart LR
-    A[RAW / JPEG / HEIC] --> B[LibRaw 解码<br/>AHD 去马赛克]
-    B --> C[线性 ProPhoto 输入]
-    C --> D[光谱显影<br/>380–780nm · 81 波长]
-    D --> E{负片?}
-    E -- 是 --> F[相纸印相<br/>亮度 + CMY 滤色]
-    E -- 否 --> G[反转片直接扫描]
-    F --> H[sRGB]
+    A["RAW / JPEG / HEIC"] --> B["LibRaw 解码<br/>AHD 去马赛克"]
+    B --> C["线性 ProPhoto 输入"]
+    C --> D["光谱显影<br/>380–780nm · 81 波长"]
+    D --> E{"负片?"}
+    E -- 是 --> F["相纸印相<br/>亮度 + CMY 滤色"]
+    E -- 否 --> G["反转片直接扫描"]
+    F --> H["sRGB"]
     G --> H
-    H --> I[扫描后调色<br/>曲线 / HSL / 色彩平衡]
-    I --> J[颗粒 / 光晕 / 片边]
-    J --> K[JPEG · PNG16 · TIFF16]
+    H --> I["扫描后调色<br/>曲线 / HSL / 色彩平衡"]
+    I --> J["颗粒 / 光晕 / 片边"]
+    J --> K["JPEG · PNG16 · TIFF16"]
 ```
 
 显影在后端独立进程中执行：优先尝试设备 GPU，通过严格数值自检后启用；初始化超时或失败则切换到随包 SwiftShader CPU 驱动。两类后端使用同一份材料数据与着色器，切换后结果一致性由仪器测试比对。
