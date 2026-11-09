@@ -353,30 +353,38 @@ float sd_round_box(float px, float py, float cx, float cy, float hx, float hy, f
     return std::sqrt(ox * ox + oy * oy) + std::min(std::max(dx, dy), 0.f) - r;
 }
 
+/**
+ * 单方向盒式模糊，前缀和实现：每行只扫两遍，代价与半径无关。
+ * 边缘按「窗口截断后取平均」处理，和原来的 count 归一一致。
+ */
 void blur_axis(std::vector<float> &v, int w, int h, int r, bool horizontal) {
-    std::vector<float> src = v;
-    int n = horizontal ? w : h;
-    for (int y = 0; y < (horizontal ? h : w); y++) {
+    int lines = horizontal ? h : w, n = horizontal ? w : h;
+    std::vector<double> prefix(size_t(n) + 1);
+    for (int line = 0; line < lines; line++) {
+        prefix[0] = 0;
+        for (int i = 0; i < n; i++)
+            prefix[i + 1] =
+                prefix[i] + (horizontal ? v[size_t(line) * w + i] : v[size_t(i) * w + line]);
         for (int i = 0; i < n; i++) {
-            float sum = 0;
-            int count = 0;
-            for (int k = -r; k <= r; k++) {
-                int j = i + k;
-                if (j < 0 || j >= n) continue;
-                sum += horizontal ? src[size_t(y) * w + j] : src[size_t(j) * w + y];
-                count++;
-            }
-            float value = count ? sum / float(count) : 0.f;
-            if (horizontal) v[size_t(y) * w + i] = value;
-            else v[size_t(i) * w + y] = value;
+            int lo = std::max(0, i - r), hi = std::min(n - 1, i + r);
+            float value = float((prefix[hi + 1] - prefix[lo]) / double(hi - lo + 1));
+            if (horizontal) v[size_t(line) * w + i] = value;
+            else v[size_t(i) * w + line] = value;
         }
     }
 }
 
-void blur(std::vector<float> &v, int w, int h, int r) {
+/**
+ * 可分离盒式模糊。passes 次同半径的盒式模糊 ≈ 高斯：一次是平顶、在 r 处
+ * 硬切；两次是三角，三次已经很像高斯。光晕要的是后者——尾巴一路淡出去，
+ * 而不是在某个半径上突然收住。
+ */
+void blur(std::vector<float> &v, int w, int h, int r, int passes = 1) {
     if (r < 1) return;
-    blur_axis(v, w, h, r, true);
-    blur_axis(v, w, h, r, false);
+    for (int pass = 0; pass < passes; pass++) {
+        blur_axis(v, w, h, r, true);
+        blur_axis(v, w, h, r, false);
+    }
 }
 
 void date(Image16 &im, const spk::Json &j, int ix, int iy, int iw, int ih) {
@@ -411,9 +419,9 @@ void date(Image16 &im, const spk::Json &j, int ix, int iy, int iw, int ih) {
         c[1] = c[2] = .94f;
     float strength = num(j, "date_intensity", 1, .1, 2) * .8f;
 
-    // 掩膜：以水印为中心留出光晕的余量。缓冲要装得下最外层的光晕，
-    // 否则边缘会被硬切出一道痕迹。
-    int pad = std::max(5, int(h * .85f));
+    // 掩膜：以水印为中心留出光晕的余量。最外层做两次模糊，支持域是半径的两倍，
+    // 缓冲留少了尾巴会被硬切出一道直边。
+    int pad = std::max(6, int(std::ceil(h * 1.05f)));
     int mw = int(std::ceil(w)) + pad * 2 + 3, mh = int(h) + pad * 2 + 3;
     int ox = int(std::floor(x0)) - pad, oy = int(std::floor(baseline - h)) - pad;
     std::vector<float> mask(size_t(mw) * mh, 0.f);
@@ -453,11 +461,17 @@ void date(Image16 &im, const spk::Json &j, int ix, int iy, int iw, int ih) {
     // 预览尺寸下会把细笔画糊掉。
     if (.14f * h >= 5.f) blur(mask, mw, mh, 1);
 
-    // 三层模糊 ≈ 高斯：近晕贴着笔画，远晕铺开成一片暖光。
-    std::vector<float> glowA = mask, glowB = mask, glowC = mask;
-    blur(glowA, mw, mh, std::max(1, int(h * .10f)));
-    blur(glowB, mw, mh, std::max(2, int(h * .24f)));
-    blur(glowC, mw, mh, std::max(3, int(h * .50f)));
+    // 三层柔光 ≈ 光学 PSF：近晕贴着笔画，中晕过渡，远晕铺开。每层两次盒式模糊，
+    // 外层因此没有那个「到 r 就没了」的硬边。
+    std::vector<float> glow = mask;
+    blur(glow, mw, mh, std::max(1, int(h * .10f)), 2);
+    for (float &value : glow) value *= .50f;
+    std::vector<float> layer = mask;
+    blur(layer, mw, mh, std::max(2, int(h * .24f)), 2);
+    for (size_t i = 0; i < glow.size(); i++) glow[i] += layer[i] * .32f;
+    layer = mask;
+    blur(layer, mw, mh, std::max(3, int(h * .48f)), 2);
+    for (size_t i = 0; i < glow.size(); i++) glow[i] += layer[i] * .18f;
 
     for (int py = 0; py < mh; py++) {
         int y = oy + py;
@@ -466,8 +480,12 @@ void date(Image16 &im, const spk::Json &j, int ix, int iy, int iw, int ih) {
             int x = ox + px;
             if (x < 0 || x >= int(im.width)) continue;
             size_t i = size_t(py) * mw + px;
-            float alpha = mask[i] + glowA[i] * .55f + glowB[i] * .30f + glowC[i] * .22f;
-            alpha = std::min(.96f, sat(alpha) * strength);
+            // 核心直接给满；光晕只在核心之外叠加，并按 (1-core) 收敛。
+            // 之前是三层直接相加再截断到 .96，笔画周围一大片会一起顶到上限，
+            // 等于把近晕整块压成平台，看上去反而没有过渡。
+            float core = mask[i];
+            float alpha = core + glow[i] * .90f * (1.f - core);
+            alpha = std::min(1.f, sat(alpha) * strength);
             if (alpha <= 0.002f) continue;
             auto *p = &im.rgba[(size_t(y) * im.width + x) * 4];
             for (int k = 0; k < 3; k++) p[k] = quant(p[k] / 65535.f * (1 - alpha) + c[k] * alpha);
