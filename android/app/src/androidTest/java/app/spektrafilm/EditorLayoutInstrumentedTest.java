@@ -42,6 +42,13 @@ public final class EditorLayoutInstrumentedTest
     method.invoke(activity);
   }
 
+  /** 面板的屏幕上限（dp）：面板高度就是 min(PANEL_MAX_DP, 这个值)。 */
+  private int panelLimit() throws Exception {
+    Method method = MainActivity.class.getDeclaredMethod("panelLimit");
+    method.setAccessible(true);
+    return (Integer) method.invoke(activity);
+  }
+
   private void main(Runnable action) {
     getInstrumentation().runOnMainSync(action);
     getInstrumentation().waitForIdleSync();
@@ -110,20 +117,18 @@ public final class EditorLayoutInstrumentedTest
   }
 
   /**
-   * 编辑区的两条硬规则，九页（胶片 / 相纸 / 调整五段 / 边框 / 质感）逐页验：
+   * 编辑区的一条硬规则，九页（胶片 / 相纸 / 调整五段 / 边框 / 质感）逐页验：
+   * <b>预览区高度与面板高度都必须一模一样</b>——面板固定占满 {@link
+   * MainActivity#PANEL_MAX_DP}（或屏幕上限），不随内容收缩、不随内容跳动，内容多了就在
+   * 面板里滚动。照片因此永远不动。
    *
-   * <ul>
-   *   <li><b>预览区高度固定</b>：不管切到哪一页，照片区高度必须一模一样——面板按内容
-   *       收缩时，少掉的空间落在面板上方的弹性间隔里，不许退回去把照片撑大。
-   *   <li><b>面板按内容走、封顶 {@link MainActivity#PANEL_MAX_DP}</b>：内容装得下就收成
-   *       内容高（底部不留白），装不下就停在上限并滚动；底部渐隐必须与「还能不能滚」一致。
-   * </ul>
+   * <p>同时守住底部渐隐：它必须与「还能不能滚」一致——长页滚到底要灭，短页从头到尾不亮。
    */
-  public void testPreviewStaysFixedAndPanelFitsContent() throws Exception {
+  public void testPreviewAndPanelHeightsAreIdenticalOnEveryTool() throws Exception {
     activity = getActivity();
     final float density = activity.getResources().getDisplayMetrics().density;
-    final int maxPanelPx = Math.round(MainActivity.PANEL_MAX_DP * density);
     List<Integer> previews = new ArrayList<>();
+    List<Integer> panels = new ArrayList<>();
     List<String> pages = new ArrayList<>();
     for (int tab : new int[] {0, 1, 2, 4, 5}) {
       for (String section :
@@ -149,13 +154,21 @@ public final class EditorLayoutInstrumentedTest
                 View stage = (View) field("photoStage").get(activity);
                 ScrollView scroll = (ScrollView) field("panelScroll").get(activity);
                 View fade = (View) field("panelFade").get(activity);
-                int body = field("panelBodyHeight").getInt(activity);
+                LinearLayout editor = (LinearLayout) field("editor").get(activity);
                 String page = "工具 " + tool + " / " + section;
                 assertTrue(page + " 没有完成布局", panel.getHeight() > 0 && stage.getHeight() > 0);
                 previews.add(stage.getHeight());
+                panels.add(panel.getHeight());
                 pages.add(page);
                 // 横屏平板是左右分栏，面板按权重分，不适用这套规则。
                 if (((LinearLayout.LayoutParams) panel.getLayoutParams()).weight > 0) return;
+                // fillViewport 会把子 View 撑满可视区，所以要按内容自己量一遍才是真实正文高。
+                int width =
+                    scroll.getWidth() - scroll.getPaddingLeft() - scroll.getPaddingRight();
+                editor.measure(
+                    View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                int body = Math.round(editor.getMeasuredHeight() / density);
                 boolean scrolls = scroll.canScrollVertically(1);
                 android.util.Log.i(
                     "PanelAudit",
@@ -168,19 +181,13 @@ public final class EditorLayoutInstrumentedTest
                         + Math.round(panel.getHeight() / density)
                         + "dp 能滚 "
                         + (scrolls ? "是" : "否"));
-                if (body <= MainActivity.PANEL_MAX_DP) {
-                  // 装得下：面板收成内容高，底部不留白，也不该能滚。
-                  assertTrue(
-                      page + " 正文 " + body + "dp 装得下，面板该收成内容高，实际 "
-                          + Math.round(panel.getHeight() / density) + "dp",
-                      Math.abs(panel.getHeight() - Math.round(body * density)) <= 2);
-                  assertFalse(page + " 装得下不该能滚", scrolls);
-                } else {
-                  assertTrue(
-                      page + " 超出上限必须顶到 " + MainActivity.PANEL_MAX_DP + "dp",
-                      Math.abs(panel.getHeight() - maxPanelPx) <= 2);
-                  assertTrue(page + " 顶到上限必须能滚", scrolls);
-                }
+                // 面板高度只跟屏幕有关：等于 min(PANEL_MAX_DP, 屏幕上限)。
+                int expected =
+                    Math.round(Math.min(MainActivity.PANEL_MAX_DP, panelLimit()) * density);
+                assertTrue(
+                    page + " 面板必须固定为 " + Math.round(expected / density) + "dp，实际 "
+                        + Math.round(panel.getHeight() / density) + "dp",
+                    Math.abs(panel.getHeight() - expected) <= 2);
                 // 底部渐隐是「还能往下滚」的唯一提示，必须与可滚性一致。
                 assertEquals(page + " 底部渐隐要和可滚性一致", scrolls ? 1f : 0f, fade.getAlpha());
               } catch (Exception ex) {
@@ -194,6 +201,10 @@ public final class EditorLayoutInstrumentedTest
           "预览区高度必须固定：" + pages.get(i) + " 与 " + pages.get(0) + " 不一致",
           previews.get(0).intValue(),
           previews.get(i).intValue());
+      assertEquals(
+          "面板高度必须固定：" + pages.get(i) + " 与 " + pages.get(0) + " 不一致",
+          panels.get(0).intValue(),
+          panels.get(i).intValue());
     }
   }
 

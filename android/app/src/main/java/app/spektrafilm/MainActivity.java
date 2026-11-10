@@ -46,10 +46,8 @@ public final class MainActivity extends Activity {
   private boolean curveHintShown;
   private ScrollView panelScroll;
   private View panelFade;
-  /** 预览区与工具列之间的弹性间隔：面板矮下去时，多出来的空间留在这里。 */
+  /** 预览区与工具列之间的弹性间隔：把工具列（面板 + 导航）推到底，贴住屏幕下沿。 */
   private View panelSpacer;
-  /** 当前页正文高度（dp）。面板高度 = min(它, PANEL_MAX_DP)。 */
-  private int panelBodyHeight;
   private TextView status,
       filmTitle,
       filmSub,
@@ -683,8 +681,9 @@ public final class MainActivity extends Activity {
    * 预览区（照片 + 工具行）高度的像素值：编辑区扣掉工具列的最大可能高度——
    * 面板顶距 4 + 面板最大高度 + 导航 58 及其两侧留白 20。
    *
-   * <p>任何时候都按「面板顶到最大」来预留，因此面板矮下去时少掉的那部分不会退回给预览区，
-   * 而是落在 {@link #panelSpacer} 上——照片尺寸、位置一动不动。
+   * <p>这里按「面板顶到最大」预留，而面板现在确实永远占满那个高度，所以这个减法算出来的
+   * 就是面板之外的全部空间：照片尺寸、位置在九个编辑页上一模一样。剩下一点零头落在
+   * {@link #panelSpacer} 上，把工具列推到底、贴住屏幕下沿。
    */
   private int previewHeightPx() {
     if (editorBody == null || editorBody.getHeight() <= 0) return 0;
@@ -717,16 +716,15 @@ public final class MainActivity extends Activity {
   }
 
   /**
-   * 面板高度（dp）：按当前页内容走，封顶 {@link #panelMaxHeight()}。
+   * 面板高度（dp）：固定 {@link #panelMaxHeight()}，和当前页内容无关。
    *
-   * <p>内容撑不满就矮下去，多出来的空间交给预览区和工具列之间的弹性间隔，面板内部不留白；
-   * 内容超出上限就停在上限，用户在面板里上下滚。这里**没有**「展开」这一档——展开必然要
-   * 吃掉预览区的高度，而预览区高度是固定的。
+   * <p>九个编辑页一个高度，切 tab、切分段、换通道、内容多少都不改它一分。内容撑不满时
+   * 底部留白在面板内部（不缩、不贴内容），内容超出就在面板里上下滚。这里**没有**「展开」
+   * 这一档，也没有「按内容收缩」——展开要吃掉预览区的高度，收缩会让面板在切页时跳动，
+   * 而预览区高度和照片位置是钉死的。
    */
   private int panelHeight() {
-    int max = panelMaxHeight();
-    int content = panelBodyHeight > 0 ? panelBodyHeight : max;
-    return Math.max(96, Math.min(content, max));
+    return panelMaxHeight();
   }
 
   /**
@@ -769,31 +767,8 @@ public final class MainActivity extends Activity {
   }
 
   /**
-   * 量一次正文高度（dp）：把内容按面板宽度量一遍，得到它「想占多高」。面板高度就是
-   * min(这个值, 面板最大高度)——撑不满就矮下去，超出就滚动。单位用 dp：早先这里存 px
-   * 却和 dp 常量比，在 2.6 倍密度的机器上恒判成「很高」，自适应从没生效过。
-   */
-  private void fitPanelToContent() {
-    if (panel == null || panelScroll == null || editor == null) return;
-    int width =
-        panelScroll.getWidth() - panelScroll.getPaddingLeft() - panelScroll.getPaddingRight();
-    if (width <= 0) {
-      width = getResources().getDisplayMetrics().widthPixels - dp(12) * 2;
-    }
-    editor.measure(
-        View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-    int body =
-        editor.getMeasuredHeight() + panelScroll.getPaddingTop() + panelScroll.getPaddingBottom();
-    int heightDp = Math.max(1, Math.round(body / getResources().getDisplayMetrics().density));
-    if (heightDp == panelBodyHeight) return;
-    panelBodyHeight = heightDp;
-    updatePanelHeight();
-  }
-
-  /**
-   * 底部渐隐只在「下面还有内容」时出现。这一条同时是这一页到底能不能滚的实时读数：
-   * 装得下的页（面板已经按内容收过）永远是灭的；基础页 662dp 撑到上限，滚到底才灭。
+   * 底部渐隐只在「下面还有内容」时出现，直接读滚动能力，与面板高度无关：
+   * 装得下的页（胶片、曲线、暗角）永远是灭的，长页滚到底才灭。
    */
   private void updatePanelFade() {
     if (panelFade == null || panelScroll == null) return;
@@ -806,7 +781,7 @@ public final class MainActivity extends Activity {
     layout.height = wideEditor() ? 0 : dp(panelHeight());
     layout.weight = wideEditor() ? 1 : 0;
     panel.requestLayout();
-    // 面板高度一变，可视区就变了，「下面还有没有」的答案也跟着变。
+    // 换页、换屏之后可视区可能变，「下面还有没有」得重新判一次。
     panel.post(this::updatePanelFade);
   }
 
@@ -997,10 +972,10 @@ public final class MainActivity extends Activity {
     editor = vertical();
     // 面板顶上不再有把手那一行，正文直接贴着圆角顶边，所以自己留 10dp 呼吸。
     editor.setPadding(dp(14), dp(10), dp(14), dp(10));
-    // 任何一页内容变化都重新量一次，面板高度才能跟着当前页的功能走。
+    // 内容增减会改变「能不能滚」，渐隐跟着重判一次。
     editor.addOnLayoutChangeListener(
         (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
-            panel.post(this::fitPanelToContent));
+            panel.post(this::updatePanelFade));
     scroll.addView(editor);
     updatePanelHeight();
     if (selectedTab <= 1) {
@@ -1284,9 +1259,6 @@ public final class MainActivity extends Activity {
                   .show());
       add(editor, reset, -1, 39);
     }
-    // 内容一建好就同步量一次。面板高度只跟屏幕有关，不差这一帧；但把手显隐和展开态要在
-    // 这一帧就定下来，否则从展开态切到装得下的页会先闪一帧空白再收回。
-    fitPanelToContent();
     // 新页从顶部开始，滚动事件不一定触发，渐隐要自己重算一次。
     panel.post(this::updatePanelFade);
   }
