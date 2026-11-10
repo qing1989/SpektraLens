@@ -37,9 +37,10 @@ public final class MainActivity extends Activity {
   private JSONObject settings = new JSONObject();
   private SharedPreferences prefs;
   private LinearLayout root, editor, header, statusRow, editorBody, previewColumn, toolsColumn;
+  private FrameLayout photoStage;
   private PanelHandle panelHandle;
   private OnBackInvokedCallback backCallback;
-  private boolean panelExpanded;
+  private boolean panelExpanded, curveHintShown;
   private ScrollView panelScroll;
   private int panelContentHeight;
   private float panelDragY;
@@ -550,7 +551,7 @@ public final class MainActivity extends Activity {
     toolsColumn = vertical();
     editorBody.addView(previewColumn);
     editorBody.addView(toolsColumn);
-    FrameLayout photoStage = new FrameLayout(this);
+    photoStage = new FrameLayout(this);
     previewColumn.addView(photoStage, new LinearLayout.LayoutParams(-1, 0, 1));
     photo = new PhotoView(this);
     photoStage.addView(photo, new FrameLayout.LayoutParams(-1, -1));
@@ -665,12 +666,62 @@ public final class MainActivity extends Activity {
     updatePanelHeight();
   }
 
+  /** 编辑区高度（dp）。面板高度、图表高度都从这里推，别各自算一遍。 */
+  private int editorHeightDp() {
+    return editorScreen != null && editorScreen.getHeight() > 0
+        ? Math.round(editorScreen.getHeight() / getResources().getDisplayMetrics().density)
+        : getResources().getConfiguration().screenHeightDp;
+  }
+
+  /** 面板的绝对上限（dp）：屏高扣掉顶栏、状态条、工具行、导航，照片只剩 92dp 的极端值。 */
+  private int panelLimit() {
+    return Math.max(96, editorHeightDp() - 284);
+  }
+
+  /**
+   * 曲线页的图表高度（dp）：收起态封顶 320，扣掉图表以外的固定行，剩下的全给图表。
+   * 曲线页 320 的预算 = 164 的行高（把手 26 + 分类 38 + 间距 8 + 启用开关 46 + 通道行 36 +
+   * 底部内边距 10）+ 154 的图表 + 2 的余量，正好一次看全，不用去拖那根 3dp 的把手。
+   * 那 2dp 是给 dp→px 的取整留的：逐项取整后加起来可能比整段取整多几像素，
+   * 不留余量图表下沿会被 ScrollView 顶出可视区 1~2px。
+   */
+  private int curveChartHeight() {
+    return Math.min(215, Math.max(150, Math.min(320, panelLimit()) - 166));
+  }
+
+  /**
+   * 曲线操作的用法提示：只在本进程第一次进曲线页时飘一条，2.6 秒后自己淡出。
+   * 原来是面板里一行常驻的 28dp 小字——学会之后就是纯占地方，还挤掉了图表的高度。
+   */
+  private void showCurveHint() {
+    if (curveHintShown || photoStage == null) return;
+    curveHintShown = true;
+    TextView hint = text("点按添加 · 拖动调整 · 长按删除内部点", AppStyle.TYPE_MICRO, INK);
+    hint.setSingleLine(true);
+    hint.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    hint.setGravity(Gravity.CENTER);
+    hint.setPadding(dp(14), 0, dp(14), 0);
+    hint.setAlpha(0f);
+    AppStyle.surface(hint, AppStyle.withAlpha(AppStyle.SURFACE, .95f), AppStyle.R_SMALL);
+    // 停在照片下沿、状态条上方，不压住曲线图，也不占面板的任何一行。
+    FrameLayout.LayoutParams layout =
+        new FrameLayout.LayoutParams(-2, dp(30), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+    layout.setMargins(dp(12), 0, dp(12), dp(44));
+    photoStage.addView(hint, layout);
+    hint.animate().alpha(1f).setDuration(200).start();
+    hint.postDelayed(
+        () ->
+            hint.animate()
+                .alpha(0f)
+                .setDuration(320)
+                .withEndAction(() -> photoStage.removeView(hint))
+                .start(),
+        2600);
+  }
+
   private int panelHeight(boolean expanded) {
-    int height =
-        editorScreen != null && editorScreen.getHeight() > 0
-            ? Math.round(editorScreen.getHeight() / getResources().getDisplayMetrics().density)
-            : getResources().getConfiguration().screenHeightDp;
-    int limit = Math.max(96, height - 284);
+    int height = editorHeightDp();
+    int limit = panelLimit();
     // 胶片页调完曝光就没有别的控件了，固定 286 会在底部留一块空白。收起态按内容高度走：
     // 内容矮就缩到内容高，内容高到 320 以上才回到「固定高度 + 展开箭头」的老行为。
     int compact = Math.max(150, Math.min(320, panelContentHeight > 0 ? panelContentHeight : 286));
@@ -1330,10 +1381,17 @@ public final class MainActivity extends Activity {
     } else if (gradeSection.equals("曲线")) {
       String[] ids = {"rgb", "luma", "r", "g", "b"},
           names = {"RGB 总曲线", "亮度曲线", "红通道", "绿通道", "蓝通道"};
+      // 这一页的内容刚好填满 320，展开只会多出一块空白；从基础页带着展开态切过来时先收回去。
+      panelExpanded = false;
+      // 通道按钮和「重置」并成一行。重置原来单占 36dp 一整行，为一个低频按钮付一整行代价，
+      // 曲线底下因此空出一截；挪到行尾做小字按钮，通道名也能占到更宽的宽度。
+      LinearLayout channelRow = horizontal();
       TextView channel =
           button(
-              names[Math.max(0, Arrays.asList(ids).indexOf(curveChannel))] + "", INK, AppStyle.CONTROL);
-      add(editor, channel, -1, 36);
+              names[Math.max(0, Arrays.asList(ids).indexOf(curveChannel))] + "",
+              INK,
+              AppStyle.CONTROL);
+      channelRow.addView(channel, new LinearLayout.LayoutParams(0, dp(36), 1));
       channel.setOnClickListener(
           v ->
               new Haptics.DialogBuilder(this)
@@ -1346,6 +1404,23 @@ public final class MainActivity extends Activity {
                       })
                   .show());
       String key = "curve_" + curveChannel;
+      TextView clear = button("重置", MUTED, BG);
+      clear.setTextSize(AppStyle.TYPE_LABEL);
+      clear.setPadding(dp(6), 0, dp(4), 0);
+      clear.setMinHeight(0);
+      clear.setContentDescription("重置当前曲线");
+      clear.setOnClickListener(
+          v -> {
+            set(
+                key,
+                new JSONArray()
+                    .put(new JSONArray().put(0).put(0))
+                    .put(new JSONArray().put(1).put(1)));
+            scheduleRender();
+            buildPanel();
+          });
+      channelRow.addView(clear, new LinearLayout.LayoutParams(dp(48), dp(36)));
+      add(editor, channelRow, -1, 36);
       int color =
           curveChannel.equals("r")
               ? AppStyle.CURVE_R
@@ -1362,24 +1437,11 @@ public final class MainActivity extends Activity {
                 set(key, holder[0].value());
                 scheduleRender();
               });
-      add(editor, holder[0], -1, 215);
+      // 图表高度跟着面板预算走：矮屏机器上图表自己矮一点，好过被面板底边切掉半截——
+      // 图里那截曲线是拖点用的，切掉了等于这页没法用。
+      add(editor, holder[0], -1, curveChartHeight());
       controls.add(holder[0]);
-      TextView hint = text("点按添加 · 拖动调整 · 长按删除内部点", AppStyle.TYPE_MICRO, MUTED);
-    hint.setSingleLine(true);
-    hint.setEllipsize(android.text.TextUtils.TruncateAt.END);
-      add(editor, hint, -1, 28);
-      TextView clear = button("重置当前曲线", MUTED, AppStyle.CONTROL);
-      add(editor, clear, -1, 36);
-      clear.setOnClickListener(
-          v -> {
-            set(
-                key,
-                new JSONArray()
-                    .put(new JSONArray().put(0).put(0))
-                    .put(new JSONArray().put(1).put(1)));
-            scheduleRender();
-            buildPanel();
-          });
+      showCurveHint();
     } else if (gradeSection.equals("色彩平衡")) {
       String[] ids = {"master", "shadows", "midtones", "highlights"},
           names = {"整体", "阴影", "中间调", "高光"};
