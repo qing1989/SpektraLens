@@ -2642,6 +2642,15 @@ public final class MainActivity extends Activity {
               settings = new JSONObject();
             }
             defaults();
+            // RAW 没有「原曝光」可保留：解码把 1.0 钉在传感器饱和点，相机又给高光留了
+            // 0.5~1.5 EV 余量，中间调会落在 0.09~0.18 之间漂，而胶片管线的契约是
+            // kMidgray = 0.184（pipeline.cpp）。JPEG 的白已经是显示白，一起开测光反而
+            // 会把正常照片压暗约 1 档，所以只对 RAW 打开。外部显式给定的参数
+            // （「再编辑一张」带回的配方）优先，不覆盖用户自己拨的档位。
+            if (job.raw
+                && (job.initialSettings == null
+                    || !job.initialSettings.contains("auto_exposure")))
+              set("auto_exposure", true);
             filmCategory = category(find(films, settings.optString("film_stock")));
             if (job.initialSettings == null) {
               selectedTab = 0;

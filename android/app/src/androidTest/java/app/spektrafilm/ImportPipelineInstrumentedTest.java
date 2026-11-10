@@ -272,4 +272,58 @@ public final class ImportPipelineInstrumentedTest
     }
     assertFalse("DNG/TIFF must still go through the RAW probe", PhotoFormats.isRaster(file));
   }
+
+  /**
+   * RAW 解码把 1.0 钉在传感器饱和点，相机又给高光留了余量，中间调会漂到 0.09~0.18；而 JPEG
+   * 的白已经是显示白。所以导入 RAW 必须补一个测光锚点，导入 JPEG 必须不补。
+   */
+  public void testRawImportEnablesTheMeterWhileJpegImportLeavesItOff() throws Exception {
+    activity = getActivity();
+    long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+    while (!(Boolean) field("ready") && System.nanoTime() < end) Thread.sleep(50);
+
+    File jpeg = new File(activity.getFilesDir(), "meter-off.jpg");
+    Bitmap b = Bitmap.createBitmap(64, 48, Bitmap.Config.ARGB_8888);
+    b.eraseColor(0xff5a5a5a);
+    try (OutputStream out = new FileOutputStream(jpeg)) {
+      b.compress(Bitmap.CompressFormat.JPEG, 95, out);
+    }
+    b.recycle();
+    importAndWaitForSource(jpeg);
+    assertFalse(
+        "JPEG 已是显示白，开测光会把正常照片压暗约 1 档",
+        ((org.json.JSONObject) field("settings")).optBoolean("auto_exposure", false));
+
+    File raw = new File(activity.getFilesDir(), "meter-on.dng");
+    try (InputStream in = getInstrumentation().getContext().getAssets().open("bayer-no-preview.dng");
+        OutputStream out = new FileOutputStream(raw)) {
+      byte[] data = new byte[8192];
+      int n;
+      while ((n = in.read(data)) != -1) out.write(data, 0, n);
+    }
+    importAndWaitForSource(raw);
+    assertTrue(
+        "RAW 没有原曝光可保留，中间调必须被锚到 kMidgray",
+        ((org.json.JSONObject) field("settings")).optBoolean("auto_exposure", false));
+  }
+
+  private void importAndWaitForSource(File file) throws Exception {
+    File previous = (File) field("sourceFile");
+    getInstrumentation()
+        .runOnMainSync(
+            () -> {
+              try {
+                call("importUri", new Class<?>[] {Uri.class}, Uri.fromFile(file));
+              } catch (Exception e) {
+                throw new RuntimeException(e);
+              }
+            });
+    long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(90);
+    while (System.nanoTime() < end) {
+      File current = (File) field("sourceFile");
+      if (current != null && !current.equals(previous)) return;
+      Thread.sleep(50);
+    }
+    fail("导入 " + file.getName() + " 未完成");
+  }
 }
