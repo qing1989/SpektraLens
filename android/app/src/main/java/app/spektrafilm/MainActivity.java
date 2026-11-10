@@ -29,6 +29,9 @@ public final class MainActivity extends Activity {
       LINE = AppStyle.OUTLINE;
   /** 面板顶上把手那一行的高度（dp）。常驻占位，不可用时只把胶囊调暗，见 updatePanelHeight。 */
   static final int HANDLE_ROW_DP = 26;
+
+  /** 面板下沿的渐隐高度（dp）：提示「下面还有」，滚到底就淡出。 */
+  static final int FADE_ROW_DP = 24;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService importWorker = Executors.newFixedThreadPool(2);
   private PhotoImportJob activeImport;
@@ -44,6 +47,7 @@ public final class MainActivity extends Activity {
   private OnBackInvokedCallback backCallback;
   private boolean panelExpanded, curveHintShown;
   private ScrollView panelScroll;
+  private View panelFade;
   /** 当前页正文高度（dp，不含把手那一行）。只决定把手显隐与展开态收回，不参与面板高度。 */
   private int panelBodyHeight;
   private float panelDragY;
@@ -783,6 +787,15 @@ public final class MainActivity extends Activity {
   }
 
   /**
+   * 底部渐隐只在「下面还有内容」时出现。这一条同时是这一页到底能不能滚的实时读数：
+   * 曲线页正文 292dp 装得进 294dp 的可视区，渐隐永远是灭的；基础页 662dp，滚到底才灭。
+   */
+  private void updatePanelFade() {
+    if (panelFade == null || panelScroll == null) return;
+    panelFade.setAlpha(panelScroll.canScrollVertically(1) ? 1f : 0f);
+  }
+
+  /**
    * 把手值不值得用：屏能展开，且这一页确实还有事可做（能滚，或者正展开着能拖回去）。
    */
   private boolean panelHandleUsable() {
@@ -797,6 +810,8 @@ public final class MainActivity extends Activity {
     layout.height = wideEditor() ? 0 : dp(panelHeight());
     layout.weight = wideEditor() ? 1 : 0;
     panel.requestLayout();
+    // 面板高度一变，可视区就变了，「下面还有没有」的答案也跟着变。
+    panel.post(this::updatePanelFade);
     if (panelHandle != null) {
       // 横屏平板把面板当侧栏，那 26dp 的把手行没有意义，收掉。
       panelHandle.setVisibility(wideEditor() ? View.GONE : View.VISIBLE);
@@ -1038,7 +1053,22 @@ public final class MainActivity extends Activity {
     panelScroll = scroll;
     scroll.setFillViewport(true);
     scroll.setVerticalScrollBarEnabled(false);
-    panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    // 面板底部原来是一条硬切口：内容滚到一半时最后一行被齐着切掉，看起来像「被裁」而不是
+    // 「还能往下滚」——曲线页当初被当成 bug 报上来，就是这个观感。盖一层从透明到面板色的
+    // 渐隐，只在下面确实还有内容时出现，滚到底就消失。它不吃触摸，只是提示层。
+    FrameLayout body = new FrameLayout(this);
+    body.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+    panelFade = new View(this);
+    panelFade.setBackground(
+        new GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            new int[] {AppStyle.withAlpha(AppStyle.SURFACE, 0f), AppStyle.SURFACE}));
+    panelFade.setClickable(false);
+    panelFade.setFocusable(false);
+    panelFade.setAlpha(0f);
+    body.addView(panelFade, new FrameLayout.LayoutParams(-1, dp(FADE_ROW_DP), Gravity.BOTTOM));
+    scroll.setOnScrollChangeListener((v, x, y, oldX, oldY) -> updatePanelFade());
+    panel.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
     editor = vertical();
     editor.setPadding(dp(14), 0, dp(14), dp(10));
     // 任何一页内容变化都重新量一次，面板高度才能跟着当前页的功能走。
@@ -1331,6 +1361,8 @@ public final class MainActivity extends Activity {
     // 内容一建好就同步量一次。面板高度只跟屏幕有关，不差这一帧；但把手显隐和展开态要在
     // 这一帧就定下来，否则从展开态切到装得下的页会先闪一帧空白再收回。
     fitPanelToContent();
+    // 新页从顶部开始，滚动事件不一定触发，渐隐要自己重算一次。
+    panel.post(this::updatePanelFade);
   }
 
   private void panelNote(String title, String detail) {

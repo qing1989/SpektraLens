@@ -185,6 +185,14 @@ public final class EditorLayoutInstrumentedTest
                       page + " 正文 " + body + "dp 必须一次看全（可视区 " + viewport + "dp）",
                       body <= viewport);
                 }
+                // 底部渐隐是「还能往下滚」的唯一提示：只在下面确实还有内容时出现，
+                // 短页（曲线 / 暗角 / 胶片）必须完全消失，否则看着像被裁了一道。
+                ScrollView scroll = (ScrollView) field("panelScroll").get(activity);
+                View fade = (View) field("panelFade").get(activity);
+                assertEquals(
+                    page + " 底部渐隐要和可滚性一致",
+                    scroll.canScrollVertically(1) ? 1f : 0f,
+                    fade.getAlpha());
               } catch (Exception ex) {
                 throw new RuntimeException(ex);
               }
