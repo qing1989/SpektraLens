@@ -27,11 +27,10 @@ public final class MainActivity extends Activity {
       MUTED = AppStyle.MUTED,
       ACCENT = AppStyle.ACCENT,
       LINE = AppStyle.OUTLINE;
-  /** 面板顶上把手那一行的高度（dp）。常驻占位，不可用时只把胶囊调暗，见 updatePanelHeight。 */
-  static final int HANDLE_ROW_DP = 26;
-
   /** 面板下沿的渐隐高度（dp）：提示「下面还有」，滚到底就淡出。 */
   static final int FADE_ROW_DP = 24;
+  /** 面板的最大高度（dp）。预览区按这个值预留，所以它也决定照片能有多大。 */
+  static final int PANEL_MAX_DP = 320;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService importWorker = Executors.newFixedThreadPool(2);
   private PhotoImportJob activeImport;
@@ -43,16 +42,14 @@ public final class MainActivity extends Activity {
   private SharedPreferences prefs;
   private LinearLayout root, editor, header, statusRow, editorBody, previewColumn, toolsColumn;
   private FrameLayout photoStage;
-  private PanelHandle panelHandle;
   private OnBackInvokedCallback backCallback;
-  private boolean panelExpanded, curveHintShown;
+  private boolean curveHintShown;
   private ScrollView panelScroll;
   private View panelFade;
-  /** 当前页正文高度（dp，不含把手那一行）。只决定把手显隐与展开态收回，不参与面板高度。 */
+  /** 预览区与工具列之间的弹性间隔：面板矮下去时，多出来的空间留在这里。 */
+  private View panelSpacer;
+  /** 当前页正文高度（dp）。面板高度 = min(它, PANEL_MAX_DP)。 */
   private int panelBodyHeight;
-  private float panelDragY;
-  private int panelDragHeight;
-  private boolean panelDragging;
   private TextView status,
       filmTitle,
       filmSub,
@@ -556,8 +553,17 @@ public final class MainActivity extends Activity {
     editorScreen.addView(editorBody, new LinearLayout.LayoutParams(-1, 0, 1));
     previewColumn = vertical();
     toolsColumn = vertical();
+    // 预览区高度固定，工具列贴底；两者之间留一段弹性间隔，面板矮下去时由它吸收，
+    // 照片不会跟着长高——这是「展开/收起不许动预览」的实现方式。
+    panelSpacer = new View(this);
     editorBody.addView(previewColumn);
+    editorBody.addView(panelSpacer, new LinearLayout.LayoutParams(-1, 0, 1));
     editorBody.addView(toolsColumn);
+    // 预览区高度是从编辑区高度推出来的，编辑区一变（旋转、窗口尺寸、系统栏变化）就重算。
+    editorBody.addOnLayoutChangeListener(
+        (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+          if (bottom - top != oldBottom - oldTop) updateEditorLayout();
+        });
     photoStage = new FrameLayout(this);
     previewColumn.addView(photoStage, new LinearLayout.LayoutParams(-1, 0, 1));
     photo = new PhotoView(this);
@@ -645,10 +651,6 @@ public final class MainActivity extends Activity {
     updateHistoryButtons();
   }
 
-  private int panelHeight() {
-    return panelHeight(panelExpanded);
-  }
-
   private boolean wideEditor() {
     android.content.res.Configuration configuration = getResources().getConfiguration();
     return configuration.screenWidthDp >= 600 && configuration.screenHeightDp < 500;
@@ -664,13 +666,32 @@ public final class MainActivity extends Activity {
     if (editorBody == null || panel == null) return;
     boolean wide = wideEditor();
     editorBody.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
-    previewColumn.setLayoutParams(
-        wide
-            ? new LinearLayout.LayoutParams(0, -1, 1.1f)
-            : new LinearLayout.LayoutParams(-1, 0, 1));
-    toolsColumn.setLayoutParams(
-        wide ? new LinearLayout.LayoutParams(0, -1, 1) : new LinearLayout.LayoutParams(-1, -2));
+    panelSpacer.setVisibility(wide ? View.GONE : View.VISIBLE);
+    if (wide) {
+      // 横屏平板：预览和工具列左右分栏，各占一份权重。
+      previewColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1.1f));
+      toolsColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1));
+    } else {
+      // 竖屏：预览区高度写死（= 编辑区 − 工具列最大高度），工具列 wrap_content 贴底。
+      previewColumn.setLayoutParams(new LinearLayout.LayoutParams(-1, previewHeightPx()));
+      toolsColumn.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+    }
     updatePanelHeight();
+  }
+
+  /**
+   * 预览区（照片 + 工具行）高度的像素值：编辑区扣掉工具列的最大可能高度——
+   * 面板顶距 4 + 面板最大高度 + 导航 58 及其两侧留白 20。
+   *
+   * <p>任何时候都按「面板顶到最大」来预留，因此面板矮下去时少掉的那部分不会退回给预览区，
+   * 而是落在 {@link #panelSpacer} 上——照片尺寸、位置一动不动。
+   */
+  private int previewHeightPx() {
+    if (editorBody == null || editorBody.getHeight() <= 0) return 0;
+    int tools = dp(4) + dp(panelMaxHeight()) + dp(58) + dp(20);
+    // 不设下限：极小窗口（分屏、悬浮窗）里面板本身已经按 panelLimit 缩过，再把这里垫高
+    // 会把工具列顶出编辑区。宁可让照片区先让位——这和之前 weight=1 时的行为一致。
+    return Math.max(0, editorBody.getHeight() - tools);
   }
 
   /** 编辑区高度（dp）。面板高度、图表高度都从这里推，别各自算一遍。 */
@@ -686,39 +707,35 @@ public final class MainActivity extends Activity {
   }
 
   /**
-   * 收起态高度（dp）：320，但不超过屏幕能给的绝对上限。
+   * 面板的最大高度（dp）：320，但不超过屏幕能给的绝对上限。
    *
-   * <p>**只跟屏幕有关，和当前页内容无关**。这条是本文件里唯一的高度来源：切 tab、切分段、
-   * 换通道都不改它的值，照片区就不会跟着缩放——编辑照片时画面尺寸来回跳是最伤的事，
-   * 比面板底部那几十 dp 空白重要得多。装不下的内容靠滚动，另给一根把手能拖到展开态。
+   * <p>这个值同时决定预览区能有多大（见 {@link #previewHeightPx()}），所以它一变，照片就
+   * 跟着变——它只跟屏幕有关，不跟页面内容有关。
    */
-  private int panelCollapsedHeight() {
-    return Math.min(320, panelLimit());
-  }
-
-  /** 展开态高度（dp）：屏高的 58%，最多 470。 */
-  private int panelExpandedHeight() {
-    int roomy = Math.min(470, Math.round(editorHeightDp() * .58f));
-    return Math.min(panelLimit(), Math.max(panelCollapsedHeight(), roomy));
-  }
-
-  private int panelHeight(boolean expanded) {
-    return expanded ? panelExpandedHeight() : panelCollapsedHeight();
-  }
-
-  /** 正文可视高度（dp）：面板高度扣掉把手那一行。 */
-  private int panelViewportHeight(boolean expanded) {
-    return panelHeight(expanded) - HANDLE_ROW_DP;
+  private int panelMaxHeight() {
+    return Math.min(PANEL_MAX_DP, panelLimit());
   }
 
   /**
-   * 曲线页的图表高度（dp）：收起态的正文预算扣掉图表以外的行，剩下的全给图表。
-   * 曲线页正文 = 分类 38 + 间距 8 + 启用开关 46 + 通道行 36 + 图表 + 底部内边距 10，
-   * 图表 = 320 − 138 − 2 = 154（2dp 是逐项 dp→px 取整的余量），落在 294 的正文可视区里，
-   * 一次看全，不用去拖那根 3dp 的把手。
+   * 面板高度（dp）：按当前页内容走，封顶 {@link #panelMaxHeight()}。
+   *
+   * <p>内容撑不满就矮下去，多出来的空间交给预览区和工具列之间的弹性间隔，面板内部不留白；
+   * 内容超出上限就停在上限，用户在面板里上下滚。这里**没有**「展开」这一档——展开必然要
+   * 吃掉预览区的高度，而预览区高度是固定的。
+   */
+  private int panelHeight() {
+    int max = panelMaxHeight();
+    int content = panelBodyHeight > 0 ? panelBodyHeight : max;
+    return Math.max(96, Math.min(content, max));
+  }
+
+  /**
+   * 曲线页的图表高度（dp）：面板预算扣掉图表以外的行，剩下的全给图表。
+   * 曲线页正文 = 顶部内边距 10 + 分类 38 + 间距 8 + 启用开关 46 + 通道行 36 + 图表
+   * + 底部内边距 10，图表 = 320 − 150 − 2 = 168（2dp 是逐项 dp→px 取整的余量）。
    */
   private int curveChartHeight() {
-    return Math.min(215, Math.max(150, panelCollapsedHeight() - 166));
+    return Math.min(215, Math.max(150, panelMaxHeight() - 150));
   }
 
   /**
@@ -752,12 +769,9 @@ public final class MainActivity extends Activity {
   }
 
   /**
-   * 量一次正文高度（dp，只算滚动区里的内容，不含把手那一行）。
-   *
-   * <p>正文高度**不参与**面板高度计算（面板高度只跟屏幕有关），它只决定两件事：
-   * 把手要不要露出来、以及从上一页带过来的展开态要不要收回。
-   * 单位一律用 dp：早先这里存的是 px，却拿去和 dp 常量比较，在 2.6 倍密度的机器上
-   * 「内容矮就缩到内容高」永远判成「很高」，这些自适应分支其实从没生效过。
+   * 量一次正文高度（dp）：把内容按面板宽度量一遍，得到它「想占多高」。面板高度就是
+   * min(这个值, 面板最大高度)——撑不满就矮下去，超出就滚动。单位用 dp：早先这里存 px
+   * 却和 dp 常量比，在 2.6 倍密度的机器上恒判成「很高」，自适应从没生效过。
    */
   private void fitPanelToContent() {
     if (panel == null || panelScroll == null || editor == null) return;
@@ -772,36 +786,18 @@ public final class MainActivity extends Activity {
     int body =
         editor.getMeasuredHeight() + panelScroll.getPaddingTop() + panelScroll.getPaddingBottom();
     int heightDp = Math.max(1, Math.round(body / getResources().getDisplayMetrics().density));
-    boolean changed = heightDp != panelBodyHeight;
+    if (heightDp == panelBodyHeight) return;
     panelBodyHeight = heightDp;
-    // 收起态就装得下的页，展开态只可能是上一页带过来的（装得下的页没有把手可点，
-    // 用户没有别的路径进到这个状态），收回即可；收回之后把手随即禁用。不会再被展开。
-    boolean collapsed = panelExpanded && !panelContentOverflows();
-    if (collapsed) panelExpanded = false;
-    if (changed || collapsed) updatePanelHeight();
-  }
-
-  /** 正文在收起态下装不下（留 12dp 容差：溢出几像素不值得给一根把手）。 */
-  private boolean panelContentOverflows() {
-    return panelBodyHeight > 0 && panelBodyHeight > panelViewportHeight(false) + 12;
+    updatePanelHeight();
   }
 
   /**
    * 底部渐隐只在「下面还有内容」时出现。这一条同时是这一页到底能不能滚的实时读数：
-   * 曲线页正文 292dp 装得进 294dp 的可视区，渐隐永远是灭的；基础页 662dp，滚到底才灭。
+   * 装得下的页（面板已经按内容收过）永远是灭的；基础页 662dp 撑到上限，滚到底才灭。
    */
   private void updatePanelFade() {
     if (panelFade == null || panelScroll == null) return;
     panelFade.setAlpha(panelScroll.canScrollVertically(1) ? 1f : 0f);
-  }
-
-  /**
-   * 把手值不值得用：屏能展开，且这一页确实还有事可做（能滚，或者正展开着能拖回去）。
-   */
-  private boolean panelHandleUsable() {
-    return !wideEditor()
-        && panelExpandedHeight() > panelCollapsedHeight() + 12
-        && (panelExpanded || panelContentOverflows());
   }
 
   private void updatePanelHeight() {
@@ -812,76 +808,6 @@ public final class MainActivity extends Activity {
     panel.requestLayout();
     // 面板高度一变，可视区就变了，「下面还有没有」的答案也跟着变。
     panel.post(this::updatePanelFade);
-    if (panelHandle != null) {
-      // 横屏平板把面板当侧栏，那 26dp 的把手行没有意义，收掉。
-      panelHandle.setVisibility(wideEditor() ? View.GONE : View.VISIBLE);
-      // 竖屏下面板几何永远不动：把手行常驻 26dp，不可用时只把胶囊调暗、禁掉点击，
-      // 既不会把整页内容挪一下，也不会给出一根点了没反应的「亮着」的把手。
-      boolean usable = panelHandleUsable();
-      panelHandle.setAlpha(usable ? 1f : .45f);
-      panelHandle.setEnabled(usable && !exporting);
-      panelHandle.setContentDescription(panelExpanded ? "收起调节面板" : "展开调节面板");
-    }
-  }
-
-  private void addPanelHandle() {
-    panelHandle = new PanelHandle(this);
-    panelHandle.setContentDescription(panelExpanded ? "收起调节面板" : "展开调节面板");
-    panelHandle.setFocusable(true);
-    panelHandle.setClickable(true);
-    controls.add(panelHandle);
-    View grip = new View(this);
-    grip.setBackground(box(AppStyle.GRIP, AppStyle.R_SMALL));
-    FrameLayout.LayoutParams gripLayout =
-        new FrameLayout.LayoutParams(dp(30), dp(3), Gravity.CENTER);
-    panelHandle.addView(grip, gripLayout);
-    add(panel, panelHandle, -1, HANDLE_ROW_DP);
-    panelHandle.setOnClickListener(
-        v -> {
-          if (!panelHandleUsable()) return;
-          panelExpanded = !panelExpanded;
-          updatePanelHeight();
-        });
-    panelHandle.setOnTouchListener(
-        (v, event) -> {
-          // 这一页没内容可滚、也不是展开态时，拖拽没有意义（只会拉出一块空白）。
-          // 导出结束后 controls 会把所有控件整体 setEnabled(true)，所以这里再判一次。
-          if (!v.isEnabled() || !panelHandleUsable()) return false;
-          if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-            panelDragY = event.getRawY();
-            panelDragHeight = panel.getHeight();
-            panelDragging = false;
-            return true;
-          }
-          float delta = panelDragY - event.getRawY();
-          if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-            if (Math.abs(delta) > ViewConfiguration.get(this).getScaledTouchSlop())
-              panelDragging = true;
-            if (panelDragging) {
-              panel.getLayoutParams().height =
-                  Math.max(
-                      dp(panelHeight(false)),
-                      Math.min(dp(panelHeight(true)), panelDragHeight + Math.round(delta)));
-              panel.requestLayout();
-            }
-            return true;
-          }
-          if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-            if (!panelDragging) v.performClick();
-            else {
-              panelExpanded =
-                  panel.getLayoutParams().height
-                      > dp((panelHeight(false) + panelHeight(true)) / 2f);
-              updatePanelHeight();
-            }
-            return true;
-          }
-          if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-            updatePanelHeight();
-            return true;
-          }
-          return true;
-        });
   }
 
   private void buildHome() {
@@ -1017,7 +943,6 @@ public final class MainActivity extends Activity {
     tabRow.removeAllViews();
     sliders.clear();
     values.clear();
-    addPanelHandle();
     String[] labels = {"胶片", "调整", "边框", "质感"};
     int[] tools = {0, 2, 4, 5};
     for (int i = 0; i < labels.length; i++) {
@@ -1070,7 +995,8 @@ public final class MainActivity extends Activity {
     scroll.setOnScrollChangeListener((v, x, y, oldX, oldY) -> updatePanelFade());
     panel.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
     editor = vertical();
-    editor.setPadding(dp(14), 0, dp(14), dp(10));
+    // 面板顶上不再有把手那一行，正文直接贴着圆角顶边，所以自己留 10dp 呼吸。
+    editor.setPadding(dp(14), dp(10), dp(14), dp(10));
     // 任何一页内容变化都重新量一次，面板高度才能跟着当前页的功能走。
     editor.addOnLayoutChangeListener(
         (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->

@@ -74,9 +74,13 @@ public final class FloatingUiInstrumentedTest
         location[0], location[1], location[0] + view.getWidth(), location[1] + view.getHeight());
   }
 
-  public void testFloatingPanelExpandsAndCollapsesWithoutCoveringPhotoOrNavigation()
-      throws Exception {
+  /**
+   * 面板贴底、永不压住照片，而且切工具时照片的矩形一动不动——面板高度现在跟着内容走
+   * （装得下就收短，装不下就停在上限滚动），所以「照片不许跟着长」必须靠布局保证。
+   */
+  public void testPanelDocksBelowPhotoAndNeverMovesIt() throws Exception {
     String settings = value("settings").toString();
+    Rect first = null;
     for (int tool : new int[] {0, 1, 2, 4, 5}) {
       main(
           () -> {
@@ -90,29 +94,18 @@ public final class FloatingUiInstrumentedTest
       View panel = (View) value("panel"),
           photo = (View) value("photo"),
           navigation = (View) value("tabRow");
-      View handle = (View) value("panelHandle");
-      int compact = panel.getHeight();
       assertEquals(
           "Four real tools remain available", 4, ((LinearLayout) navigation).getChildCount());
       assertTrue("Panel is inset from screen edge", bounds(panel).left > 0);
-      if (!handle.isEnabled()) {
-        assertFalse(
-            "Wide layout separates photograph and controls",
-            Rect.intersects(bounds(photo), bounds(panel)));
-        assertTrue(
-            "Preview remains usable in wide layout",
-            photo.getHeight() > 96 * activity.getResources().getDisplayMetrics().density);
-        continue;
-      }
-      main(handle::performClick);
-      assertTrue("The handle expands the panel", panel.getHeight() > compact);
       assertFalse("Panel never covers the photo", Rect.intersects(bounds(photo), bounds(panel)));
       assertTrue("Dock stays below panel", bounds(navigation).top >= bounds(panel).bottom);
       assertTrue(
           "Preview is still usable",
           photo.getHeight() > 96 * activity.getResources().getDisplayMetrics().density);
-      main(handle::performClick);
-      assertEquals("The same panel returns to compact height", compact, panel.getHeight());
+      if (first == null) first = bounds(photo);
+      else
+        assertEquals(
+            "切换工具不许改变照片的位置和大小（工具 " + tool + "）", first, bounds(photo));
     }
     assertEquals(
         "Changing panel size does not edit the photograph", settings, value("settings").toString());
