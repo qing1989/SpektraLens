@@ -27,6 +27,8 @@ public final class MainActivity extends Activity {
       MUTED = AppStyle.MUTED,
       ACCENT = AppStyle.ACCENT,
       LINE = AppStyle.OUTLINE;
+  /** 面板顶上把手那一行的高度（dp）。常驻占位，不可用时只把胶囊调暗，见 updatePanelHeight。 */
+  static final int HANDLE_ROW_DP = 26;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService importWorker = Executors.newFixedThreadPool(2);
   private PhotoImportJob activeImport;
@@ -42,7 +44,8 @@ public final class MainActivity extends Activity {
   private OnBackInvokedCallback backCallback;
   private boolean panelExpanded, curveHintShown;
   private ScrollView panelScroll;
-  private int panelContentHeight;
+  /** 当前页正文高度（dp，不含把手那一行）。只决定把手显隐与展开态收回，不参与面板高度。 */
+  private int panelBodyHeight;
   private float panelDragY;
   private int panelDragHeight;
   private boolean panelDragging;
@@ -679,14 +682,39 @@ public final class MainActivity extends Activity {
   }
 
   /**
-   * 曲线页的图表高度（dp）：收起态封顶 320，扣掉图表以外的固定行，剩下的全给图表。
-   * 曲线页 320 的预算 = 164 的行高（把手 26 + 分类 38 + 间距 8 + 启用开关 46 + 通道行 36 +
-   * 底部内边距 10）+ 154 的图表 + 2 的余量，正好一次看全，不用去拖那根 3dp 的把手。
-   * 那 2dp 是给 dp→px 的取整留的：逐项取整后加起来可能比整段取整多几像素，
-   * 不留余量图表下沿会被 ScrollView 顶出可视区 1~2px。
+   * 收起态高度（dp）：320，但不超过屏幕能给的绝对上限。
+   *
+   * <p>**只跟屏幕有关，和当前页内容无关**。这条是本文件里唯一的高度来源：切 tab、切分段、
+   * 换通道都不改它的值，照片区就不会跟着缩放——编辑照片时画面尺寸来回跳是最伤的事，
+   * 比面板底部那几十 dp 空白重要得多。装不下的内容靠滚动，另给一根把手能拖到展开态。
+   */
+  private int panelCollapsedHeight() {
+    return Math.min(320, panelLimit());
+  }
+
+  /** 展开态高度（dp）：屏高的 58%，最多 470。 */
+  private int panelExpandedHeight() {
+    int roomy = Math.min(470, Math.round(editorHeightDp() * .58f));
+    return Math.min(panelLimit(), Math.max(panelCollapsedHeight(), roomy));
+  }
+
+  private int panelHeight(boolean expanded) {
+    return expanded ? panelExpandedHeight() : panelCollapsedHeight();
+  }
+
+  /** 正文可视高度（dp）：面板高度扣掉把手那一行。 */
+  private int panelViewportHeight(boolean expanded) {
+    return panelHeight(expanded) - HANDLE_ROW_DP;
+  }
+
+  /**
+   * 曲线页的图表高度（dp）：收起态的正文预算扣掉图表以外的行，剩下的全给图表。
+   * 曲线页正文 = 分类 38 + 间距 8 + 启用开关 46 + 通道行 36 + 图表 + 底部内边距 10，
+   * 图表 = 320 − 138 − 2 = 154（2dp 是逐项 dp→px 取整的余量），落在 294 的正文可视区里，
+   * 一次看全，不用去拖那根 3dp 的把手。
    */
   private int curveChartHeight() {
-    return Math.min(215, Math.max(150, Math.min(320, panelLimit()) - 166));
+    return Math.min(215, Math.max(150, panelCollapsedHeight() - 166));
   }
 
   /**
@@ -719,18 +747,14 @@ public final class MainActivity extends Activity {
         2600);
   }
 
-  private int panelHeight(boolean expanded) {
-    int height = editorHeightDp();
-    int limit = panelLimit();
-    // 胶片页调完曝光就没有别的控件了，固定 286 会在底部留一块空白。收起态按内容高度走：
-    // 内容矮就缩到内容高，内容高到 320 以上才回到「固定高度 + 展开箭头」的老行为。
-    int compact = Math.max(150, Math.min(320, panelContentHeight > 0 ? panelContentHeight : 286));
-    if (!expanded) return Math.min(limit, compact);
-    int roomy = Math.min(470, Math.round(height * .58f));
-    return Math.min(limit, Math.max(roomy, compact));
-  }
-
-  /** Measures the panel body so the collapsed sheet can shrink to whatever the tab actually shows. */
+  /**
+   * 量一次正文高度（dp，只算滚动区里的内容，不含把手那一行）。
+   *
+   * <p>正文高度**不参与**面板高度计算（面板高度只跟屏幕有关），它只决定两件事：
+   * 把手要不要露出来、以及从上一页带过来的展开态要不要收回。
+   * 单位一律用 dp：早先这里存的是 px，却拿去和 dp 常量比较，在 2.6 倍密度的机器上
+   * 「内容矮就缩到内容高」永远判成「很高」，这些自适应分支其实从没生效过。
+   */
   private void fitPanelToContent() {
     if (panel == null || panelScroll == null || editor == null) return;
     int width =
@@ -743,20 +767,28 @@ public final class MainActivity extends Activity {
         View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
     int body =
         editor.getMeasuredHeight() + panelScroll.getPaddingTop() + panelScroll.getPaddingBottom();
-    int chrome = 0;
-    for (int i = 0; i < panel.getChildCount(); i++) {
-      View child = panel.getChildAt(i);
-      if (child == panelScroll) continue;
-      chrome += child.getMeasuredHeight() > 0 ? child.getMeasuredHeight() : dp(26);
-    }
-    int total = body + chrome;
-    boolean changed = total != panelContentHeight;
-    panelContentHeight = total;
-    // 从别的页切回来时，面板可能还停在展开态；新页内容装得下就自动收回，
-    // 不用用户再点一次箭头。
-    boolean collapsed = panelExpanded && total <= 332;
+    int heightDp = Math.max(1, Math.round(body / getResources().getDisplayMetrics().density));
+    boolean changed = heightDp != panelBodyHeight;
+    panelBodyHeight = heightDp;
+    // 收起态就装得下的页，展开态只可能是上一页带过来的（装得下的页没有把手可点，
+    // 用户没有别的路径进到这个状态），收回即可；收回之后把手随即禁用。不会再被展开。
+    boolean collapsed = panelExpanded && !panelContentOverflows();
     if (collapsed) panelExpanded = false;
     if (changed || collapsed) updatePanelHeight();
+  }
+
+  /** 正文在收起态下装不下（留 12dp 容差：溢出几像素不值得给一根把手）。 */
+  private boolean panelContentOverflows() {
+    return panelBodyHeight > 0 && panelBodyHeight > panelViewportHeight(false) + 12;
+  }
+
+  /**
+   * 把手值不值得用：屏能展开，且这一页确实还有事可做（能滚，或者正展开着能拖回去）。
+   */
+  private boolean panelHandleUsable() {
+    return !wideEditor()
+        && panelExpandedHeight() > panelCollapsedHeight() + 12
+        && (panelExpanded || panelContentOverflows());
   }
 
   private void updatePanelHeight() {
@@ -766,14 +798,13 @@ public final class MainActivity extends Activity {
     layout.weight = wideEditor() ? 1 : 0;
     panel.requestLayout();
     if (panelHandle != null) {
-      // 只有「内容真的装不下」才给展开箭头；胶片页内容正好等于面板高度，不给多余入口。
-      boolean available =
-          !wideEditor()
-              && (panelContentHeight > 0
-                  ? panelContentHeight > panelHeight(false) + 12
-                  : panelHeight(true) > panelHeight(false) + 12);
-      panelHandle.setEnabled(available && !exporting);
-      panelHandle.setVisibility(available ? View.VISIBLE : View.GONE);
+      // 横屏平板把面板当侧栏，那 26dp 的把手行没有意义，收掉。
+      panelHandle.setVisibility(wideEditor() ? View.GONE : View.VISIBLE);
+      // 竖屏下面板几何永远不动：把手行常驻 26dp，不可用时只把胶囊调暗、禁掉点击，
+      // 既不会把整页内容挪一下，也不会给出一根点了没反应的「亮着」的把手。
+      boolean usable = panelHandleUsable();
+      panelHandle.setAlpha(usable ? 1f : .45f);
+      panelHandle.setEnabled(usable && !exporting);
       panelHandle.setContentDescription(panelExpanded ? "收起调节面板" : "展开调节面板");
     }
   }
@@ -789,15 +820,18 @@ public final class MainActivity extends Activity {
     FrameLayout.LayoutParams gripLayout =
         new FrameLayout.LayoutParams(dp(30), dp(3), Gravity.CENTER);
     panelHandle.addView(grip, gripLayout);
-    add(panel, panelHandle, -1, 26);
+    add(panel, panelHandle, -1, HANDLE_ROW_DP);
     panelHandle.setOnClickListener(
         v -> {
+          if (!panelHandleUsable()) return;
           panelExpanded = !panelExpanded;
           updatePanelHeight();
         });
     panelHandle.setOnTouchListener(
         (v, event) -> {
-          if (!v.isEnabled()) return false;
+          // 这一页没内容可滚、也不是展开态时，拖拽没有意义（只会拉出一块空白）。
+          // 导出结束后 controls 会把所有控件整体 setEnabled(true)，所以这里再判一次。
+          if (!v.isEnabled() || !panelHandleUsable()) return false;
           if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
             panelDragY = event.getRawY();
             panelDragHeight = panel.getHeight();
@@ -1294,6 +1328,9 @@ public final class MainActivity extends Activity {
                   .show());
       add(editor, reset, -1, 39);
     }
+    // 内容一建好就同步量一次。面板高度只跟屏幕有关，不差这一帧；但把手显隐和展开态要在
+    // 这一帧就定下来，否则从展开态切到装得下的页会先闪一帧空白再收回。
+    fitPanelToContent();
   }
 
   private void panelNote(String title, String detail) {
@@ -1381,8 +1418,6 @@ public final class MainActivity extends Activity {
     } else if (gradeSection.equals("曲线")) {
       String[] ids = {"rgb", "luma", "r", "g", "b"},
           names = {"RGB 总曲线", "亮度曲线", "红通道", "绿通道", "蓝通道"};
-      // 这一页的内容刚好填满 320，展开只会多出一块空白；从基础页带着展开态切过来时先收回去。
-      panelExpanded = false;
       // 通道按钮和「重置」并成一行。重置原来单占 36dp 一整行，为一个低频按钮付一整行代价，
       // 曲线底下因此空出一截；挪到行尾做小字按钮，通道名也能占到更宽的宽度。
       LinearLayout channelRow = horizontal();
