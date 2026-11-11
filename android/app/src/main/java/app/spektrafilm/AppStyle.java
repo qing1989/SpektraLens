@@ -15,11 +15,13 @@ import java.util.ArrayList;
 
 /** Shared C-direction surfaces and controls, drawn natively without blurring photographs. */
 final class AppStyle {
-  static final int BG = 0xff000000,
-      SURFACE = 0xff222225,
-      CONTROL = 0xff2d2d32,
-      SELECTED = 0xff3b3b41,
-      FIELD = 0xff1b1b1e,
+  // 明度阶梯（2026-11-11 重排）：背景不再用纯黑，否则所有卡片都像贴在虚空里、没有容器感。
+  // 0b → 17 → 1e → 30 → 3d 五级，每一跳 4~7%，深色下刚好能读出「面」而不抢照片。
+  static final int BG = 0xff0b0b0d,
+      SURFACE = 0xff1e1e21,
+      CONTROL = 0xff303036,
+      SELECTED = 0xff3d3d43,
+      FIELD = 0xff17171a,
       OUTLINE = 0xff39393f,
       INK = 0xfff4f4f6,
       MUTED = 0xffa1a1aa,
@@ -49,6 +51,10 @@ final class AppStyle {
   //      会让环的内弧比图形更圆，四角挤出一道楔形空隙，看着就是「两个圆角不一样」。
   static final float R_SMALL = 10, R_MEDIUM = 16, R_LARGE = 26;
 
+  // 受光边：深色面上用半透明白做描边，比实色灰线更像「一条被光照到的边」，也不会在低亮度
+  // 屏上糊成和底色一样的灰。实色 OUTLINE 只留给分隔线、曲线网格这类真该是线的元素。
+  static final int HAIRLINE = 0x2bffffff;
+
   // 触控基准：主操作 48、常规 44。低于 44 的只留给纯展示元素。
   static final int TOUCH_PRIMARY = 48, TOUCH_MIN = 44;
 
@@ -62,11 +68,36 @@ final class AppStyle {
     return Math.round(value * context.getResources().getDisplayMetrics().density);
   }
 
+  /** 朝白推一点，用于材质受光（顶部比底色亮一档）。 */
+  static int lift(int color, float amount) {
+    return Color.argb(
+        Color.alpha(color),
+        Math.round(Color.red(color) + (255 - Color.red(color)) * amount),
+        Math.round(Color.green(color) + (255 - Color.green(color)) * amount),
+        Math.round(Color.blue(color) + (255 - Color.blue(color)) * amount));
+  }
+
+  /** 朝黑压一点，用于材质背光（底部比底色暗一档）。 */
+  static int sink(int color, float amount) {
+    return Color.argb(
+        Color.alpha(color),
+        Math.round(Color.red(color) * (1 - amount)),
+        Math.round(Color.green(color) * (1 - amount)),
+        Math.round(Color.blue(color) * (1 - amount)));
+  }
+
   static GradientDrawable shape(Context context, int color, float radius, boolean outline) {
     GradientDrawable drawable = new GradientDrawable();
-    drawable.setColor(color);
+    // 深色面显平是因为平涂：给它一个纵向的受光梯度（顶亮 5% → 底暗 9%），同样的颜色，
+    // 立刻有「材料朝上受光」的厚度。半透明填充不做渐变，否则会把透出来的东西糊成灰雾。
+    if (Color.alpha(color) == 0xff) {
+      drawable.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
+      drawable.setColors(new int[] {lift(color, .05f), sink(color, .09f)});
+    } else {
+      drawable.setColor(color);
+    }
     drawable.setCornerRadius(dp(context, radius));
-    if (outline) drawable.setStroke(Math.max(1, dp(context, .5f)), OUTLINE);
+    if (outline) drawable.setStroke(Math.max(1, dp(context, .5f)), HAIRLINE);
     return drawable;
   }
 
