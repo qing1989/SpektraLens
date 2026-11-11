@@ -1,0 +1,25 @@
+{
+  "name": "SpektraLens icon v4",
+  "scheme": "C · film sprocket + spectral beam + luminous black",
+  "date": "2026-11-11",
+  "master": "icon-master-1024.png",
+  "masterPixels": [
+    1024,
+    1024
+  ],
+  "artworkScaleInSquare": 0.78,
+  "adaptiveLayerPx": 1536,
+  "adaptiveLayerDp": 108,
+  "visibleMaskDp": 72,
+  "masterMappedToVisiblePx": 1024,
+  "bleedPxPerSide": 256,
+  "background": "#000000",
+  "doNotApplyLegacy60dpSafeZone": true,
+  "densities": [
+    "mdpi",
+    "hdpi",
+    "xhdpi",
+    "xxhdpi",
+    "xxxhdpi"
+  ]
+}
