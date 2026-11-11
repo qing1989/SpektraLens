@@ -192,7 +192,16 @@ final class UpdateController {
           Intent callback = new Intent(activity, UpdateInstallActivity.class);
           int flags = PendingIntent.FLAG_UPDATE_CURRENT;
           if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
-          PendingIntent result = PendingIntent.getActivity(activity, id, callback, flags);
+          android.os.Bundle callbackOptions = null;
+          if (Build.VERSION.SDK_INT >= 35) {
+            // Android 15 requires the creator to opt in before the installer can open this
+            // private status Activity and present STATUS_PENDING_USER_ACTION.
+            ActivityOptions options = ActivityOptions.makeBasic();
+            options.setPendingIntentCreatorBackgroundActivityStartMode(
+                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+            callbackOptions = options.toBundle();
+          }
+          PendingIntent result = PendingIntent.getActivity(activity, id, callback, flags, callbackOptions);
           if (cancelled.get()) throw new InterruptedIOException();
           session.commit(result.getIntentSender());
         }
