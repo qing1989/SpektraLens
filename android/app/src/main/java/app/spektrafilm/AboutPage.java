@@ -104,7 +104,9 @@ final class AboutPage extends LinearLayout {
     identity.setPadding(dp(12), dp(24), dp(12), dp(12));
 
     ImageView icon = new ImageView(activity);
-    icon.setImageResource(R.mipmap.ic_spektra_film_s);
+    // 自适应图标当普通图片绘制时不会套遮罩，会露出整块 108 dp 出血并让图形缩到 72/108。
+    // 这里改用带圆角、已裁掉出血的 logo 资源，观感与桌面图标一致。
+    icon.setImageResource(R.drawable.ic_spektra_film_s_logo);
     icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
     icon.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     identity.addView(icon, new LayoutParams(dp(88), dp(88)));
