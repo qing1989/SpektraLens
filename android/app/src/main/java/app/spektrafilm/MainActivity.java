@@ -31,6 +31,7 @@ public final class MainActivity extends Activity {
   static final int FADE_ROW_DP = 24;
   /** 面板的最大高度（dp）。预览区按这个值预留，所以它也决定照片能有多大。 */
   static final int PANEL_MAX_DP = 320;
+  private UpdateController updates;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService importWorker = Executors.newFixedThreadPool(2);
   private PhotoImportJob activeImport;
@@ -125,6 +126,7 @@ public final class MainActivity extends Activity {
   public void onCreate(Bundle state) {
     super.onCreate(state);
     Haptics.install(getWindow());
+    updates = new UpdateController(this);
     prefs = getSharedPreferences("darkroom", MODE_PRIVATE);
     try {
       settings = new JSONObject(prefs.getString("settings", "{}"));
@@ -3438,10 +3440,16 @@ public final class MainActivity extends Activity {
         });
   }
 
+  private String getPackageVersion() {
+    try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; }
+    catch (Exception e) { return ""; }
+  }
+
   private void about() {
     String message =
         getString(R.string.app_name)
-            + " · Android 0.3.6\n\n"
+            + " · Android " + getPackageVersion() + "\n\n"
+            + "网络仅用于检查版本和下载更新，不上传照片。\n\n"
             + "本机运行 C++ / Vulkan 光谱胶片模型，使用 380–780 nm、5 nm 间隔的 81 波长数据。\n\n"
             + "原始模型与彩色配置：Andrea Volpato / spektrafilm\n"
             + "原生引擎：Hanze Qiu 与 SpektraLab 贡献者\n"
@@ -3455,9 +3463,26 @@ public final class MainActivity extends Activity {
             + "扫描调色：白平衡偏移、色调、HSL、分区色彩平衡、五组曲线与暗角。片边和日期为扫描后的呈现层，不是桌面版负片曝光模型。\n\n"
             + "极大图仍受设备内存和 Vulkan 限制；未移植场景纬度映射、批量工作流和专业输出色域。\n\n"
             + "这里的光晕与颗粒来自胶片计算；手机屏幕表现和性能仍取决于设备。";
+    LinearLayout content = new LinearLayout(this);
+    content.setOrientation(LinearLayout.VERTICAL);
+    int padding = Math.round(24 * getResources().getDisplayMetrics().density);
+    content.setPadding(padding, padding / 2, padding, padding / 2);
+    Button checkUpdate = new Button(this);
+    checkUpdate.setText("检查更新");
+    checkUpdate.setTextSize(AppStyle.TYPE_BODY);
+    AppStyle.action(checkUpdate, INK, AppStyle.CONTROL, AppStyle.R_MEDIUM);
+    checkUpdate.setOnClickListener(v -> updates.check());
+    content.addView(checkUpdate);
+    TextView description = new TextView(this);
+    description.setText(message);
+    description.setTextSize(AppStyle.TYPE_BODY);
+    description.setTextColor(INK);
+    content.addView(description);
+    ScrollView scroll = new ScrollView(this);
+    scroll.addView(content);
     new Haptics.DialogBuilder(this)
         .setTitle("关于 " + getString(R.string.app_name))
-        .setMessage(message)
+        .setView(scroll)
         .setPositiveButton("完成", null)
         .setNeutralButton("许可全文", (d, n) -> licenses())
         .setNegativeButton("处理诊断", (d, n) -> showDiagnostics())
@@ -3496,6 +3521,7 @@ public final class MainActivity extends Activity {
   @Override
   protected void onResume() {
     super.onResume();
+    if (updates != null) updates.resume();
     if (flowingBackground != null) flowingBackground.setHostResumed(true);
     if (gallerySheet != null && gallerySheet.isShowing()) gallerySheet.refresh();
   }
@@ -3514,6 +3540,7 @@ public final class MainActivity extends Activity {
       getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
       backCallback = null;
     }
+    if (updates != null) updates.close();
     destroyed = true;
     if (homeImages != null) homeImages.close();
     if (activeImport != null) {

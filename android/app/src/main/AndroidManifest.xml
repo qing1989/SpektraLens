@@ -1,13 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-feature android:name="android.hardware.vulkan.compute" android:required="true" android:version="0" />
-    <application android:theme="@style/AppTheme" android:label="@string/app_name" android:icon="@mipmap/ic_spektra_film_s" android:roundIcon="@mipmap/ic_spektra_film_s_round" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:supportsRtl="true" android:largeHeap="true" android:extractNativeLibs="true" android:enableOnBackInvokedCallback="true">
+    <application android:usesCleartextTraffic="false" android:theme="@style/AppTheme" android:label="@string/app_name" android:icon="@mipmap/ic_spektra_film_s" android:roundIcon="@mipmap/ic_spektra_film_s_round" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:supportsRtl="true" android:largeHeap="true" android:extractNativeLibs="true" android:enableOnBackInvokedCallback="true">
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask" android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             <intent-filter><action android:name="android.intent.action.SEND"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="image/*"/></intent-filter>
         </activity>
+        <activity android:name=".UpdateInstallActivity" android:exported="false" />
         <service android:name=".RendererService" android:process=":renderer_gpu" android:exported="false" android:stopWithTask="true" />
         <service android:name=".CompatibilityRendererService" android:process=":renderer_cpu" android:exported="false" android:stopWithTask="true" />
         <provider android:name=".ShareProvider" android:authorities="app.spektrafilm.files" android:exported="false" android:grantUriPermissions="true" />

@@ -116,14 +116,15 @@ flowchart LR
 | RAW | LibRaw 0.22.2（固定源码随仓库） |
 | CPU 回退 | SwiftShader（双 ABI 预编译 + 完整源码 ZIP） |
 | 构建 | Gradle 8.11.1 / AGP 8.9.2 / NDK 27.2.12479018 / CMake 3.22.1 |
-| 体积 | APK 约 32 MB |
+| 体积 | APK 约 21 MB |
 
 ## 下载安装
 
-从 [Releases](https://github.com/qing1989/SpektraLens/releases/latest) 下载最新 `app-debug.apk`（约 32 MB）：
+从 [Releases](https://github.com/qing1989/SpektraLens/releases/latest) 下载最新 `SpektraLens-v{version}.apk`（约 21 MB）：
 
 - 要求 Android 10+、arm64 设备；允许「安装未知来源应用」后直接安装
-- 安装包为 **debug 签名**，供体验与测试；与自行构建的正式签名包不互通，切换需先卸载
+- 覆盖更新必须使用与现有安装包相同的签名密钥，无需清除数据；不同签名无法覆盖安装。历史 debug 签名渠道也需沿用原密钥。
+- 应用仅在检查更新时联网（包括后续下载更新包），不上传照片；可在「关于 → 检查更新」手动更新。发版步骤见[应用内更新与发版](docs/应用内更新与发版.md)。
 - 每个版本的 SHA-256 与变更说明见对应 Release 页面
 
 ## 从源码构建

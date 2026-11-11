@@ -1,5 +1,12 @@
 # 更新记录
 
+## 未发布 / 下一版本
+
+- 「关于」新增手动检查更新：仅通过 HTTPS 获取固定 GitHub Release 清单，以 versionCode 判断新版本，显示版本与更新说明。网络只用于检查和下载更新，不上传照片。
+- APK 下载显示进度、支持取消与镜像回退，大小受限，SHA-256 校验失败删除并拒绝安装。通过系统未知来源授权与 PackageInstaller.Session 请求用户确认安装；检查或下载失败可打开发布页。
+- 打包生成固定名 latest.json，补充同签名覆盖安装、清单与 APK 同时发布的交接文档及纯 Java 更新策略测试。
+- 此功能随下一版本发行；本分支仍为 0.3.9 / versionCode 18，不是已发布版本的热更新。
+
 ## v0.3.9
 
 版本号对应 `android/app/build.gradle` 中的 `versionName`。

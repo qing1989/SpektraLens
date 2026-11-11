@@ -41,3 +41,20 @@ dependencies {
     // reports "unknown enum constant Scope.LIBRARY" four times.
     compileOnly 'androidx.annotation:annotation:1.8.1'
 }
+
+// Pure Java update-policy tests can also run without AGP/SDK via scripts/test_updates.py.
+def updateTestClasses = layout.buildDirectory.dir('update-policy-tests')
+tasks.register('compileUpdatePolicyTests', JavaCompile) {
+    source 'src/main/java/app/spektrafilm/UpdateManifest.java', 'src/test/java/app/spektrafilm/UpdateManifestTest.java'
+    classpath = files()
+    destinationDirectory = updateTestClasses
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+    options.encoding = 'UTF-8'
+}
+tasks.register('testUpdatePolicy', JavaExec) {
+    dependsOn 'compileUpdatePolicyTests'
+    classpath = files(updateTestClasses)
+    mainClass = 'app.spektrafilm.UpdateManifestTest'
+}
+tasks.named('check').configure { dependsOn 'testUpdatePolicy' }
