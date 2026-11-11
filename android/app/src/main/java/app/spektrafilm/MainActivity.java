@@ -72,6 +72,17 @@ public final class MainActivity extends Activity {
   private volatile int revision;
   private long engine; // readiness marker; native engine pointers remain in the renderer process.
   private volatile SpectralRenderer renderer;
+  // 胶片缩略图：key = 胶片 id。切胶片不失效（key 就是胶片），其余显影参数一变就整体作废。
+  private final Map<String, Bitmap> filmThumbs = new HashMap<>();
+  private final Set<String> thumbQueued = new HashSet<>();
+  private String thumbPrint = "";
+  // 面板每次重建都会换掉 ImageView，所以渲染完成时不能只认建时的那个引用。
+  private final Map<String, ImageView> thumbTargets = new HashMap<>();
+  // 面板重建后引擎可能还没就绪，缩略图请求会被跳过；就绪/渲染完成后要能再补一次。
+  private HorizontalScrollView filmScrollRef;
+  private List<ImageView> thumbViewsRef = new ArrayList<>();
+  private List<String> thumbStocksRef = new ArrayList<>();
+  private int thumbStridePx, thumbSizePx;
   private int engineBootGeneration;
   private long engineBootStarted;
   private boolean engineBootPending;
@@ -209,6 +220,7 @@ public final class MainActivity extends Activity {
                     return;
                   }
                   ready = true;
+                  refillThumbs();
                   homeImages.setRenderer(next);
                   engineBootPending = false;
                   prefs.edit().remove("last_engine_error").apply();
@@ -1031,23 +1043,29 @@ public final class MainActivity extends Activity {
       }
       add(editor, filters, -1, 40);
       gap(editor, 8);
-      // 一屏正好放四张：卡片吃掉全部可用宽度，卡片间隔收到 4dp、内部只留 2dp，
-      // 图标就能长到卡宽的 80%（100×80 画布），比原来 45dp 的小图大三分之一。
-      int screenDp = getResources().getConfiguration().screenWidthDp;
-      if (wideEditor()) screenDp = Math.round(screenDp / 2.1f);
-      final int cardGap = 6;
-      final int stride = Math.max(64, (screenDp - 52) / 4);
-      final int cardWidth = stride - cardGap;
-      final int iconHeight = Math.round(cardWidth * .80f);
-      // 两行名称需要 38dp：11sp × 2 行再加字体自带的上下留白，33dp 会把第二行顶出去。
-      final int labelHeight = 38;
-      final int cardHeight = iconHeight + labelHeight + 3 + 3 + 6;
+      // 画廊式胶片选择：方形缩略图就是「当前这张照片用这卷胶片显影后的样子」，标签在下方，
+      // 选中用 2dp 白色描边。缩略图必须每张独立 open —— 只换 film_stock 不会换显影结果
+      // （实测差异仅 1.5/255）；实测 open 67ms、render 648ms，所以只渲染进入可视区的几张。
+      final int thumbSize = 88, thumbGap = 10, labelHeight = 22;
+      final int stride = thumbSize + thumbGap;
+      final int cardHeight = thumbSize + 7 + labelHeight + 4;
+      String print = thumbFingerprint();
+      if (!print.equals(thumbPrint)) {
+        for (Bitmap stale : filmThumbs.values()) Bitmaps.release(stale);
+        filmThumbs.clear();
+        thumbPrint = print;
+      }
 
       HorizontalScrollView filmScroll = new HorizontalScrollView(this);
       filmScroll.setHorizontalScrollBarEnabled(false);
       filmScroll.setClipToPadding(false);
       filmCards = horizontal();
+      filmCards.setPadding(0, 0, dp(12), 0);
       filmScroll.addView(filmCards);
+
+      thumbTargets.clear();
+      final List<ImageView> thumbViews = new ArrayList<>();
+      final List<String> thumbStocks = new ArrayList<>();
       int selectedPosition = 0;
       int position = 0;
       for (Stock stock : films) {
@@ -1055,44 +1073,33 @@ public final class MainActivity extends Activity {
         if (!filmCategory.equals("全部") && !filmCategory.equals(category)) continue;
         boolean selected = stock.id.equals(settings.optString("film_stock"));
         if (selected) selectedPosition = position;
+
         LinearLayout card = vertical();
-        card.setPadding(dp(1), dp(3), dp(1), dp(3));
         card.setSelected(selected);
         card.setFocusable(true);
-        FilmBadge badge = new FilmBadge(this, stock.id, stock.name, false);
-        // 选中态画在图标外圈。整卡描边会把两行名称一起圈进来，卡片又窄，描出来是个细长的
-        // 怪形状，而且名称换行就顶到框上；只圈图标既像「挑了这一卷」，也不会被文字撑变形。
-        FrameLayout iconBox = new FrameLayout(this);
-        // 图标与环之间留 2dp 空隙，但描边是向内画的，所以内边距要写成「空隙 + 描边」：
-        // 环占外侧 stroke，剩下的才是露出来的空隙。只按空隙设内边距，环会贴到图标上。
-        final float gapDp = 2, strokeDp = 1.6f;
-        int pad = dp(gapDp + strokeDp);
-        iconBox.setPadding(pad, pad, pad, pad);
-        iconBox.addView(badge, new FrameLayout.LayoutParams(-1, -1));
-        // 外径同理要补两项：环的内弧 = 外径 − 描边，要让内弧正好落在「图标边缘 + 空隙」上，
-        // 外径就是 图标半径 + 空隙 + 描边。少补描边（上一版就是），内弧会比图标更圆，
-        // 四角挤出一道楔形空隙，看着就是两个圆角不一样。
-        float iconScale =
-            Math.min(
-                (cardWidth - 2 - 2 * pad / (float) dp(1)) / (float) FilmCanisterArtwork.WIDTH,
-                (iconHeight - 2 * pad / (float) dp(1)) / (float) FilmCanisterArtwork.HEIGHT);
-        GradientDrawable ring =
-            box(
-                Color.TRANSPARENT,
-                FilmCanisterArtwork.RADIUS * iconScale + gapDp + strokeDp);
-        if (selected) ring.setStroke(Math.max(1, dp(strokeDp)), ACCENT);
-        iconBox.setBackground(ring);
-        add(card, iconBox, -1, iconHeight);
+
+        FrameLayout frame = new FrameLayout(this);
+        GradientDrawable ring = box(Color.TRANSPARENT, AppStyle.R_MEDIUM);
+        if (selected) ring.setStroke(dp(2), 0xffffffff);
+        frame.setBackground(ring);
+        frame.setPadding(dp(2), dp(2), dp(2), dp(2));
+        ImageView thumb = new ImageView(this);
+        thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        thumb.setBackground(box(AppStyle.CONTROL, AppStyle.R_MEDIUM - 4));
+        thumb.setClipToOutline(true);
+        frame.addView(thumb, new FrameLayout.LayoutParams(-1, -1));
+        add(card, frame, thumbSize, thumbSize);
+
+        // 标签保持原来的样子：选中用强调色、未选中用正文色，不加底。
         TextView name = text(shortName(stock.name), AppStyle.TYPE_MICRO, selected ? ACCENT : INK);
-        name.setMaxLines(2);
-        name.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        name.setSingleLine(true);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        name.setLineSpacing(dp(1), 1f);
-        // 图标与文字之间留一口气，贴着图标会显得拥挤。
+        name.setGravity(Gravity.CENTER);
+        name.setPadding(dp(6), 0, dp(6), 0);
         LinearLayout.LayoutParams nameLayout = new LinearLayout.LayoutParams(-1, dp(labelHeight));
-        nameLayout.topMargin = dp(6);
+        nameLayout.topMargin = dp(7);
         card.addView(name, nameLayout);
-        card.setTooltipText(stock.name);
+
         card.setContentDescription("胶片 " + stock.name + (selected ? "，已选" : ""));
         card.setOnClickListener(
             v -> {
@@ -1101,12 +1108,15 @@ public final class MainActivity extends Activity {
               buildPanel();
             });
         controls.add(card);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(cardWidth), dp(cardHeight));
-        lp.rightMargin = dp(cardGap);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(thumbSize), dp(cardHeight));
+        lp.rightMargin = dp(thumbGap);
         filmCards.addView(card, lp);
+        thumbViews.add(thumb);
+        thumbStocks.add(stock.id);
+        thumbTargets.put(stock.id, thumb);
         position++;
       }
-      add(editor, filmScroll, -1, cardHeight + 2);
+      add(editor, filmScroll, -1, cardHeight);
       final int offset = selectedPosition * dp(stride);
       filmScroll
           .getViewTreeObserver()
@@ -1116,9 +1126,19 @@ public final class MainActivity extends Activity {
                   if (filmScroll.getWidth() > 0) {
                     filmScroll.scrollTo(Math.max(0, offset - dp(stride)), 0);
                     filmScroll.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                    fillVisibleThumbs(
+                        filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize));
                   }
                 }
               });
+      filmScroll.setOnScrollChangeListener(
+          (v, x, y, ox, oy) ->
+              fillVisibleThumbs(filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize)));
+      filmScrollRef = filmScroll;
+      thumbViewsRef = thumbViews;
+      thumbStocksRef = thumbStocks;
+      thumbStridePx = dp(stride);
+      thumbSizePx = dp(thumbSize);
       gap(editor, 6);
       slider("exposure_compensation_ev", "胶片曝光", -3, 3, .1, " EV");
 
@@ -2056,6 +2076,98 @@ public final class MainActivity extends Activity {
     }
   }
 
+  private void refillThumbs() {
+    if (filmScrollRef == null || thumbViewsRef.isEmpty() || thumbStridePx <= 0) return;
+    fillVisibleThumbs(filmScrollRef, thumbViewsRef, thumbStocksRef, thumbStridePx, thumbSizePx);
+  }
+
+  /** 只给进入可视区（含 60dp 缓冲）的胶片安排缩略图，避免一次渲染 20 张。 */
+  private void fillVisibleThumbs(
+      HorizontalScrollView scroll,
+      List<ImageView> views,
+      List<String> stocks,
+      int stridePx,
+      int sizePx) {
+    int left = scroll.getScrollX() - dp(60);
+    int right = scroll.getScrollX() + scroll.getWidth() + dp(60);
+    for (int i = 0; i < views.size(); i++) {
+      int l = i * stridePx, r = l + sizePx;
+      if (r < left || l > right) continue;
+      requestFilmThumb(stocks.get(i), views.get(i));
+    }
+  }
+
+  private void requestFilmThumb(String stock, ImageView target) {
+    Bitmap cached = filmThumbs.get(stock);
+    if (cached != null && !cached.isRecycled()) {
+      target.setImageBitmap(cached);
+      return;
+    }
+    if (source == null || !ready || exporting || activeImport != null) {
+      android.util.Log.i("FilmThumb", stock + " skipped: source=" + (source != null)
+          + " ready=" + ready + " exporting=" + exporting);
+      return;
+    }
+    target.setTag(stock);
+    if (!thumbQueued.add(stock)) return;
+    final String renderParams, openParams1;
+    try {
+      JSONObject j = new JSONObject(params());
+      j.put("film_stock", stock);
+      // 引擎下限就是 800：再小会被拒（"'preview_long_edge' is outside [800, 8192]"）。
+      j.put("preview_long_edge", 800);
+      renderParams = j.toString();
+      // product_defaults 只属于 open，render 收到它会报 unknown parameter。
+      openParams1 = openParams(renderParams);
+    } catch (JSONException ex) {
+      thumbQueued.remove(stock);
+      return;
+    }
+    final Bitmap input = source;
+    final File file = sourceFile;
+    final boolean raw = sourceRaw;
+    final String edits = editParams();
+    final int ticket = revision;
+    worker.execute(
+        () -> {
+          try {
+            if (destroyed || ticket != revision) return;
+            final Bitmap made;
+            synchronized (MainActivity.this) {
+              // 缩略图会换掉引擎里固化的胶片，主预览下一次必须重新 open。
+              openedSource = null;
+              ensureOpen(input, file, raw, openParams1);
+              made = renderer.render(renderParams, edits, false);
+              filmThumbs.put(stock, made);
+              openedSource = null;
+            }
+            android.util.Log.i(
+                "FilmThumb", stock + " rendered " + made.getWidth() + "x" + made.getHeight());
+            ui(
+                () -> {
+                  ImageView live = thumbTargets.get(stock);
+                  if (live != null && !made.isRecycled()) live.setImageBitmap(made);
+                });
+          } catch (Throwable ex) {
+            // 缩略图只是锦上添花，失败就保持占位色块，不打断编辑。
+            android.util.Log.w("FilmThumb", stock + " failed", ex);
+          } finally {
+            thumbQueued.remove(stock);
+          }
+        });
+  }
+
+  /** 缩略图只跟「胶片以外」的显影参数有关，切胶片时不该重算。 */
+  private String thumbFingerprint() {
+    try {
+      JSONObject j = new JSONObject(settings.toString());
+      j.remove("film_stock");
+      return j.toString();
+    } catch (JSONException ex) {
+      return "";
+    }
+  }
+
   private void scheduleRender() {
     if (activeImport != null) return;
     String now = settings.toString();
@@ -2131,6 +2243,7 @@ public final class MainActivity extends Activity {
                         exportButton.setText("导出照片");
                         exportButton.setEnabled(true);
                         exportButton.setOnClickListener(v -> exportOptions());
+                        refillThumbs();
                       });
                 } catch (Throwable ex) {
                   if (ticket == revision) {
