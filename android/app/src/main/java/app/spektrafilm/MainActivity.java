@@ -32,7 +32,6 @@ public final class MainActivity extends Activity {
   /** 面板的最大高度（dp）。预览区按这个值预留，所以它也决定照片能有多大。 */
   static final int PANEL_MAX_DP = 320;
   private UpdateController updates;
-  private AboutPage aboutPage;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService importWorker = Executors.newFixedThreadPool(2);
   private PhotoImportJob activeImport;
@@ -566,12 +565,6 @@ public final class MainActivity extends Activity {
           if (bottom - top != oldBottom - oldTop) updateEditorLayout();
         });
     photoStage = new FrameLayout(this);
-    // 照片不再是满宽血边贴在背景上：给它一块和面板同层的「卡纸」（SURFACE + 受光边），
-    // 左右 12dp、上下 10dp 的内缩把照片从血边里退出来。于是明度排成
-    // 背景(0b) → 台面/卡纸(1e) → 控件(30) → 选中(3d)，照片成为放在台面上的一张相纸，
-    // 而不是和面板平铺的两块矩形。
-    photoStage.setBackground(AppStyle.shape(this, AppStyle.SURFACE, AppStyle.R_MEDIUM, true));
-    photoStage.setPadding(dp(12), dp(10), dp(12), dp(10));
     previewColumn.addView(photoStage, new LinearLayout.LayoutParams(-1, 0, 1));
     photo = new PhotoView(this);
     photoStage.addView(photo, new FrameLayout.LayoutParams(-1, -1));
@@ -1727,10 +1720,6 @@ public final class MainActivity extends Activity {
   }
 
   private void handleBack() {
-    if (aboutPage != null) {
-      aboutPage.navigateBack();
-      return;
-    }
     if (activeImport != null) {
       cancelImport("已取消导入");
       return;
@@ -3457,24 +3446,47 @@ public final class MainActivity extends Activity {
   }
 
   private void about() {
-    if (aboutPage != null) return;
-    aboutPage = new AboutPage(
-        this, getPackageVersion(), this::closeAbout, () -> updates.check(),
-        this::licenses, this::showDiagnostics);
-    homeScreen.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
-    editorScreen.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
-    flowingBackground.setVisibility(View.GONE);
-    screens.addView(aboutPage, new FrameLayout.LayoutParams(-1, -1));
-  }
-
-  private void closeAbout() {
-    if (aboutPage == null) return;
-    screens.removeView(aboutPage);
-    aboutPage = null;
-    homeScreen.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
-    editorScreen.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
-    flowingBackground.setVisibility(
-        homeScreen.getVisibility() == View.VISIBLE ? View.VISIBLE : View.GONE);
+    String message =
+        getString(R.string.app_name)
+            + " · Android " + getPackageVersion() + "\n\n"
+            + "网络仅用于检查版本和下载更新，不上传照片。\n\n"
+            + "本机运行 C++ / Vulkan 光谱胶片模型，使用 380–780 nm、5 nm 间隔的 81 波长数据。\n\n"
+            + "原始模型与彩色配置：Andrea Volpato / spektrafilm\n"
+            + "原生引擎：Hanze Qiu 与 SpektraLab 贡献者\n"
+            + "移动 GPU 参考：SAINTTaiYi / SpektraLab-Android v1.3.3j\n"
+            + "Android 客户端与 JNI：本项目移植\n\n"
+            + "胶卷图标：SpektraLens 根据各款胶片型号独立绘制。\n\n"
+            + "程序：GPL-3.0-or-later\n"
+            + "胶片、相纸配置：CC BY-SA 4.0，数据未经修改\n\n"
+            + "RAW：LibRaw 0.22.2，原尺寸去马赛克与拍摄白平衡；预览最长边 1024，导出重新读取原文件。输出 sRGB JPEG / 16 位 PNG / 16 位"
+            + " TIFF。\n\n"
+            + "扫描调色：白平衡偏移、色调、HSL、分区色彩平衡、五组曲线与暗角。片边和日期为扫描后的呈现层，不是桌面版负片曝光模型。\n\n"
+            + "极大图仍受设备内存和 Vulkan 限制；未移植场景纬度映射、批量工作流和专业输出色域。\n\n"
+            + "这里的光晕与颗粒来自胶片计算；手机屏幕表现和性能仍取决于设备。";
+    LinearLayout content = new LinearLayout(this);
+    content.setOrientation(LinearLayout.VERTICAL);
+    int padding = Math.round(24 * getResources().getDisplayMetrics().density);
+    content.setPadding(padding, padding / 2, padding, padding / 2);
+    Button checkUpdate = new Button(this);
+    checkUpdate.setText("检查更新");
+    checkUpdate.setTextSize(AppStyle.TYPE_BODY);
+    AppStyle.action(checkUpdate, INK, AppStyle.CONTROL, AppStyle.R_MEDIUM);
+    checkUpdate.setOnClickListener(v -> updates.check());
+    content.addView(checkUpdate);
+    TextView description = new TextView(this);
+    description.setText(message);
+    description.setTextSize(AppStyle.TYPE_BODY);
+    description.setTextColor(INK);
+    content.addView(description);
+    ScrollView scroll = new ScrollView(this);
+    scroll.addView(content);
+    new Haptics.DialogBuilder(this)
+        .setTitle("关于 " + getString(R.string.app_name))
+        .setView(scroll)
+        .setPositiveButton("完成", null)
+        .setNeutralButton("许可全文", (d, n) -> licenses())
+        .setNegativeButton("处理诊断", (d, n) -> showDiagnostics())
+        .show();
   }
 
   private void licenses() {

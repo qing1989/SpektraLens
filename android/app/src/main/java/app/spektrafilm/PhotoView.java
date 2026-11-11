@@ -132,8 +132,7 @@ public final class PhotoView extends View {
   @Override
   protected void onDraw(Canvas c) {
     super.onDraw(c);
-    // 不在这里铺底色：照片按比例居中后留下的信箱区应该透出容器的卡纸色（编辑器是 SURFACE），
-    // 硬填黑会把外面那圈衬底整个盖掉，照片就回到「贴在虚空里的一个矩形」。
+    c.drawColor(Color.BLACK);
     Bitmap image = after != null ? after : before;
     if (image == null) return;
     updateFrame();
