@@ -87,12 +87,12 @@ public final class MainActivity extends Activity {
   private List<ImageView> thumbViewsRef = new ArrayList<>();
   private List<String> thumbStocksRef = new ArrayList<>();
   private int thumbStridePx, thumbSizePx;
-  // 画廊滚动位置：同一张照片 + 同一分类内重建面板（点卡片、切 tab 回来）时沿用上次位置，
-  // 不再把选中卡片强行拉到「第二格」，点击后整排就不会横向滑一下。
-  // 换照片或换分类时 key 变化，仍会重新定位，保证选中项进入视野。
-  private String filmScrollKey = "";
-  private int filmScrollX;
-  private boolean filmScrollPositioned;
+  // 画廊的滚动位置按「分类」各自记忆：切到某分类时回到它上次停留的位置，没动过手就从第一张
+  // 开始。每导入一张新照片清空一次，并从「全部」第一张重新开始。
+  // pendingFilmScrollX 由「点卡片 / 点分类 / 换照片」显式指定，-1 表示本次没有指定。
+  private String filmSessionKey = "";
+  private final Map<String, Integer> categoryScrollX = new HashMap<>();
+  private int pendingFilmScrollX = -1;
   private int engineBootGeneration;
   private long engineBootStarted;
   private boolean engineBootPending;
@@ -938,6 +938,14 @@ public final class MainActivity extends Activity {
     if (panel == null) return;
     // Keep the deferred crop tool's ID reserved without exposing its panel.
     if (selectedTab == 3) selectedTab = 0;
+    // 新照片一律从「全部」的第一张开始；同一张照片再次编辑则沿用上次的分类与位置。
+    String sessionKey = sourceFile == null ? "internal" : sourceFile.getAbsolutePath();
+    if (!sessionKey.equals(filmSessionKey)) {
+      filmSessionKey = sessionKey;
+      categoryScrollX.clear();
+      filmCategory = "全部";
+      pendingFilmScrollX = 0;
+    }
     controls.removeIf(v -> descendant(v, panel) || descendant(v, tabRow));
     panel.removeAllViews();
     filmScrollRef = null;
@@ -1050,6 +1058,8 @@ public final class MainActivity extends Activity {
         chip.setOnClickListener(
             v -> {
               filmCategory = category;
+              // 该分类动过手就回到上次停留的位置，没动过就从第一张开始。
+              pendingFilmScrollX = categoryScrollX.getOrDefault(category, 0);
               buildPanel();
             });
         LinearLayout.LayoutParams chipLayout = new LinearLayout.LayoutParams(0, dp(40), 1);
@@ -1066,13 +1076,6 @@ public final class MainActivity extends Activity {
       final int cardHeight = thumbSize + 7 + labelHeight + 4;
       syncThumbCache();
 
-      // 只有「照片 + 分类」都没变时才复用滚动位置。切分类会让列表整个换掉，
-      // 换照片则是一次新的编辑会话，两者都应重新把选中项带进视野。
-      final String scrollKey =
-          filmCategory + "|" + (sourceFile == null ? filename : sourceFile.getAbsolutePath());
-      final boolean reuseScroll = scrollKey.equals(filmScrollKey) && filmScrollPositioned;
-      filmScrollKey = scrollKey;
-
       HorizontalScrollView filmScroll = new HorizontalScrollView(this);
       filmScroll.setHorizontalScrollBarEnabled(false);
       filmScroll.setClipToPadding(false);
@@ -1083,14 +1086,12 @@ public final class MainActivity extends Activity {
       thumbTargets.clear();
       final List<ImageView> thumbViews = new ArrayList<>();
       final List<String> thumbStocks = new ArrayList<>();
-      int selectedPosition = 0;
       int position = 0;
       for (Stock stock : films) {
         String category = category(stock);
         if (!filmCategory.equals("全部") && !filmCategory.equals(category)) continue;
         boolean selected = stock.id.equals(settings.optString("film_stock"));
-        if (selected) selectedPosition = position;
-
+        final int index = position;
         LinearLayout card = vertical();
         card.setSelected(selected);
         card.setFocusable(true);
@@ -1121,7 +1122,35 @@ public final class MainActivity extends Activity {
         card.setContentDescription("胶片 " + stock.name + (selected ? "，已选" : ""));
         card.setOnClickListener(
             v -> {
+              // 点中间那张一律不动；只有点当前视口最左 / 最右那张、且外侧还有胶片时，
+              // 才跟着滑一格，把外面的胶片带进来。
+              int base = filmScroll.getScrollX();
+              int target = base;
+              int total = filmCards.getChildCount();
+              int first = 0, last = total - 1;
+              for (int i = 0; i < total; i++) {
+                if (filmCards.getChildAt(i).getRight() > base + 1) {
+                  first = i;
+                  break;
+                }
+              }
+              int rightEdge = base + filmScroll.getWidth();
+              for (int i = total - 1; i >= 0; i--) {
+                if (filmCards.getChildAt(i).getLeft() < rightEdge - 1) {
+                  last = i;
+                  break;
+                }
+              }
+              int step = dp(stride);
+              if (index == first && index > 0) target = Math.max(0, base - step);
+              else if (index == last && index < total - 1) target = base + step;
+
+              String keepCategory = filmCategory;
               set("film_stock", stock.id);
+              // 选胶片不跟着切分类，否则在「全部」下点一张卡，列表会突然变短。
+              filmCategory = keepCategory;
+              categoryScrollX.put(keepCategory, target);
+              pendingFilmScrollX = target;
               scheduleRender();
               buildPanel();
             });
@@ -1135,15 +1164,18 @@ public final class MainActivity extends Activity {
         position++;
       }
       add(editor, filmScroll, -1, cardHeight);
-      final int offset = selectedPosition * dp(stride);
+      final int targetScroll =
+          pendingFilmScrollX >= 0
+              ? pendingFilmScrollX
+              : Math.max(0, categoryScrollX.getOrDefault(filmCategory, 0));
+      pendingFilmScrollX = -1;
       filmScroll
           .getViewTreeObserver()
           .addOnGlobalLayoutListener(
               new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
                 public void onGlobalLayout() {
                   if (filmScroll.getWidth() > 0) {
-                    filmScroll.scrollTo(
-                        reuseScroll ? filmScrollX : Math.max(0, offset - dp(stride)), 0);
+                    filmScroll.scrollTo(targetScroll, 0);
                     filmScroll.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                     fillVisibleThumbs(
                         filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize));
@@ -1151,11 +1183,8 @@ public final class MainActivity extends Activity {
                 }
               });
       filmScroll.setOnScrollChangeListener(
-          (v, x, y, ox, oy) -> {
-            filmScrollX = x;
-            filmScrollPositioned = true;
-            fillVisibleThumbs(filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize));
-          });
+          (v, x, y, ox, oy) ->
+              fillVisibleThumbs(filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize)));
       filmScrollRef = filmScroll;
       thumbViewsRef = thumbViews;
       thumbStocksRef = thumbStocks;

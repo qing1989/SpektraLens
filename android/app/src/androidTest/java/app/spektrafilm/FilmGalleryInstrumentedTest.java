@@ -427,6 +427,96 @@ public final class FilmGalleryInstrumentedTest
     assertEquals("Tapping a card must not shift the row", before, after);
   }
 
+  /** 新照片一律从「全部」的第一张开始，而不是跳到选中胶片所属的分类。 */
+  public void testNewPhotoStartsAtTheFirstCardOfAllFilms() throws Exception {
+    importPhoto(false);
+    idleGallery();
+    assertEquals("全部", read(() -> (String) field("filmCategory")));
+    int scroll = read(() -> galleryScrollX());
+    assertEquals("First card, no scroll", 0, scroll);
+  }
+
+  /** 点中间那张不动；点右边缘那张、且右边还有胶片时，才滑一格。 */
+  public void testOnlyTheEdgeCardScrollsTheGallery() throws Exception {
+    importPhoto(false);
+    idleGallery();
+    int start = read(() -> galleryScrollX());
+    main(
+        () -> {
+          try {
+            LinearLayout cards = (LinearLayout) field("filmCards");
+            cards.getChildAt(1).performClick();
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        });
+    await("Interior tap keeps the row still", () -> galleryScrollX() == start);
+
+    main(
+        () -> {
+          try {
+            HorizontalScrollView scroll = (HorizontalScrollView) field("filmScrollRef");
+            scroll.scrollTo(0, 0);
+            LinearLayout cards = (LinearLayout) field("filmCards");
+            View edge = null;
+            for (int i = 0; i < cards.getChildCount(); i++) {
+              View c = cards.getChildAt(i);
+              if (c.getLeft() < scroll.getWidth() && c.getRight() > scroll.getWidth() - 1) {
+                edge = c;
+                break;
+              }
+            }
+            assertNotNull("A card cut by the right edge exists", edge);
+            edge.performClick();
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        });
+    await("Right-edge tap advances exactly one card", () -> galleryScrollX() > start);
+  }
+
+  /** 每个分类各自记住停留位置：切走再切回回到原处，没动过的分类从第一张开始。 */
+  public void testEachCategoryRemembersItsOwnPosition() throws Exception {
+    importPhoto(false);
+    idleGallery();
+    int stride = read(() -> (Integer) field("thumbStridePx"));
+    main(
+        () -> {
+          try {
+            ((HorizontalScrollView) field("filmScrollRef")).scrollTo(stride * 2, 0);
+            ((LinearLayout) field("filmCards")).getChildAt(3).performClick();
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        });
+    await("Tapping a card records the position in its category", () -> galleryScrollX() == stride * 2);
+
+    main(
+        () -> {
+          try {
+            field("filmCategory", "反转片");
+            field("pendingFilmScrollX", Integer.valueOf(0));
+            call("buildPanel", new Class<?>[] {});
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        });
+    await("A category never touched starts at its first card", () -> galleryScrollX() == 0);
+
+    main(
+        () -> {
+          try {
+            Map<String, Integer> memo = (Map<String, Integer>) field("categoryScrollX");
+            field("filmCategory", "全部");
+            field("pendingFilmScrollX", memo.getOrDefault("全部", 0));
+            call("buildPanel", new Class<?>[] {});
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        });
+    await("Returning restores the remembered position", () -> galleryScrollX() == stride * 2);
+  }
+
   private int galleryScrollX() throws Exception {
     HorizontalScrollView scroll = (HorizontalScrollView) field("filmScrollRef");
     return scroll == null ? -1 : scroll.getScrollX();
