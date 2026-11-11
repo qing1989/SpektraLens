@@ -163,8 +163,13 @@ final class UpdateController {
     pending().edit().clear().apply();
     if (!name.matches("[0-9a-f-]{36}\\.apk")) return;
     updateFile = new File(activity.getCacheDir(), "updates/" + name);
-    if (activity.getPackageManager().canRequestPackageInstalls()) install(hash);
-    else message("尚未允许安装", "更新包已保留。可重新检查更新，或从发布页下载安装。");
+    if (activity.getPackageManager().canRequestPackageInstalls()) { install(hash); return; }
+    // Retry reuses the verified package instead of asking for another 22 MB download;
+    // declining removes it so no unreferenced APK is left behind in the cache.
+    new Haptics.DialogBuilder(activity).setTitle("尚未允许安装")
+        .setMessage("需要允许 SpektraLens 安装应用，才能继续安装已下载的更新。")
+        .setNegativeButton("稍后", (d, n) -> apk().delete())
+        .setPositiveButton("重试", (d, n) -> requestInstall(hash)).show();
   }
 
   private void install(String hash) {

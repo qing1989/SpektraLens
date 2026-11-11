@@ -377,4 +377,38 @@ public final class UpdateInstrumentedTest extends ActivityInstrumentationTestCas
           "A verified file still requires unknown-source permission", screenContains("允许安装更新"));
     }
   }
+
+  public void testResumeAfterPermissionReturnReusesPackageAndOffersRetry() throws Exception {
+    assertFalse(
+        "device_tests.py --test-update-install denies this permission",
+        activity.getPackageManager().canRequestPackageInstalls());
+    PackageInstaller installer = activity.getPackageManager().getPackageInstaller();
+    int sessions = installer.getMySessions().size();
+    File file = (File) field("updateFile");
+    file.getParentFile().mkdirs();
+    try (OutputStream out = new FileOutputStream(file)) {
+      out.write("verified".getBytes("UTF-8"));
+    }
+    android.content.SharedPreferences pending =
+        activity.getSharedPreferences("pending_update", 0);
+    // Writing and consuming the pending state in one main-thread step keeps the activity's own
+    // controller from claiming it on resume first.
+    main(
+        () -> {
+          pending.edit().putString("sha256", BAD_HASH).putString("file", file.getName()).commit();
+          controller.resume();
+        });
+    assertTrue("Resume reuses the verified package instead of downloading it again", file.exists());
+    assertNull("Pending state survives exactly one resume", pending.getString("sha256", null));
+    assertEquals(
+        "Resume must not reach PackageInstaller without the permission",
+        sessions,
+        installer.getMySessions().size());
+    long end = SystemClock.elapsedRealtime() + 3000;
+    while (!screenContains("尚未允许安装") && SystemClock.elapsedRealtime() < end) Thread.sleep(50);
+    assertTrue(
+        "Resume explains the still-missing permission and offers a retry",
+        screenContains("尚未允许安装") && screenContains("重试"));
+    file.delete();
+  }
 }
