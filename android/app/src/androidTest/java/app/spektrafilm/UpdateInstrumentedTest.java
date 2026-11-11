@@ -246,6 +246,20 @@ public final class UpdateInstrumentedTest extends ActivityInstrumentationTestCas
     main(controller::check);
     await(() -> !busy());
     assertEquals(Collections.singletonList(UpdateController.MANIFEST), REQUESTS);
+    long end = SystemClock.elapsedRealtime() + 3000;
+    while (!screenContains("已是最新版本") && SystemClock.elapsedRealtime() < end) Thread.sleep(50);
+    assertTrue("An older manifest is reported as up to date", screenContains("已是最新版本"));
+  }
+
+  public void testUnreachableManifestAsksToRetryInsteadOfClaimingUpToDate() throws Exception {
+    main(controller::check);
+    await(() -> !busy());
+    long end = SystemClock.elapsedRealtime() + 3000;
+    while (!screenContains("暂时无法检查更新") && SystemClock.elapsedRealtime() < end) Thread.sleep(50);
+    assertTrue(
+        "A manifest that cannot be fetched must not read as an up-to-date install",
+        screenContains("暂时无法检查更新"));
+    assertFalse("Up-to-date copy is reserved for a real manifest", screenContains("已是最新版本"));
   }
 
   public void testCancelUnwindsWorkerAndAllowsAnotherCheck() throws Exception {

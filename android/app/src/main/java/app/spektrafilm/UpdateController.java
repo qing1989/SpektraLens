@@ -60,7 +60,12 @@ final class UpdateController {
               .setMessage(manifest.releaseNotes.isEmpty() ? "此版本未提供更新说明。" : manifest.releaseNotes)
               .setNegativeButton("稍后", null).setPositiveButton("下载", (d, n) -> download(manifest)).show();
         });
-      } catch (Exception e) { fail("暂时无法检查更新，请稍后重试。", e); }
+      } catch (Exception e) {
+        fail(
+            "暂时无法检查更新",
+            "未能获取版本信息。可能是网络不可用，或发布页尚未提供更新清单；可稍后重试，或打开发布页查看。",
+            e);
+      }
     });
   }
 
@@ -100,7 +105,7 @@ final class UpdateController {
         if (!verified) throw new IOException("all download sources failed", last);
         if (cancelled.get()) throw new InterruptedIOException();
         post(() -> { finishProgress(); requestInstall(manifest.sha256); });
-      } catch (Exception e) { file.delete(); fail("下载或校验失败，更新包已删除。请稍后重试。", e); }
+      } catch (Exception e) { file.delete(); fail("更新未完成", "下载或校验失败，更新包已删除。请稍后重试。", e); }
     });
   }
 
@@ -151,7 +156,7 @@ final class UpdateController {
             pending().edit().putString("sha256", hash).putString("file", apk().getName()).apply();
             try { activity.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                 Uri.parse("package:" + activity.getPackageName()))); }
-            catch (Exception e) { pending().edit().clear().apply(); fail("无法打开安装授权设置。", e); }
+            catch (Exception e) { pending().edit().clear().apply(); fail("更新未完成", "无法打开安装授权设置。", e); }
           }).show();
     } else install(hash);
   }
@@ -213,7 +218,7 @@ final class UpdateController {
         apk().delete(); post(() -> busy = false);
       } catch (Exception e) {
         if (id >= 0) { try { installer.abandonSession(id); } catch (Exception ignored) { } }
-        apk().delete(); fail("无法安装更新，请确认安装包与当前应用使用相同签名。", e);
+        apk().delete(); fail("更新未完成", "无法安装更新，请确认安装包与当前应用使用相同签名。", e);
       }
     });
   }
@@ -227,9 +232,9 @@ final class UpdateController {
     catch (Exception e) { Toast.makeText(activity, "未找到可打开网页的应用", Toast.LENGTH_SHORT).show(); }
   }
   private void post(Runnable action) { activity.runOnUiThread(() -> { if (!closed && !activity.isFinishing() && !cancelled.get()) action.run(); }); }
-  private void fail(String text, Exception e) {
-    Log.w("SpektraUpdate", text, e);
-    post(() -> { finishProgress(); message("更新未完成", text); });
+  private void fail(String title, String text, Exception e) {
+    Log.w("SpektraUpdate", title + "：" + text, e);
+    post(() -> { finishProgress(); message(title, text); });
   }
   private void finishProgress() { busy = false; if (progress != null) { progress.dismiss(); progress = null; } }
   private void cancel() {
