@@ -103,6 +103,7 @@ public final class MainActivity extends Activity {
   private final Map<String, SeekBar> sliders = new HashMap<>();
   private final Map<String, TextView> values = new HashMap<>();
   private FrameLayout screens;
+  private AboutPage aboutPage;
   private FlowingBackgroundView flowingBackground;
   private LinearLayout homeScreen, editorScreen, panel, tabRow, filmCards, historyList;
   private ImageView homeHero;
@@ -925,6 +926,7 @@ public final class MainActivity extends Activity {
   }
 
   private void showEditor() {
+    closeAbout();
     flowingBackground.setVisibility(View.GONE);
     homeScreen.setVisibility(View.GONE);
     editorScreen.setVisibility(View.VISIBLE);
@@ -1800,6 +1802,11 @@ public final class MainActivity extends Activity {
   }
 
   private void handleBack() {
+    if (aboutPage != null) {
+      // 免责声明子页先退回概览，再退才关闭整页。
+      aboutPage.navigateBack();
+      return;
+    }
     if (activeImport != null) {
       cancelImport("已取消导入");
       return;
@@ -3689,47 +3696,30 @@ public final class MainActivity extends Activity {
   }
 
   private void about() {
-    String message =
-        getString(R.string.app_name)
-            + " · Android " + getPackageVersion() + "\n\n"
-            + "网络仅用于检查版本和下载更新，不上传照片。\n\n"
-            + "本机运行 C++ / Vulkan 光谱胶片模型，使用 380–780 nm、5 nm 间隔的 81 波长数据。\n\n"
-            + "原始模型与彩色配置：Andrea Volpato / spektrafilm\n"
-            + "原生引擎：Hanze Qiu 与 SpektraLab 贡献者\n"
-            + "移动 GPU 参考：SAINTTaiYi / SpektraLab-Android v1.3.3j\n"
-            + "Android 客户端与 JNI：本项目移植\n\n"
-            + "胶卷图标：SpektraLens 根据各款胶片型号独立绘制。\n\n"
-            + "程序：GPL-3.0-or-later\n"
-            + "胶片、相纸配置：CC BY-SA 4.0，数据未经修改\n\n"
-            + "RAW：LibRaw 0.22.2，原尺寸去马赛克与拍摄白平衡；预览最长边 1024，导出重新读取原文件。输出 sRGB JPEG / 16 位 PNG / 16 位"
-            + " TIFF。\n\n"
-            + "扫描调色：白平衡偏移、色调、HSL、分区色彩平衡、五组曲线与暗角。片边和日期为扫描后的呈现层，不是桌面版负片曝光模型。\n\n"
-            + "极大图仍受设备内存和 Vulkan 限制；未移植场景纬度映射、批量工作流和专业输出色域。\n\n"
-            + "这里的光晕与颗粒来自胶片计算；手机屏幕表现和性能仍取决于设备。";
-    LinearLayout content = new LinearLayout(this);
-    content.setOrientation(LinearLayout.VERTICAL);
-    int padding = Math.round(24 * getResources().getDisplayMetrics().density);
-    content.setPadding(padding, padding / 2, padding, padding / 2);
-    Button checkUpdate = new Button(this);
-    checkUpdate.setText("检查更新");
-    checkUpdate.setTextSize(AppStyle.TYPE_BODY);
-    AppStyle.action(checkUpdate, INK, AppStyle.CONTROL, AppStyle.R_MEDIUM);
-    checkUpdate.setOnClickListener(v -> updates.check());
-    content.addView(checkUpdate);
-    TextView description = new TextView(this);
-    description.setText(message);
-    description.setTextSize(AppStyle.TYPE_BODY);
-    description.setTextColor(INK);
-    content.addView(description);
-    ScrollView scroll = new ScrollView(this);
-    scroll.addView(content);
-    new Haptics.DialogBuilder(this)
-        .setTitle("关于 " + getString(R.string.app_name))
-        .setView(scroll)
-        .setPositiveButton("完成", null)
-        .setNeutralButton("许可全文", (d, n) -> licenses())
-        .setNegativeButton("处理诊断", (d, n) -> showDiagnostics())
-        .show();
+    if (aboutPage != null) return;
+    AboutPage page =
+        new AboutPage(
+            this,
+            getPackageVersion(),
+            this::closeAbout,
+            () -> updates.check(),
+            this::licenses,
+            this::showDiagnostics);
+    aboutPage = page;
+    screens.addView(page, new FrameLayout.LayoutParams(-1, -1));
+    page.setAlpha(0f);
+    page.animate().alpha(1f).setDuration(160).start();
+  }
+
+  private void closeAbout() {
+    if (aboutPage == null) return;
+    AboutPage page = aboutPage;
+    aboutPage = null;
+    page.animate()
+        .alpha(0f)
+        .setDuration(120)
+        .withEndAction(() -> screens.removeView(page))
+        .start();
   }
 
   private void licenses() {
