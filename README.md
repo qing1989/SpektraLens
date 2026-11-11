@@ -2,8 +2,8 @@
 
 **把一间光谱胶片实验室装进口袋。**
 
-[![版本](https://img.shields.io/badge/version-0.3.9-ff7a1a?style=flat-square)](CHANGELOG.md)
-[![下载](https://img.shields.io/badge/download-APK%20v0.3.9-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
+[![版本](https://img.shields.io/badge/version-0.4.0-ff7a1a?style=flat-square)](CHANGELOG.md)
+[![下载](https://img.shields.io/badge/download-APK%20v0.4.0-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
 [![平台](https://img.shields.io/badge/Android-10%2B-3ddc84?style=flat-square&logo=android&logoColor=white)](#兼容性)
 [![渲染](https://img.shields.io/badge/Vulkan-GPU%20%2B%20CPU%20%E5%9B%9E%E9%80%80-4a90d9?style=flat-square)](#工作原理)
 [![离线](https://img.shields.io/badge/100%25-%E6%9C%AC%E5%9C%B0%E6%98%BE%E5%BD%B1-8a8a8a?style=flat-square)](#为什么不是滤镜)
@@ -123,7 +123,8 @@ flowchart LR
 从 [Releases](https://github.com/qing1989/SpektraLens/releases/latest) 下载最新 `SpektraLens-v{version}.apk`（约 21 MB）：
 
 - 要求 Android 10+、arm64 设备；允许「安装未知来源应用」后直接安装
-- 覆盖更新必须使用与现有安装包相同的签名密钥，无需清除数据；不同签名无法覆盖安装。历史 debug 签名渠道也需沿用原密钥。
+- **0.4.0 起改用正式签名。0.3.9 及更早的 debug 签名版本无法覆盖安装，需先卸载旧版；卸载会删除应用内图库、导入副本与编辑记录，请提前导出重要照片并保留原片。**
+- 从 0.4.0 开始，后续正式版本须沿用同一正式签名密钥，可覆盖安装，无需清除数据。
 - 应用仅在检查更新时联网（包括后续下载更新包），不上传照片；可在「关于 → 检查更新」手动更新。发版步骤见[应用内更新与发版](docs/应用内更新与发版.md)。
 - 每个版本的 SHA-256 与变更说明见对应 Release 页面
 
