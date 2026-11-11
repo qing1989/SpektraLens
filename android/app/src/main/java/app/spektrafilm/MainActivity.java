@@ -72,10 +72,14 @@ public final class MainActivity extends Activity {
   private volatile int revision;
   private long engine; // readiness marker; native engine pointers remain in the renderer process.
   private volatile SpectralRenderer renderer;
-  // 胶片缩略图：key = 胶片 id。切胶片不失效（key 就是胶片），其余显影参数一变就整体作废。
+  // 画廊只展示原片的默认胶片风格；二次调节仅影响主预览，不使画廊缓存失效。
   private final Map<String, Bitmap> filmThumbs = new HashMap<>();
   private final Set<String> thumbQueued = new HashSet<>();
   private String thumbPrint = "";
+  private volatile int thumbGeneration;
+  private boolean thumbBusy;
+  private final Set<String> thumbFailed = new HashSet<>();
+  private int previewWorkTicket = -1;
   // 面板每次重建都会换掉 ImageView，所以渲染完成时不能只认建时的那个引用。
   private final Map<String, ImageView> thumbTargets = new HashMap<>();
   // 面板重建后引擎可能还没就绪，缩略图请求会被跳过；就绪/渲染完成后要能再补一次。
@@ -856,7 +860,8 @@ public final class MainActivity extends Activity {
     start.setOnClickListener(v -> importPhoto());
     add(content, start, -1, 54);
     gap(content, 12);
-    TextView privacy = text("RAW / JPEG / PNG / HEIC\n本机处理 · 自动保存调整 · 保留原照片", AppStyle.TYPE_MICRO, MUTED);
+    TextView privacy =
+        text("RAW / JPEG / PNG / HEIC\n本机处理 · 自动保存调整 · 保留原照片", AppStyle.TYPE_MICRO, MUTED);
     privacy.setLineSpacing(dp(4), 1);
     add(content, privacy, -1, 54);
     gap(content, 24);
@@ -929,6 +934,10 @@ public final class MainActivity extends Activity {
     if (selectedTab == 3) selectedTab = 0;
     controls.removeIf(v -> descendant(v, panel) || descendant(v, tabRow));
     panel.removeAllViews();
+    filmScrollRef = null;
+    thumbTargets.clear();
+    thumbViewsRef = new ArrayList<>();
+    thumbStocksRef = new ArrayList<>();
     tabRow.removeAllViews();
     sliders.clear();
     values.clear();
@@ -1049,12 +1058,7 @@ public final class MainActivity extends Activity {
       final int thumbSize = 88, thumbGap = 10, labelHeight = 22;
       final int stride = thumbSize + thumbGap;
       final int cardHeight = thumbSize + 7 + labelHeight + 4;
-      String print = thumbFingerprint();
-      if (!print.equals(thumbPrint)) {
-        for (Bitmap stale : filmThumbs.values()) Bitmaps.release(stale);
-        filmThumbs.clear();
-        thumbPrint = print;
-      }
+      syncThumbCache();
 
       HorizontalScrollView filmScroll = new HorizontalScrollView(this);
       filmScroll.setHorizontalScrollBarEnabled(false);
@@ -1081,11 +1085,12 @@ public final class MainActivity extends Activity {
         FrameLayout frame = new FrameLayout(this);
         GradientDrawable ring = box(Color.TRANSPARENT, AppStyle.R_MEDIUM);
         if (selected) ring.setStroke(dp(2), 0xffffffff);
-        frame.setBackground(ring);
-        frame.setPadding(dp(2), dp(2), dp(2), dp(2));
+        // The image and its inset stroke share the same bounds/radius (no fourth corner size).
+        frame.setForeground(ring);
         ImageView thumb = new ImageView(this);
         thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        thumb.setBackground(box(AppStyle.CONTROL, AppStyle.R_MEDIUM - 4));
+        thumb.setTag(stock.id);
+        thumb.setBackground(box(AppStyle.CONTROL, AppStyle.R_MEDIUM));
         thumb.setClipToOutline(true);
         frame.addView(thumb, new FrameLayout.LayoutParams(-1, -1));
         add(card, frame, thumbSize, thumbSize);
@@ -1313,7 +1318,8 @@ public final class MainActivity extends Activity {
   private void choice(String title, String[] names, String[] ids, String key) {
     String current = settings.optString(key, ids[0]);
     int index = Arrays.asList(ids).indexOf(current);
-    TextView pick = button(title + "   " + names[Math.max(0, index)] + "", ACCENT, AppStyle.CONTROL);
+    TextView pick =
+        button(title + "   " + names[Math.max(0, index)] + "", ACCENT, AppStyle.CONTROL);
     pick.setTextSize(AppStyle.TYPE_LABEL);
     pick.setMinHeight(0);
     add(editor, pick, -1, 39);
@@ -2004,8 +2010,13 @@ public final class MainActivity extends Activity {
   }
 
   private String params() {
+    return params(settings, find(films, settings.optString("film_stock")));
+  }
+
+  private String params(JSONObject recipe, Stock stock) {
     try {
       JSONObject j = new JSONObject();
+      boolean positive = stock != null && stock.type.equals("positive");
       String[] keys = {
         "film_stock",
         "print_stock",
@@ -2027,18 +2038,18 @@ public final class MainActivity extends Activity {
         "scanner_lens_blur",
         "preflash_exposure"
       };
-      for (String k : keys) if (settings.has(k)) j.put(k, settings.get(k));
-      j.put("print_exposure", Math.pow(2, -settings.optDouble("print_brightness", 0)));
+      for (String k : keys) if (recipe.has(k)) j.put(k, recipe.get(k));
+      j.put("print_exposure", Math.pow(2, -recipe.optDouble("print_brightness", 0)));
       j.put("input_color_space", sourceRaw ? "ProPhoto RGB" : "sRGB");
       j.put("input_cctf_decoding", !sourceRaw);
       j.put("output_color_space", "sRGB");
       j.put("output_cctf_encoding", true);
       j.put("preview_long_edge", 1024);
-      j.put("scan_film", positiveFilm());
-      j.put("grain_active", settings.optDouble("grain_amount", 1) > 0);
-      j.put("halation_active", settings.optDouble("halation_amount", 1) > 0);
-      j.put("glare_active", !positiveFilm() && settings.optDouble("glare_amount", 1) > 0);
-      j.put("dir_couplers_active", settings.optDouble("dir_couplers_amount", 1) > 0);
+      j.put("scan_film", positive);
+      j.put("grain_active", recipe.optDouble("grain_amount", 1) > 0);
+      j.put("halation_active", recipe.optDouble("halation_amount", 1) > 0);
+      j.put("glare_active", !positive && recipe.optDouble("glare_amount", 1) > 0);
+      j.put("dir_couplers_active", recipe.optDouble("dir_couplers_amount", 1) > 0);
       j.put("scene_latitude_active", false);
       j.put("contrast_mask_active", false);
       j.put("overscan_active", false);
@@ -2076,18 +2087,41 @@ public final class MainActivity extends Activity {
     }
   }
 
+  private boolean galleryVisible() {
+    return !destroyed
+        && selectedTab == 0
+        && editorScreen.getVisibility() == View.VISIBLE
+        && filmScrollRef != null
+        && filmScrollRef.isShown();
+  }
+
+  private void syncThumbCache() {
+    String print = thumbFingerprint();
+    if (print.equals(thumbPrint)) return;
+    thumbPrint = print;
+    ++thumbGeneration;
+    // All cache/view bookkeeping stays on the UI thread. Detach before recycling.
+    for (ImageView view : thumbTargets.values()) view.setImageDrawable(null);
+    for (Bitmap stale : filmThumbs.values()) Bitmaps.release(stale);
+    filmThumbs.clear();
+    thumbFailed.clear();
+  }
+
   private void refillThumbs() {
-    if (filmScrollRef == null || thumbViewsRef.isEmpty() || thumbStridePx <= 0) return;
+    if (!galleryVisible() || thumbViewsRef.isEmpty() || thumbStridePx <= 0) return;
+    syncThumbCache();
     fillVisibleThumbs(filmScrollRef, thumbViewsRef, thumbStocksRef, thumbStridePx, thumbSizePx);
   }
 
-  /** 只给进入可视区（含 60dp 缓冲）的胶片安排缩略图，避免一次渲染 20 张。 */
+  /** Render visible cards plus a 60dp buffer, never all stocks up front. */
   private void fillVisibleThumbs(
       HorizontalScrollView scroll,
       List<ImageView> views,
       List<String> stocks,
       int stridePx,
       int sizePx) {
+    if (!galleryVisible() || scroll != filmScrollRef || scroll.getWidth() <= 0) return;
+    syncThumbCache();
     int left = scroll.getScrollX() - dp(60);
     int right = scroll.getScrollX() + scroll.getWidth() + dp(60);
     for (int i = 0; i < views.size(); i++) {
@@ -2103,69 +2137,108 @@ public final class MainActivity extends Activity {
       target.setImageBitmap(cached);
       return;
     }
-    if (source == null || !ready || exporting || activeImport != null) {
-      android.util.Log.i("FilmThumb", stock + " skipped: source=" + (source != null)
-          + " ready=" + ready + " exporting=" + exporting);
-      return;
-    }
-    target.setTag(stock);
-    if (!thumbQueued.add(stock)) return;
+    // One thumbnail at a time lets a newly requested main preview jump ahead of the rest.
+    if (thumbBusy
+        || thumbFailed.contains(stock)
+        || source == null
+        || !ready
+        || exporting
+        || activeImport != null
+        || previewWorkTicket == revision) return;
     final String renderParams, openParams1;
     try {
-      JSONObject j = new JSONObject(params());
-      j.put("film_stock", stock);
-      // 引擎下限就是 800：再小会被拒（"'preview_long_edge' is outside [800, 8192]"）。
+      Stock choice = find(films, stock);
+      JSONObject recipe = new JSONObject();
+      recipe.put("film_stock", stock);
+      recipe.put(
+          "print_stock",
+          choice != null && find(papers, choice.target) != null
+              ? choice.target
+              : "kodak_portra_endura");
+      recipe.put("exposure_compensation_ev", 0);
+      recipe.put("print_brightness", 0);
+      recipe.put("m_filter_shift", 0);
+      recipe.put("y_filter_shift", 0);
+      recipe.put("grain_amount", 1);
+      recipe.put("halation_amount", 1);
+      recipe.put("film_format_mm", 36);
+      recipe.put("auto_exposure", sourceRaw);
+      recipe.put("auto_exposure_method", "balanced");
+      recipe.put("glare_amount", 1);
+      recipe.put("dir_couplers_amount", 1);
+      recipe.put("halation_scatter_amount", 1);
+      recipe.put("density_curve_gamma", 1);
+      JSONObject j = new JSONObject(params(recipe, choice));
+      // Neutral recipe only: user exposure/curves/HSL/paper/grain/date edits stay in the main view.
+      // Engine constraints: minimum 800, product_defaults only in the separate open parameters.
       j.put("preview_long_edge", 800);
       renderParams = j.toString();
-      // product_defaults 只属于 open，render 收到它会报 unknown parameter。
       openParams1 = openParams(renderParams);
     } catch (JSONException ex) {
-      thumbQueued.remove(stock);
+      thumbFailed.add(stock);
       return;
     }
     final Bitmap input = source;
     final File file = sourceFile;
     final boolean raw = sourceRaw;
-    final String edits = editParams();
-    final int ticket = revision;
+    final int generation = thumbGeneration;
+    final String fingerprint = thumbPrint;
+    thumbBusy = true;
+    thumbQueued.add(stock);
     worker.execute(
         () -> {
+          Bitmap made = null;
+          boolean failed = false;
           try {
-            if (destroyed || ticket != revision) return;
-            final Bitmap made;
-            synchronized (MainActivity.this) {
-              // 缩略图会换掉引擎里固化的胶片，主预览下一次必须重新 open。
-              openedSource = null;
-              ensureOpen(input, file, raw, openParams1);
-              made = renderer.render(renderParams, edits, false);
-              filmThumbs.put(stock, made);
-              openedSource = null;
+            if (!destroyed && generation == thumbGeneration) {
+              // Each stock must reopen the current photo. Always invalidate main-preview state,
+              // including errors, because opening a thumbnail changes the engine's fixed stock.
+              try {
+                openedSource = null;
+                if (raw) renderer.openRaw(file.getAbsolutePath(), openParams1, 800);
+                else if (file != null) renderer.openFile(file.getAbsolutePath(), openParams1);
+                else renderer.open(input, openParams1);
+                made = renderer.render(renderParams, "{}", false);
+              } finally {
+                openedSource = null;
+              }
+              android.util.Log.i(
+                  "FilmThumb", stock + " rendered " + made.getWidth() + "x" + made.getHeight());
             }
-            android.util.Log.i(
-                "FilmThumb", stock + " rendered " + made.getWidth() + "x" + made.getHeight());
-            ui(
-                () -> {
-                  ImageView live = thumbTargets.get(stock);
-                  if (live != null && !made.isRecycled()) live.setImageBitmap(made);
-                });
           } catch (Throwable ex) {
-            // 缩略图只是锦上添花，失败就保持占位色块，不打断编辑。
+            failed = true;
             android.util.Log.w("FilmThumb", stock + " failed", ex);
-          } finally {
-            thumbQueued.remove(stock);
           }
+          final Bitmap result = made;
+          final boolean error = failed;
+          main.post(
+              () -> {
+                thumbBusy = false;
+                thumbQueued.remove(stock);
+                boolean current =
+                    !destroyed
+                        && generation == thumbGeneration
+                        && fingerprint.equals(thumbFingerprint());
+                if (current && result != null) {
+                  filmThumbs.put(stock, result);
+                  ImageView live = thumbTargets.get(stock);
+                  if (live != null && stock.equals(live.getTag())) live.setImageBitmap(result);
+                } else Bitmaps.release(result);
+                if (current && error) thumbFailed.add(stock);
+                if (!destroyed) refillThumbs();
+              });
         });
   }
 
-  /** 缩略图只跟「胶片以外」的显影参数有关，切胶片时不该重算。 */
+  /** Gallery recipes are fixed defaults; only photo/engine identity invalidates their results. */
   private String thumbFingerprint() {
-    try {
-      JSONObject j = new JSONObject(settings.toString());
-      j.remove("film_stock");
-      return j.toString();
-    } catch (JSONException ex) {
-      return "";
-    }
+    return photoLoadGeneration
+        + ":"
+        + engineBootGeneration
+        + ":"
+        + System.identityHashCode(source)
+        + ":"
+        + (sourceFile == null ? "" : sourceFile.getAbsolutePath());
   }
 
   private void scheduleRender() {
@@ -2182,6 +2255,7 @@ public final class MainActivity extends Activity {
     saveActiveFrame();
     int ticket = ++revision;
     if (!ready || source == null || exporting) return;
+    previewWorkTicket = ticket;
     exportButton.setEnabled(false);
     exportButton.setText("正在显影…");
     setStatus(
@@ -2243,6 +2317,7 @@ public final class MainActivity extends Activity {
                         exportButton.setText("导出照片");
                         exportButton.setEnabled(true);
                         exportButton.setOnClickListener(v -> exportOptions());
+                        previewWorkTicket = -1;
                         refillThumbs();
                       });
                 } catch (Throwable ex) {
@@ -3358,6 +3433,7 @@ public final class MainActivity extends Activity {
     for (View v : controls) v.setEnabled(!value);
     exportButton.setEnabled(!value && developed != null);
     updateHistoryButtons();
+    if (!value) refillThumbs();
   }
 
   private String sha256(File file) throws Exception {
@@ -3655,6 +3731,12 @@ public final class MainActivity extends Activity {
     }
     if (updates != null) updates.close();
     destroyed = true;
+    ++thumbGeneration;
+    for (ImageView view : thumbTargets.values()) view.setImageDrawable(null);
+    for (Bitmap cached : filmThumbs.values()) Bitmaps.release(cached);
+    filmThumbs.clear();
+    thumbTargets.clear();
+    filmScrollRef = null;
     if (homeImages != null) homeImages.close();
     if (activeImport != null) {
       activeImport.cancel();
