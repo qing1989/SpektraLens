@@ -43,8 +43,14 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
   }
 
   private void main(Runnable run) {
-    getInstrumentation().runOnMainSync(run);
+    Throwable[] failure = {null};
+    getInstrumentation().runOnMainSync(() -> {
+      try { run.run(); }
+      catch (Throwable error) { failure[0] = error; }
+    });
     getInstrumentation().waitForIdleSync();
+    if (failure[0] instanceof AssertionError) throw (AssertionError) failure[0];
+    if (failure[0] != null) throw new RuntimeException(failure[0]);
   }
 
   protected void setUp() throws Exception {
@@ -345,7 +351,7 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
     assertFalse(
         "The engine must receive the default, not only the switch",
         engineParams.getBoolean("auto_exposure"));
-    assertEquals("center_weighted", state.getString("auto_exposure_method"));
+    assertEquals("balanced", state.getString("auto_exposure_method"));
     assertTrue(((ArrayDeque<?>) field("undoStack")).isEmpty());
     assertTrue(((ArrayDeque<?>) field("redoStack")).isEmpty());
     assertFalse(
@@ -370,7 +376,7 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
             state.put("date_text", "2001.02.03");
             state.put("grain_amount", 1.7);
             state.put("auto_exposure", true);
-            state.put("auto_exposure_method", "median");
+            state.put("auto_exposure_method", "balanced");
             ((TextView) field("compareButton")).performClick();
             call("saveActiveFrame", new Class<?>[] {});
           } catch (Exception ex) {
@@ -419,15 +425,24 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
             call("showEditor", new Class<?>[] {});
             field("selectedTab", 5);
             call("buildPanel", new Class<?>[] {});
-            Switch meter = (Switch) find((View) field("editorScreen"), "自动测光", false);
-            assertNotNull(meter);
-            assertFalse(meter.isChecked());
-            assertNotNull(find((View) field("editorScreen"), "测光方式   中央加权", false));
-            meter.performClick();
-            assertTrue(meter.isChecked());
-            JSONObject request = new JSONObject((String) call("params", new Class<?>[] {}));
-            assertTrue(request.getBoolean("auto_exposure"));
-            assertEquals("center_weighted", request.getString("auto_exposure_method"));
+            View screen = (View) field("editorScreen");
+            assertTrue(find(screen, "关闭", false).isSelected());
+            String[][] modes = {
+              {"均衡", "balanced"}, {"中央主体", "center"},
+              {"保护高光", "protect_highlights"}, {"保护阴影", "protect_shadows"}
+            };
+            for (String[] mode : modes) {
+              View chip = find((View) field("editorScreen"), mode[0], false);
+              assertNotNull(mode[0], chip);
+              chip.performClick();
+              JSONObject request = new JSONObject((String) call("params", new Class<?>[] {}));
+              assertTrue(request.getBoolean("auto_exposure"));
+              assertEquals(mode[1], request.getString("auto_exposure_method"));
+              assertTrue(find((View) field("editorScreen"), mode[0], false).isSelected());
+            }
+            find((View) field("editorScreen"), "关闭", false).performClick();
+            assertFalse(new JSONObject((String) call("params", new Class<?>[] {}))
+                .getBoolean("auto_exposure"));
           } catch (Exception error) {
             throw new RuntimeException(error);
           }
