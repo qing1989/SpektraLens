@@ -333,7 +333,8 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
   }
 
   private void defaults(JSONObject state) throws Exception {
-    assertEquals("kodak_portra_400", state.getString("film_stock"));
+    // 默认胶片是目录第一张（Fujifilm C200），与「导入后停在全部第一张」保持一致。
+    assertEquals("fujifilm_c200", state.getString("film_stock"));
     assertEquals(0., state.optDouble("grade_exposure", 0));
     assertEquals(0., state.optDouble("geo_x", 0));
     assertEquals(1., state.getDouble("geo_w"));
@@ -451,11 +452,9 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
     return null;
   }
 
-  public void testFilmCardsSynchronizeCategoryAndPaperHintIsVisible() throws Exception {
-    String[][] selections = {
-      {"Fujifilm Provia 100F", "反转片"}, {"Kodak Vision3 250D", "电影胶片"}, {"Kodak Portra 400", "彩色负片"}
-    };
-    for (String[] selection : selections) {
+  public void testFilmCardsKeepTheCategoryAndPaperHintIsVisible() throws Exception {
+    String[] selections = {"Fujifilm Provia 100F", "Kodak Vision3 250D", "Kodak Portra 400"};
+    for (String selection : selections) {
       main(
           () -> {
             try {
@@ -463,11 +462,13 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
               field("selectedTab", 0);
               field("filmCategory", "全部");
               call("buildPanel", new Class<?>[] {});
-              View card = find((View) field("editorScreen"), "胶片 " + selection[0], true);
-              assertNotNull(selection[0], card);
+              View card = find((View) field("editorScreen"), "胶片 " + selection, true);
+              assertNotNull(selection, card);
               card.performClick();
-              assertEquals(selection[1], field("filmCategory"));
-              assertTrue(find((View) field("editorScreen"), selection[1], false).isSelected());
+              // 点卡片只负责选胶片，分类交给上方的 chips：否则在「全部」下点一张卡，
+              // 列表会突然缩到某个分类，停留位置也跟着乱。
+              assertEquals("全部", field("filmCategory"));
+              assertTrue(find((View) field("editorScreen"), "全部", false).isSelected());
             } catch (Exception ex) {
               throw new RuntimeException(ex);
             }

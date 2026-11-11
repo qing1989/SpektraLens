@@ -353,8 +353,16 @@ public final class MainActivity extends Activity {
         .show();
   }
 
+  /**
+   * 默认胶片取目录里的第一张，而不是写死某一卷：导入后画廊停在「全部」第一张，
+   * 选中态也落在同一张卡上，白边和橙字一眼可见。
+   */
+  private String defaultFilmStock() {
+    return films.isEmpty() ? "fujifilm_c200" : films.get(0).id;
+  }
+
   private void defaults() {
-    putDefault("film_stock", "kodak_portra_400");
+    putDefault("film_stock", defaultFilmStock());
     putDefault("print_stock", "kodak_portra_endura");
     putDefault("exposure_compensation_ev", 0);
     putDefault("print_brightness", 0);
