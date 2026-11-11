@@ -391,4 +391,44 @@ public final class FilmGalleryInstrumentedTest
     idleGallery();
     assertTrue(read(() -> cache().size()) >= 3);
   }
+
+  /**
+   * 点击画廊卡片只应切换选中态。面板会整体重建，若不沿用上次滚动位置，整排会被重新定位到
+   * 「选中项 − 一格」，用户会看到卡片横向滑一下，像点歪了。
+   */
+  public void testTappingACardKeepsTheGalleryWhereTheUserScrolled() throws Exception {
+    importPhoto(false);
+    idleGallery();
+    main(
+        () -> {
+          try {
+            ((HorizontalScrollView) field("filmScrollRef")).fullScroll(View.FOCUS_RIGHT);
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        });
+    int before = read(() -> galleryScrollX());
+    assertTrue("Sanity: the gallery was actually scrolled away from the start", before > 0);
+    main(
+        () -> {
+          try {
+            LinearLayout cards = (LinearLayout) field("filmCards");
+            View target = cards.getChildAt(cards.getChildCount() - 1);
+            assertNotNull("A tappable card exists", target);
+            target.performClick();
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        });
+    await(
+        "Rebuilt gallery must restore the previous scroll position instead of re-centering",
+        () -> galleryScrollX() == before);
+    int after = read(() -> galleryScrollX());
+    assertEquals("Tapping a card must not shift the row", before, after);
+  }
+
+  private int galleryScrollX() throws Exception {
+    HorizontalScrollView scroll = (HorizontalScrollView) field("filmScrollRef");
+    return scroll == null ? -1 : scroll.getScrollX();
+  }
 }

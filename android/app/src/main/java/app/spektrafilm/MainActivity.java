@@ -87,6 +87,12 @@ public final class MainActivity extends Activity {
   private List<ImageView> thumbViewsRef = new ArrayList<>();
   private List<String> thumbStocksRef = new ArrayList<>();
   private int thumbStridePx, thumbSizePx;
+  // 画廊滚动位置：同一张照片 + 同一分类内重建面板（点卡片、切 tab 回来）时沿用上次位置，
+  // 不再把选中卡片强行拉到「第二格」，点击后整排就不会横向滑一下。
+  // 换照片或换分类时 key 变化，仍会重新定位，保证选中项进入视野。
+  private String filmScrollKey = "";
+  private int filmScrollX;
+  private boolean filmScrollPositioned;
   private int engineBootGeneration;
   private long engineBootStarted;
   private boolean engineBootPending;
@@ -1060,6 +1066,13 @@ public final class MainActivity extends Activity {
       final int cardHeight = thumbSize + 7 + labelHeight + 4;
       syncThumbCache();
 
+      // 只有「照片 + 分类」都没变时才复用滚动位置。切分类会让列表整个换掉，
+      // 换照片则是一次新的编辑会话，两者都应重新把选中项带进视野。
+      final String scrollKey =
+          filmCategory + "|" + (sourceFile == null ? filename : sourceFile.getAbsolutePath());
+      final boolean reuseScroll = scrollKey.equals(filmScrollKey) && filmScrollPositioned;
+      filmScrollKey = scrollKey;
+
       HorizontalScrollView filmScroll = new HorizontalScrollView(this);
       filmScroll.setHorizontalScrollBarEnabled(false);
       filmScroll.setClipToPadding(false);
@@ -1129,7 +1142,8 @@ public final class MainActivity extends Activity {
               new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
                 public void onGlobalLayout() {
                   if (filmScroll.getWidth() > 0) {
-                    filmScroll.scrollTo(Math.max(0, offset - dp(stride)), 0);
+                    filmScroll.scrollTo(
+                        reuseScroll ? filmScrollX : Math.max(0, offset - dp(stride)), 0);
                     filmScroll.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                     fillVisibleThumbs(
                         filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize));
@@ -1137,8 +1151,11 @@ public final class MainActivity extends Activity {
                 }
               });
       filmScroll.setOnScrollChangeListener(
-          (v, x, y, ox, oy) ->
-              fillVisibleThumbs(filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize)));
+          (v, x, y, ox, oy) -> {
+            filmScrollX = x;
+            filmScrollPositioned = true;
+            fillVisibleThumbs(filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize));
+          });
       filmScrollRef = filmScroll;
       thumbViewsRef = thumbViews;
       thumbStocksRef = thumbStocks;
