@@ -108,8 +108,19 @@ final class AppStyle {
           ViewGroup.LayoutParams params = v.getLayoutParams();
           if (params == null || params.width != ViewGroup.LayoutParams.WRAP_CONTENT) return;
           int minimum = Math.round(v.getHeight() * .34f);
-          if (v.getPaddingLeft() >= minimum && v.getPaddingRight() >= minimum) return;
-          int horizontal = Math.max(minimum, Math.max(v.getPaddingLeft(), v.getPaddingRight()));
+          int current = Math.max(v.getPaddingLeft(), v.getPaddingRight());
+          if (current >= minimum) return;
+          // 内边距只能在「文字之外的空余」里加。按高度加是不安全的：把文字挤窄就会换行，
+          // 换行又抬高高度，高度再抬高这里的 minimum，越挤越窄——弹窗里的「取消」因此被
+          // 压成竖排两行、只剩半个字宽。所以先算真实剩余空间，加不下就不加。
+          CharSequence label = view.getText();
+          int text =
+              label == null
+                  ? 0
+                  : (int) Math.ceil(view.getPaint().measureText(label.toString()));
+          int spare = Math.max(0, (v.getWidth() - text) / 2 - 1);
+          int horizontal = Math.min(minimum, Math.max(current, spare));
+          if (horizontal <= current) return;
           v.setPadding(horizontal, v.getPaddingTop(), horizontal, v.getPaddingBottom());
         });
     view.setFocusable(true);
@@ -167,6 +178,10 @@ final class AppStyle {
                   action(button, primary ? BG : INK, primary ? ACCENT : Color.TRANSPARENT, R_MEDIUM);
                   button.setAllCaps(false);
                   button.setTextSize(14);
+                  // 与主界面按钮同一规则：操作按钮不折行。否则「取消」这种两字标签在窄槽里
+                  // 会一列排开，看起来像字被转了 90 度。
+                  button.setSingleLine(true);
+                  button.setEllipsize(android.text.TextUtils.TruncateAt.END);
                   button.setMinHeight(dp(dialog.getContext(), 44));
                   button.setMinWidth(primary ? 2 * dp(dialog.getContext(), 44) : 0);
                   button.setMinimumWidth(primary ? 2 * dp(dialog.getContext(), 44) : 0);
