@@ -53,6 +53,10 @@ latest = {
     'sizeBytes': manifest_apk.stat().st_size,
     'minSdk': int(re.search(r'minSdk\s+(\d+)', gradle).group(1)),
 }
+# 应用内更新弹窗显示的说明：存在同名文本文件就写进清单，避免打包后手工改 latest.json
+notes_file = OUT / f'release-notes-v{version}-inapp.txt'
+if notes_file.is_file():
+    latest['releaseNotes'] = notes_file.read_text(encoding='utf-8').strip()
 (OUT / 'latest.json').write_text(json.dumps(latest, ensure_ascii=False, indent=2) + '\n')
 
 guide = (ROOT / 'README.md').read_text().replace(f'deliverables/SpektraLens-v{version}-debug.apk',f'SpektraLens-v{version}-debug.apk').replace('(docs/验证记录.md)','(验证记录.md)').replace('(docs/图标映射.md)','(图标映射.md)').replace('(docs/兼容显影实现.md)','(兼容显影实现.md)').replace('(docs/PhotonCam编辑页设计.md)','(编辑页设计与映射.md)').replace('(docs/导出性能排查.md)','(导出性能排查.md)').replace('(docs/界面图标检查.md)','(界面图标检查.md)').replace('(docs/移动GPU移植.md)','(移动GPU移植.md)').replace('(THIRD_PARTY_NOTICES.md)','(来源与许可.md)')
