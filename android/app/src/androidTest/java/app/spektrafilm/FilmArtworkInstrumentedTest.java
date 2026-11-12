@@ -91,7 +91,7 @@ public final class FilmArtworkInstrumentedTest extends InstrumentationTestCase {
     for (int y = 0; y < base.getHeight(); y++)
       for (int x = 0; x < base.getWidth(); x++) {
         if (one.getPixel(x, y) != base.getPixel(x, y)) {
-          assertTrue("Push tab is beside the label", x >= 201);
+          assertTrue("Push marking stays in the dark lower label band", y >= 164);
           pushInk++;
         }
         if (one.getPixel(x, y) != two.getPixel(x, y)) differentPushSteps++;

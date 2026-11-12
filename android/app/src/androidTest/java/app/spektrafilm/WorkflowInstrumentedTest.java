@@ -43,8 +43,14 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
   }
 
   private void main(Runnable run) {
-    getInstrumentation().runOnMainSync(run);
+    Throwable[] failure = {null};
+    getInstrumentation().runOnMainSync(() -> {
+      try { run.run(); }
+      catch (Throwable error) { failure[0] = error; }
+    });
     getInstrumentation().waitForIdleSync();
+    if (failure[0] instanceof AssertionError) throw (AssertionError) failure[0];
+    if (failure[0] != null) throw new RuntimeException(failure[0]);
   }
 
   protected void setUp() throws Exception {
@@ -333,7 +339,8 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
   }
 
   private void defaults(JSONObject state) throws Exception {
-    assertEquals("kodak_portra_400", state.getString("film_stock"));
+    // 默认胶片是目录第一张（Fujifilm C200），与「导入后停在全部第一张」保持一致。
+    assertEquals("fujifilm_c200", state.getString("film_stock"));
     assertEquals(0., state.optDouble("grade_exposure", 0));
     assertEquals(0., state.optDouble("geo_x", 0));
     assertEquals(1., state.getDouble("geo_w"));
@@ -344,7 +351,7 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
     assertFalse(
         "The engine must receive the default, not only the switch",
         engineParams.getBoolean("auto_exposure"));
-    assertEquals("center_weighted", state.getString("auto_exposure_method"));
+    assertEquals("balanced", state.getString("auto_exposure_method"));
     assertTrue(((ArrayDeque<?>) field("undoStack")).isEmpty());
     assertTrue(((ArrayDeque<?>) field("redoStack")).isEmpty());
     assertFalse(
@@ -369,7 +376,7 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
             state.put("date_text", "2001.02.03");
             state.put("grain_amount", 1.7);
             state.put("auto_exposure", true);
-            state.put("auto_exposure_method", "median");
+            state.put("auto_exposure_method", "balanced");
             ((TextView) field("compareButton")).performClick();
             call("saveActiveFrame", new Class<?>[] {});
           } catch (Exception ex) {
@@ -418,15 +425,24 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
             call("showEditor", new Class<?>[] {});
             field("selectedTab", 5);
             call("buildPanel", new Class<?>[] {});
-            Switch meter = (Switch) find((View) field("editorScreen"), "自动测光", false);
-            assertNotNull(meter);
-            assertFalse(meter.isChecked());
-            assertNotNull(find((View) field("editorScreen"), "测光方式   中央加权", false));
-            meter.performClick();
-            assertTrue(meter.isChecked());
-            JSONObject request = new JSONObject((String) call("params", new Class<?>[] {}));
-            assertTrue(request.getBoolean("auto_exposure"));
-            assertEquals("center_weighted", request.getString("auto_exposure_method"));
+            View screen = (View) field("editorScreen");
+            assertTrue(find(screen, "关闭", false).isSelected());
+            String[][] modes = {
+              {"均衡", "balanced"}, {"中央主体", "center"},
+              {"保护高光", "protect_highlights"}, {"保护阴影", "protect_shadows"}
+            };
+            for (String[] mode : modes) {
+              View chip = find((View) field("editorScreen"), mode[0], false);
+              assertNotNull(mode[0], chip);
+              chip.performClick();
+              JSONObject request = new JSONObject((String) call("params", new Class<?>[] {}));
+              assertTrue(request.getBoolean("auto_exposure"));
+              assertEquals(mode[1], request.getString("auto_exposure_method"));
+              assertTrue(find((View) field("editorScreen"), mode[0], false).isSelected());
+            }
+            find((View) field("editorScreen"), "关闭", false).performClick();
+            assertFalse(new JSONObject((String) call("params", new Class<?>[] {}))
+                .getBoolean("auto_exposure"));
           } catch (Exception error) {
             throw new RuntimeException(error);
           }
@@ -451,11 +467,9 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
     return null;
   }
 
-  public void testFilmCardsSynchronizeCategoryAndPaperHintIsVisible() throws Exception {
-    String[][] selections = {
-      {"Fujifilm Provia 100F", "反转片"}, {"Kodak Vision3 250D", "电影胶片"}, {"Kodak Portra 400", "彩色负片"}
-    };
-    for (String[] selection : selections) {
+  public void testFilmCardsKeepTheCategoryAndPaperHintIsVisible() throws Exception {
+    String[] selections = {"Fujifilm Provia 100F", "Kodak Vision3 250D", "Kodak Portra 400"};
+    for (String selection : selections) {
       main(
           () -> {
             try {
@@ -463,11 +477,13 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
               field("selectedTab", 0);
               field("filmCategory", "全部");
               call("buildPanel", new Class<?>[] {});
-              View card = find((View) field("editorScreen"), "胶片 " + selection[0], true);
-              assertNotNull(selection[0], card);
+              View card = find((View) field("editorScreen"), "胶片 " + selection, true);
+              assertNotNull(selection, card);
               card.performClick();
-              assertEquals(selection[1], field("filmCategory"));
-              assertTrue(find((View) field("editorScreen"), selection[1], false).isSelected());
+              // 点卡片只负责选胶片，分类交给上方的 chips：否则在「全部」下点一张卡，
+              // 列表会突然缩到某个分类，停留位置也跟着乱。
+              assertEquals("全部", field("filmCategory"));
+              assertTrue(find((View) field("editorScreen"), "全部", false).isSelected());
             } catch (Exception ex) {
               throw new RuntimeException(ex);
             }

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Monochrome layer for the v4 "spectrum film" icon.
+     光斑圆盘的剪影，沿下缘挖出 5 个齿孔；系统会整体染色，所以只保留最简形。
+     几何与彩色前景对齐：圆盘直径 56/72，直接落在 108 dp 图层中心的 72 dp 可见区。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M26.2,52.8a28,28 0 1,1 56,0a28,28 0 1,1 -56,0z
+            M35,72.6h2.4a1,1 0 0 1 1,1v2.8a1,1 0 0 1 -1,1h-2.4a1,1 0 0 1 -1,-1v-2.8a1,1 0 0 1 1,-1z
+            M44,72.6h2.4a1,1 0 0 1 1,1v2.8a1,1 0 0 1 -1,1h-2.4a1,1 0 0 1 -1,-1v-2.8a1,1 0 0 1 1,-1z
+            M53,72.6h2.4a1,1 0 0 1 1,1v2.8a1,1 0 0 1 -1,1h-2.4a1,1 0 0 1 -1,-1v-2.8a1,1 0 0 1 1,-1z
+            M62,72.6h2.4a1,1 0 0 1 1,1v2.8a1,1 0 0 1 -1,1h-2.4a1,1 0 0 1 -1,-1v-2.8a1,1 0 0 1 1,-1z
+            M71,72.6h2.4a1,1 0 0 1 1,1v2.8a1,1 0 0 1 -1,1h-2.4a1,1 0 0 1 -1,-1v-2.8a1,1 0 0 1 1,-1z" />
+</vector>

@@ -31,6 +31,7 @@ public final class MainActivity extends Activity {
   static final int FADE_ROW_DP = 24;
   /** 面板的最大高度（dp）。预览区按这个值预留，所以它也决定照片能有多大。 */
   static final int PANEL_MAX_DP = 320;
+  private UpdateController updates;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService importWorker = Executors.newFixedThreadPool(2);
   private PhotoImportJob activeImport;
@@ -71,6 +72,27 @@ public final class MainActivity extends Activity {
   private volatile int revision;
   private long engine; // readiness marker; native engine pointers remain in the renderer process.
   private volatile SpectralRenderer renderer;
+  // 画廊只展示原片的默认胶片风格；二次调节仅影响主预览，不使画廊缓存失效。
+  private final Map<String, Bitmap> filmThumbs = new HashMap<>();
+  private final Set<String> thumbQueued = new HashSet<>();
+  private String thumbPrint = "";
+  private volatile int thumbGeneration;
+  private boolean thumbBusy;
+  private final Set<String> thumbFailed = new HashSet<>();
+  private int previewWorkTicket = -1;
+  // 面板每次重建都会换掉 ImageView，所以渲染完成时不能只认建时的那个引用。
+  private final Map<String, ImageView> thumbTargets = new HashMap<>();
+  // 面板重建后引擎可能还没就绪，缩略图请求会被跳过；就绪/渲染完成后要能再补一次。
+  private HorizontalScrollView filmScrollRef;
+  private List<ImageView> thumbViewsRef = new ArrayList<>();
+  private List<String> thumbStocksRef = new ArrayList<>();
+  private int thumbStridePx, thumbSizePx;
+  // 画廊的滚动位置按「分类」各自记忆：切到某分类时回到它上次停留的位置，没动过手就从第一张
+  // 开始。每导入一张新照片清空一次，并从「全部」第一张重新开始。
+  // pendingFilmScrollX 由「点卡片 / 点分类 / 换照片」显式指定，-1 表示本次没有指定。
+  private String filmSessionKey = "";
+  private final Map<String, Integer> categoryScrollX = new HashMap<>();
+  private int pendingFilmScrollX = -1;
   private int engineBootGeneration;
   private long engineBootStarted;
   private boolean engineBootPending;
@@ -81,6 +103,7 @@ public final class MainActivity extends Activity {
   private final Map<String, SeekBar> sliders = new HashMap<>();
   private final Map<String, TextView> values = new HashMap<>();
   private FrameLayout screens;
+  private AboutPage aboutPage;
   private FlowingBackgroundView flowingBackground;
   private LinearLayout homeScreen, editorScreen, panel, tabRow, filmCards, historyList;
   private ImageView homeHero;
@@ -125,6 +148,7 @@ public final class MainActivity extends Activity {
   public void onCreate(Bundle state) {
     super.onCreate(state);
     Haptics.install(getWindow());
+    updates = new UpdateController(this);
     prefs = getSharedPreferences("darkroom", MODE_PRIVATE);
     try {
       settings = new JSONObject(prefs.getString("settings", "{}"));
@@ -207,6 +231,7 @@ public final class MainActivity extends Activity {
                     return;
                   }
                   ready = true;
+                  refillThumbs();
                   homeImages.setRenderer(next);
                   engineBootPending = false;
                   prefs.edit().remove("last_engine_error").apply();
@@ -329,8 +354,16 @@ public final class MainActivity extends Activity {
         .show();
   }
 
+  /**
+   * 默认胶片取目录里的第一张，而不是写死某一卷：导入后画廊停在「全部」第一张，
+   * 选中态也落在同一张卡上，白边和橙字一眼可见。
+   */
+  private String defaultFilmStock() {
+    return films.isEmpty() ? "fujifilm_c200" : films.get(0).id;
+  }
+
   private void defaults() {
-    putDefault("film_stock", "kodak_portra_400");
+    putDefault("film_stock", defaultFilmStock());
     putDefault("print_stock", "kodak_portra_endura");
     putDefault("exposure_compensation_ev", 0);
     putDefault("print_brightness", 0);
@@ -842,7 +875,8 @@ public final class MainActivity extends Activity {
     start.setOnClickListener(v -> importPhoto());
     add(content, start, -1, 54);
     gap(content, 12);
-    TextView privacy = text("RAW / JPEG / PNG / HEIC\n本机处理 · 自动保存调整 · 保留原照片", AppStyle.TYPE_MICRO, MUTED);
+    TextView privacy =
+        text("RAW / JPEG / PNG / HEIC\n本机处理 · 自动保存调整 · 保留原照片", AppStyle.TYPE_MICRO, MUTED);
     privacy.setLineSpacing(dp(4), 1);
     add(content, privacy, -1, 54);
     gap(content, 24);
@@ -892,6 +926,7 @@ public final class MainActivity extends Activity {
   }
 
   private void showEditor() {
+    closeAbout();
     flowingBackground.setVisibility(View.GONE);
     homeScreen.setVisibility(View.GONE);
     editorScreen.setVisibility(View.VISIBLE);
@@ -913,8 +948,20 @@ public final class MainActivity extends Activity {
     if (panel == null) return;
     // Keep the deferred crop tool's ID reserved without exposing its panel.
     if (selectedTab == 3) selectedTab = 0;
+    // 新照片一律从「全部」的第一张开始；同一张照片再次编辑则沿用上次的分类与位置。
+    String sessionKey = sourceFile == null ? "internal" : sourceFile.getAbsolutePath();
+    if (!sessionKey.equals(filmSessionKey)) {
+      filmSessionKey = sessionKey;
+      categoryScrollX.clear();
+      filmCategory = "全部";
+      pendingFilmScrollX = 0;
+    }
     controls.removeIf(v -> descendant(v, panel) || descendant(v, tabRow));
     panel.removeAllViews();
+    filmScrollRef = null;
+    thumbTargets.clear();
+    thumbViewsRef = new ArrayList<>();
+    thumbStocksRef = new ArrayList<>();
     tabRow.removeAllViews();
     sliders.clear();
     values.clear();
@@ -1021,6 +1068,8 @@ public final class MainActivity extends Activity {
         chip.setOnClickListener(
             v -> {
               filmCategory = category;
+              // 该分类动过手就回到上次停留的位置，没动过就从第一张开始。
+              pendingFilmScrollX = categoryScrollX.getOrDefault(category, 0);
               buildPanel();
             });
         LinearLayout.LayoutParams chipLayout = new LinearLayout.LayoutParams(0, dp(40), 1);
@@ -1029,94 +1078,128 @@ public final class MainActivity extends Activity {
       }
       add(editor, filters, -1, 40);
       gap(editor, 8);
-      // 一屏正好放四张：卡片吃掉全部可用宽度，卡片间隔收到 4dp、内部只留 2dp，
-      // 图标就能长到卡宽的 80%（100×80 画布），比原来 45dp 的小图大三分之一。
-      int screenDp = getResources().getConfiguration().screenWidthDp;
-      if (wideEditor()) screenDp = Math.round(screenDp / 2.1f);
-      final int cardGap = 6;
-      final int stride = Math.max(64, (screenDp - 52) / 4);
-      final int cardWidth = stride - cardGap;
-      final int iconHeight = Math.round(cardWidth * .80f);
-      // 两行名称需要 38dp：11sp × 2 行再加字体自带的上下留白，33dp 会把第二行顶出去。
-      final int labelHeight = 38;
-      final int cardHeight = iconHeight + labelHeight + 3 + 3 + 6;
+      // 画廊式胶片选择：方形缩略图就是「当前这张照片用这卷胶片显影后的样子」，标签在下方，
+      // 选中用 2dp 白色描边。缩略图必须每张独立 open —— 只换 film_stock 不会换显影结果
+      // （实测差异仅 1.5/255）；实测 open 67ms、render 648ms，所以只渲染进入可视区的几张。
+      final int thumbSize = 88, thumbGap = 10, labelHeight = 22;
+      final int stride = thumbSize + thumbGap;
+      final int cardHeight = thumbSize + 7 + labelHeight + 4;
+      syncThumbCache();
 
       HorizontalScrollView filmScroll = new HorizontalScrollView(this);
       filmScroll.setHorizontalScrollBarEnabled(false);
       filmScroll.setClipToPadding(false);
       filmCards = horizontal();
+      filmCards.setPadding(0, 0, dp(12), 0);
       filmScroll.addView(filmCards);
-      int selectedPosition = 0;
+
+      thumbTargets.clear();
+      final List<ImageView> thumbViews = new ArrayList<>();
+      final List<String> thumbStocks = new ArrayList<>();
       int position = 0;
       for (Stock stock : films) {
         String category = category(stock);
         if (!filmCategory.equals("全部") && !filmCategory.equals(category)) continue;
         boolean selected = stock.id.equals(settings.optString("film_stock"));
-        if (selected) selectedPosition = position;
+        final int index = position;
         LinearLayout card = vertical();
-        card.setPadding(dp(1), dp(3), dp(1), dp(3));
         card.setSelected(selected);
         card.setFocusable(true);
-        FilmBadge badge = new FilmBadge(this, stock.id, stock.name, false);
-        // 选中态画在图标外圈。整卡描边会把两行名称一起圈进来，卡片又窄，描出来是个细长的
-        // 怪形状，而且名称换行就顶到框上；只圈图标既像「挑了这一卷」，也不会被文字撑变形。
-        FrameLayout iconBox = new FrameLayout(this);
-        // 图标与环之间留 2dp 空隙，但描边是向内画的，所以内边距要写成「空隙 + 描边」：
-        // 环占外侧 stroke，剩下的才是露出来的空隙。只按空隙设内边距，环会贴到图标上。
-        final float gapDp = 2, strokeDp = 1.6f;
-        int pad = dp(gapDp + strokeDp);
-        iconBox.setPadding(pad, pad, pad, pad);
-        iconBox.addView(badge, new FrameLayout.LayoutParams(-1, -1));
-        // 外径同理要补两项：环的内弧 = 外径 − 描边，要让内弧正好落在「图标边缘 + 空隙」上，
-        // 外径就是 图标半径 + 空隙 + 描边。少补描边（上一版就是），内弧会比图标更圆，
-        // 四角挤出一道楔形空隙，看着就是两个圆角不一样。
-        float iconScale =
-            Math.min(
-                (cardWidth - 2 - 2 * pad / (float) dp(1)) / (float) FilmCanisterArtwork.WIDTH,
-                (iconHeight - 2 * pad / (float) dp(1)) / (float) FilmCanisterArtwork.HEIGHT);
-        GradientDrawable ring =
-            box(
-                Color.TRANSPARENT,
-                FilmCanisterArtwork.RADIUS * iconScale + gapDp + strokeDp);
-        if (selected) ring.setStroke(Math.max(1, dp(strokeDp)), ACCENT);
-        iconBox.setBackground(ring);
-        add(card, iconBox, -1, iconHeight);
+
+        FrameLayout frame = new FrameLayout(this);
+        GradientDrawable ring = box(Color.TRANSPARENT, AppStyle.R_MEDIUM);
+        if (selected) ring.setStroke(dp(2), 0xffffffff);
+        // The image and its inset stroke share the same bounds/radius (no fourth corner size).
+        frame.setForeground(ring);
+        ImageView thumb = new ImageView(this);
+        thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        thumb.setTag(stock.id);
+        thumb.setBackground(box(AppStyle.CONTROL, AppStyle.R_MEDIUM));
+        thumb.setClipToOutline(true);
+        frame.addView(thumb, new FrameLayout.LayoutParams(-1, -1));
+        add(card, frame, thumbSize, thumbSize);
+
+        // 标签保持原来的样子：选中用强调色、未选中用正文色，不加底。
         TextView name = text(shortName(stock.name), AppStyle.TYPE_MICRO, selected ? ACCENT : INK);
-        name.setMaxLines(2);
-        name.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        name.setSingleLine(true);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        name.setLineSpacing(dp(1), 1f);
-        // 图标与文字之间留一口气，贴着图标会显得拥挤。
+        name.setGravity(Gravity.CENTER);
+        name.setPadding(dp(6), 0, dp(6), 0);
         LinearLayout.LayoutParams nameLayout = new LinearLayout.LayoutParams(-1, dp(labelHeight));
-        nameLayout.topMargin = dp(6);
+        nameLayout.topMargin = dp(7);
         card.addView(name, nameLayout);
-        card.setTooltipText(stock.name);
+
         card.setContentDescription("胶片 " + stock.name + (selected ? "，已选" : ""));
         card.setOnClickListener(
             v -> {
+              // 点中间那张一律不动；只有点当前视口最左 / 最右那张、且外侧还有胶片时，
+              // 才跟着滑一格，把外面的胶片带进来。
+              int base = filmScroll.getScrollX();
+              int target = base;
+              int total = filmCards.getChildCount();
+              int first = 0, last = total - 1;
+              for (int i = 0; i < total; i++) {
+                if (filmCards.getChildAt(i).getRight() > base + 1) {
+                  first = i;
+                  break;
+                }
+              }
+              int rightEdge = base + filmScroll.getWidth();
+              for (int i = total - 1; i >= 0; i--) {
+                if (filmCards.getChildAt(i).getLeft() < rightEdge - 1) {
+                  last = i;
+                  break;
+                }
+              }
+              int step = dp(stride);
+              if (index == first && index > 0) target = Math.max(0, base - step);
+              else if (index == last && index < total - 1) target = base + step;
+
+              String keepCategory = filmCategory;
               set("film_stock", stock.id);
+              // 选胶片不跟着切分类，否则在「全部」下点一张卡，列表会突然变短。
+              filmCategory = keepCategory;
+              categoryScrollX.put(keepCategory, target);
+              pendingFilmScrollX = target;
               scheduleRender();
               buildPanel();
             });
         controls.add(card);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(cardWidth), dp(cardHeight));
-        lp.rightMargin = dp(cardGap);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(thumbSize), dp(cardHeight));
+        lp.rightMargin = dp(thumbGap);
         filmCards.addView(card, lp);
+        thumbViews.add(thumb);
+        thumbStocks.add(stock.id);
+        thumbTargets.put(stock.id, thumb);
         position++;
       }
-      add(editor, filmScroll, -1, cardHeight + 2);
-      final int offset = selectedPosition * dp(stride);
+      add(editor, filmScroll, -1, cardHeight);
+      final int targetScroll =
+          pendingFilmScrollX >= 0
+              ? pendingFilmScrollX
+              : Math.max(0, categoryScrollX.getOrDefault(filmCategory, 0));
+      pendingFilmScrollX = -1;
       filmScroll
           .getViewTreeObserver()
           .addOnGlobalLayoutListener(
               new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
                 public void onGlobalLayout() {
                   if (filmScroll.getWidth() > 0) {
-                    filmScroll.scrollTo(Math.max(0, offset - dp(stride)), 0);
+                    filmScroll.scrollTo(targetScroll, 0);
                     filmScroll.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                    fillVisibleThumbs(
+                        filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize));
                   }
                 }
               });
+      filmScroll.setOnScrollChangeListener(
+          (v, x, y, ox, oy) ->
+              fillVisibleThumbs(filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize)));
+      filmScrollRef = filmScroll;
+      thumbViewsRef = thumbViews;
+      thumbStocksRef = thumbStocks;
+      thumbStridePx = dp(stride);
+      thumbSizePx = dp(thumbSize);
       gap(editor, 6);
       slider("exposure_compensation_ev", "胶片曝光", -3, 3, .1, " EV");
 
@@ -1291,7 +1374,8 @@ public final class MainActivity extends Activity {
   private void choice(String title, String[] names, String[] ids, String key) {
     String current = settings.optString(key, ids[0]);
     int index = Arrays.asList(ids).indexOf(current);
-    TextView pick = button(title + "   " + names[Math.max(0, index)] + "", ACCENT, AppStyle.CONTROL);
+    TextView pick =
+        button(title + "   " + names[Math.max(0, index)] + "", ACCENT, AppStyle.CONTROL);
     pick.setTextSize(AppStyle.TYPE_LABEL);
     pick.setMinHeight(0);
     add(editor, pick, -1, 39);
@@ -1718,6 +1802,11 @@ public final class MainActivity extends Activity {
   }
 
   private void handleBack() {
+    if (aboutPage != null) {
+      // 免责声明子页先退回概览，再退才关闭整页。
+      aboutPage.navigateBack();
+      return;
+    }
     if (activeImport != null) {
       cancelImport("已取消导入");
       return;
@@ -1982,8 +2071,13 @@ public final class MainActivity extends Activity {
   }
 
   private String params() {
+    return params(settings, find(films, settings.optString("film_stock")));
+  }
+
+  private String params(JSONObject recipe, Stock stock) {
     try {
       JSONObject j = new JSONObject();
+      boolean positive = stock != null && stock.type.equals("positive");
       String[] keys = {
         "film_stock",
         "print_stock",
@@ -2005,18 +2099,18 @@ public final class MainActivity extends Activity {
         "scanner_lens_blur",
         "preflash_exposure"
       };
-      for (String k : keys) if (settings.has(k)) j.put(k, settings.get(k));
-      j.put("print_exposure", Math.pow(2, -settings.optDouble("print_brightness", 0)));
+      for (String k : keys) if (recipe.has(k)) j.put(k, recipe.get(k));
+      j.put("print_exposure", Math.pow(2, -recipe.optDouble("print_brightness", 0)));
       j.put("input_color_space", sourceRaw ? "ProPhoto RGB" : "sRGB");
       j.put("input_cctf_decoding", !sourceRaw);
       j.put("output_color_space", "sRGB");
       j.put("output_cctf_encoding", true);
       j.put("preview_long_edge", 1024);
-      j.put("scan_film", positiveFilm());
-      j.put("grain_active", settings.optDouble("grain_amount", 1) > 0);
-      j.put("halation_active", settings.optDouble("halation_amount", 1) > 0);
-      j.put("glare_active", !positiveFilm() && settings.optDouble("glare_amount", 1) > 0);
-      j.put("dir_couplers_active", settings.optDouble("dir_couplers_amount", 1) > 0);
+      j.put("scan_film", positive);
+      j.put("grain_active", recipe.optDouble("grain_amount", 1) > 0);
+      j.put("halation_active", recipe.optDouble("halation_amount", 1) > 0);
+      j.put("glare_active", !positive && recipe.optDouble("glare_amount", 1) > 0);
+      j.put("dir_couplers_active", recipe.optDouble("dir_couplers_amount", 1) > 0);
       j.put("scene_latitude_active", false);
       j.put("contrast_mask_active", false);
       j.put("overscan_active", false);
@@ -2054,6 +2148,160 @@ public final class MainActivity extends Activity {
     }
   }
 
+  private boolean galleryVisible() {
+    return !destroyed
+        && selectedTab == 0
+        && editorScreen.getVisibility() == View.VISIBLE
+        && filmScrollRef != null
+        && filmScrollRef.isShown();
+  }
+
+  private void syncThumbCache() {
+    String print = thumbFingerprint();
+    if (print.equals(thumbPrint)) return;
+    thumbPrint = print;
+    ++thumbGeneration;
+    // All cache/view bookkeeping stays on the UI thread. Detach before recycling.
+    for (ImageView view : thumbTargets.values()) view.setImageDrawable(null);
+    for (Bitmap stale : filmThumbs.values()) Bitmaps.release(stale);
+    filmThumbs.clear();
+    thumbFailed.clear();
+  }
+
+  private void refillThumbs() {
+    if (!galleryVisible() || thumbViewsRef.isEmpty() || thumbStridePx <= 0) return;
+    syncThumbCache();
+    fillVisibleThumbs(filmScrollRef, thumbViewsRef, thumbStocksRef, thumbStridePx, thumbSizePx);
+  }
+
+  /** Render visible cards plus a 60dp buffer, never all stocks up front. */
+  private void fillVisibleThumbs(
+      HorizontalScrollView scroll,
+      List<ImageView> views,
+      List<String> stocks,
+      int stridePx,
+      int sizePx) {
+    if (!galleryVisible() || scroll != filmScrollRef || scroll.getWidth() <= 0) return;
+    syncThumbCache();
+    int left = scroll.getScrollX() - dp(60);
+    int right = scroll.getScrollX() + scroll.getWidth() + dp(60);
+    for (int i = 0; i < views.size(); i++) {
+      int l = i * stridePx, r = l + sizePx;
+      if (r < left || l > right) continue;
+      requestFilmThumb(stocks.get(i), views.get(i));
+    }
+  }
+
+  private void requestFilmThumb(String stock, ImageView target) {
+    Bitmap cached = filmThumbs.get(stock);
+    if (cached != null && !cached.isRecycled()) {
+      target.setImageBitmap(cached);
+      return;
+    }
+    // One thumbnail at a time lets a newly requested main preview jump ahead of the rest.
+    if (thumbBusy
+        || thumbFailed.contains(stock)
+        || source == null
+        || !ready
+        || exporting
+        || activeImport != null
+        || previewWorkTicket == revision) return;
+    final String renderParams, openParams1;
+    try {
+      Stock choice = find(films, stock);
+      JSONObject recipe = new JSONObject();
+      recipe.put("film_stock", stock);
+      recipe.put(
+          "print_stock",
+          choice != null && find(papers, choice.target) != null
+              ? choice.target
+              : "kodak_portra_endura");
+      recipe.put("exposure_compensation_ev", 0);
+      recipe.put("print_brightness", 0);
+      recipe.put("m_filter_shift", 0);
+      recipe.put("y_filter_shift", 0);
+      recipe.put("grain_amount", 1);
+      recipe.put("halation_amount", 1);
+      recipe.put("film_format_mm", 36);
+      recipe.put("auto_exposure", sourceRaw);
+      recipe.put("auto_exposure_method", "balanced");
+      recipe.put("glare_amount", 1);
+      recipe.put("dir_couplers_amount", 1);
+      recipe.put("halation_scatter_amount", 1);
+      recipe.put("density_curve_gamma", 1);
+      JSONObject j = new JSONObject(params(recipe, choice));
+      // Neutral recipe only: user exposure/curves/HSL/paper/grain/date edits stay in the main view.
+      // Engine constraints: minimum 800, product_defaults only in the separate open parameters.
+      j.put("preview_long_edge", 800);
+      renderParams = j.toString();
+      openParams1 = openParams(renderParams);
+    } catch (JSONException ex) {
+      thumbFailed.add(stock);
+      return;
+    }
+    final Bitmap input = source;
+    final File file = sourceFile;
+    final boolean raw = sourceRaw;
+    final int generation = thumbGeneration;
+    final String fingerprint = thumbPrint;
+    thumbBusy = true;
+    thumbQueued.add(stock);
+    worker.execute(
+        () -> {
+          Bitmap made = null;
+          boolean failed = false;
+          try {
+            if (!destroyed && generation == thumbGeneration) {
+              // Each stock must reopen the current photo. Always invalidate main-preview state,
+              // including errors, because opening a thumbnail changes the engine's fixed stock.
+              try {
+                openedSource = null;
+                if (raw) renderer.openRaw(file.getAbsolutePath(), openParams1, 800);
+                else if (file != null) renderer.openFile(file.getAbsolutePath(), openParams1);
+                else renderer.open(input, openParams1);
+                made = renderer.render(renderParams, "{}", false);
+              } finally {
+                openedSource = null;
+              }
+              android.util.Log.i(
+                  "FilmThumb", stock + " rendered " + made.getWidth() + "x" + made.getHeight());
+            }
+          } catch (Throwable ex) {
+            failed = true;
+            android.util.Log.w("FilmThumb", stock + " failed", ex);
+          }
+          final Bitmap result = made;
+          final boolean error = failed;
+          main.post(
+              () -> {
+                thumbBusy = false;
+                thumbQueued.remove(stock);
+                boolean current =
+                    !destroyed
+                        && generation == thumbGeneration
+                        && fingerprint.equals(thumbFingerprint());
+                if (current && result != null) {
+                  filmThumbs.put(stock, result);
+                  ImageView live = thumbTargets.get(stock);
+                  if (live != null && stock.equals(live.getTag())) live.setImageBitmap(result);
+                } else Bitmaps.release(result);
+                if (current && error) thumbFailed.add(stock);
+                if (!destroyed) refillThumbs();
+              });
+        });
+  }
+
+  /** Gallery recipes are fixed defaults; only photo/engine identity invalidates their results. */
+  private String thumbFingerprint() {
+    return photoLoadGeneration
+        + ":"
+        + engineBootGeneration
+        + ":"
+        + System.identityHashCode(source)
+        + ":"
+        + (sourceFile == null ? "" : sourceFile.getAbsolutePath());
+  }
+
   private void scheduleRender() {
     if (activeImport != null) return;
     String now = settings.toString();
@@ -2068,6 +2316,7 @@ public final class MainActivity extends Activity {
     saveActiveFrame();
     int ticket = ++revision;
     if (!ready || source == null || exporting) return;
+    previewWorkTicket = ticket;
     exportButton.setEnabled(false);
     exportButton.setText("正在显影…");
     setStatus(
@@ -2129,6 +2378,8 @@ public final class MainActivity extends Activity {
                         exportButton.setText("导出照片");
                         exportButton.setEnabled(true);
                         exportButton.setOnClickListener(v -> exportOptions());
+                        previewWorkTicket = -1;
+                        refillThumbs();
                       });
                 } catch (Throwable ex) {
                   if (ticket == revision) {
@@ -3243,6 +3494,7 @@ public final class MainActivity extends Activity {
     for (View v : controls) v.setEnabled(!value);
     exportButton.setEnabled(!value && developed != null);
     updateHistoryButtons();
+    if (!value) refillThumbs();
   }
 
   private String sha256(File file) throws Exception {
@@ -3438,30 +3690,36 @@ public final class MainActivity extends Activity {
         });
   }
 
+  private String getPackageVersion() {
+    try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; }
+    catch (Exception e) { return ""; }
+  }
+
   private void about() {
-    String message =
-        getString(R.string.app_name)
-            + " · Android 0.3.6\n\n"
-            + "本机运行 C++ / Vulkan 光谱胶片模型，使用 380–780 nm、5 nm 间隔的 81 波长数据。\n\n"
-            + "原始模型与彩色配置：Andrea Volpato / spektrafilm\n"
-            + "原生引擎：Hanze Qiu 与 SpektraLab 贡献者\n"
-            + "移动 GPU 参考：SAINTTaiYi / SpektraLab-Android v1.3.3j\n"
-            + "Android 客户端与 JNI：本项目移植\n\n"
-            + "胶卷图标：SpektraLens 根据各款胶片型号独立绘制。\n\n"
-            + "程序：GPL-3.0-or-later\n"
-            + "胶片、相纸配置：CC BY-SA 4.0，数据未经修改\n\n"
-            + "RAW：LibRaw 0.22.2，原尺寸去马赛克与拍摄白平衡；预览最长边 1024，导出重新读取原文件。输出 sRGB JPEG / 16 位 PNG / 16 位"
-            + " TIFF。\n\n"
-            + "扫描调色：白平衡偏移、色调、HSL、分区色彩平衡、五组曲线与暗角。片边和日期为扫描后的呈现层，不是桌面版负片曝光模型。\n\n"
-            + "极大图仍受设备内存和 Vulkan 限制；未移植场景纬度映射、批量工作流和专业输出色域。\n\n"
-            + "这里的光晕与颗粒来自胶片计算；手机屏幕表现和性能仍取决于设备。";
-    new Haptics.DialogBuilder(this)
-        .setTitle("关于 " + getString(R.string.app_name))
-        .setMessage(message)
-        .setPositiveButton("完成", null)
-        .setNeutralButton("许可全文", (d, n) -> licenses())
-        .setNegativeButton("处理诊断", (d, n) -> showDiagnostics())
-        .show();
+    if (aboutPage != null) return;
+    AboutPage page =
+        new AboutPage(
+            this,
+            getPackageVersion(),
+            this::closeAbout,
+            () -> updates.check(),
+            this::licenses,
+            this::showDiagnostics);
+    aboutPage = page;
+    screens.addView(page, new FrameLayout.LayoutParams(-1, -1));
+    page.setAlpha(0f);
+    page.animate().alpha(1f).setDuration(160).start();
+  }
+
+  private void closeAbout() {
+    if (aboutPage == null) return;
+    AboutPage page = aboutPage;
+    aboutPage = null;
+    page.animate()
+        .alpha(0f)
+        .setDuration(120)
+        .withEndAction(() -> screens.removeView(page))
+        .start();
   }
 
   private void licenses() {
@@ -3496,6 +3754,7 @@ public final class MainActivity extends Activity {
   @Override
   protected void onResume() {
     super.onResume();
+    if (updates != null) updates.resume();
     if (flowingBackground != null) flowingBackground.setHostResumed(true);
     if (gallerySheet != null && gallerySheet.isShowing()) gallerySheet.refresh();
   }
@@ -3514,7 +3773,14 @@ public final class MainActivity extends Activity {
       getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
       backCallback = null;
     }
+    if (updates != null) updates.close();
     destroyed = true;
+    ++thumbGeneration;
+    for (ImageView view : thumbTargets.values()) view.setImageDrawable(null);
+    for (Bitmap cached : filmThumbs.values()) Bitmaps.release(cached);
+    filmThumbs.clear();
+    thumbTargets.clear();
+    filmScrollRef = null;
     if (homeImages != null) homeImages.close();
     if (activeImport != null) {
       activeImport.cancel();

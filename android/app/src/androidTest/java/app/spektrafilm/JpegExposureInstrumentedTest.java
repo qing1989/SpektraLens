@@ -38,20 +38,6 @@ public final class JpegExposureInstrumentedTest extends InstrumentationTestCase 
           + "\"input_color_space\":\"sRGB\",\"input_cctf_decoding\":true,"
           + "\"output_color_space\":\"sRGB\",\"output_cctf_encoding\":true}";
 
-  private void copy(Context c, String path, File target) throws IOException {
-    String[] children = c.getAssets().list(path);
-    if (children.length > 0) {
-      target.mkdirs();
-      for (String child : children) copy(c, path + "/" + child, new File(target, child));
-    } else
-      try (InputStream in = c.getAssets().open(path);
-          OutputStream out = new FileOutputStream(target)) {
-        byte[] buffer = new byte[65536];
-        int count;
-        while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
-      }
-  }
-
   private void copyAsset(String name, File target) throws IOException {
     try (InputStream in = getInstrumentation().getContext().getAssets().open(name);
         OutputStream out = new FileOutputStream(target)) {
@@ -106,10 +92,7 @@ public final class JpegExposureInstrumentedTest extends InstrumentationTestCase 
     File dir = context.getExternalFilesDir(null);
     assertNotNull(dir);
     File resources = new File(context.getFilesDir(), "exposure_engine_v023");
-    if (!new File(resources, ".ready").exists()) {
-      copy(context, "engine", resources);
-      new File(resources, ".ready").createNewFile();
-    }
+    EngineResources.prepare(context, resources);
     File input = new File(dir, "exposure-input.jpg");
     copyAsset("exposure-probe.jpg", input);
     File dimmed = new File(dir, "exposure-input-dark.jpg");
