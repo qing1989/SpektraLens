@@ -77,7 +77,7 @@ for name in current_docs:
 sources = []
 # Only the integrated launcher artwork belongs to the corresponding application source.
 # Parallel design proposals are separate deliverables and may still be under review.
-for directory in ('android', 'scripts', 'docs', 'design/app-icon/v1', 'third_party', 'patches'):
+for directory in ('android', 'scripts', 'docs', 'design/app-icon/v4-spectrum-film-2026-11-11', 'third_party', 'patches'):
     for path in (ROOT / directory).rglob('*'):
         rel = path.relative_to(ROOT)
         if not path.is_file() or any(p in ('build', '.gradle', '.cxx', '__pycache__') for p in rel.parts): continue
@@ -85,7 +85,7 @@ for directory in ('android', 'scripts', 'docs', 'design/app-icon/v1', 'third_par
         if rel.parts[:7] == ('android','app','src','main','assets','film_icons','grlife'): continue
         if rel.parts[:6] == ('android','app','src','main','assets','engine'): continue
         sources.append(path)
-for name in ('README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'UPSTREAMS.md', 'NOTICE', 'CITATION.cff', 'AGENTS.md', 'CHANGELOG.md', '.gitignore', '.gitmodules', '.gitattributes'):
+for name in ('README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'UPSTREAMS.md', 'NOTICE', 'CITATION.cff', 'CHANGELOG.md', '.gitignore', '.gitmodules', '.gitattributes'):
     sources.append(ROOT / name)
 if (ROOT / 'SpektraLab/.git').exists():
     tracked = subprocess.check_output(['git', '-C', str(ROOT / 'SpektraLab'), 'ls-files', '-z']).decode().split('\0')

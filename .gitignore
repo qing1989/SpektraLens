@@ -26,6 +26,9 @@ design/app-icon/v1/emulator-*.png
 # 本地交接笔记（不上传）
 .local/
 
+# 本机协作文档，不进版本库、不随源码包发布
+AGENTS.md
+
 # 签名材料，绝不入库
 android/keystore/
 keystore.properties
