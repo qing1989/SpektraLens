@@ -110,6 +110,7 @@ public final class MainActivity extends Activity {
   private HomePhotoImages homeImages;
   private TextView photoPickerButton;
   private GallerySheet gallerySheet;
+  private ExportSheet exportSheet;
   private String pickerSettings;
   private int selectedTab;
   private String filmCategory = "全部";
@@ -3479,14 +3480,31 @@ public final class MainActivity extends Activity {
 
   private void exportOptions() {
     if (!ready || developed == null || exporting) return;
-    String dimensions = dimensionsLabel();
-    new Haptics.DialogBuilder(this)
-        .setTitle("原尺寸导出 · " + dimensions)
-        .setItems(
-            new String[] {"保存 JPEG · 8 位", "保存 PNG · 16 位", "保存 TIFF · 16 位", "分享 JPEG · 8 位"},
-            (d, n) -> export(n))
-        .setNegativeButton("取消", null)
-        .show();
+    if (exportSheet != null && exportSheet.isShowing()) return;
+    int outputWidth = 0, outputHeight = 0;
+    String dimensions = "读取尺寸后显示";
+    try {
+      JSONObject output =
+          new JSONObject(NativeEngine.dimensions(fullWidth, fullHeight, editParams()));
+      outputWidth = output.getInt("width");
+      outputHeight = output.getInt("height");
+      dimensions = outputWidth + " × " + outputHeight;
+    } catch (JSONException | RuntimeException error) {
+      android.util.Log.w("SpektraLensExport", "Output dimensions unavailable", error);
+    }
+    File selectedSource = sourceFile;
+    int selectedRevision = revision;
+    exportSheet =
+        new ExportSheet(
+            this, dimensions, outputWidth, outputHeight, developed,
+            options -> {
+              if (sourceFile != selectedSource || revision != selectedRevision) {
+                Toast.makeText(this, "照片已更新，请重新打开导出面板", Toast.LENGTH_SHORT).show();
+                return;
+              }
+              export(options);
+            });
+    exportSheet.show();
   }
 
   private void lock(boolean value) {
@@ -3510,14 +3528,29 @@ public final class MainActivity extends Activity {
   }
 
   private void export(int mode) {
+    export(new ExportOptions(mode, ExportOptions.RECOMMENDED));
+  }
+
+  private void export(ExportOptions options) {
     if (exporting || sourceFile == null) return;
+    int mode = options.mode;
+    final String exportEdits;
+    try {
+      JSONObject edits = new JSONObject(editParams());
+      edits.remove("export_quality");
+      if (options.isJpeg()) edits.put("export_quality", options.jpegQuality);
+      exportEdits = edits.toString();
+    } catch (JSONException error) {
+      report("无法读取导出设置", error);
+      return;
+    }
     lock(true);
     ++revision;
     if (pending != null) main.removeCallbacks(pending);
     setStatus("从原文件读取并显影…", true);
     exportButton.setText("正在导出…");
     String p = params(),
-        edits = editParams(),
+        edits = exportEdits,
         name = filename,
         exportedSettings = settings.toString();
     File original = sourceFile;
@@ -3531,6 +3564,7 @@ public final class MainActivity extends Activity {
     trace.put("source_height", height);
     trace.put("source_raw", raw);
     trace.put("format", format);
+    if (options.isJpeg()) trace.put("jpeg_quality", options.jpegQuality);
     worker.execute(
         () -> {
           Uri uri = null;
@@ -3615,6 +3649,7 @@ public final class MainActivity extends Activity {
             recipe.put("height", dimensions.getInt("height"));
             recipe.put("color_space", "sRGB");
             recipe.put("bits_per_channel", mode == 1 || mode == 2 ? 16 : 8);
+            if (options.isJpeg()) recipe.put("jpeg_quality", options.jpegQuality);
             recipe.put("backend", "native-vulkan");
             recipe.put("renderer_mode", renderer.backend());
             recipe.put("fallback_reason", renderer.fallbackReason());
@@ -3639,6 +3674,7 @@ public final class MainActivity extends Activity {
             android.util.Log.i("SpektraLensAndroid", "Export complete: " + recipe);
             String label = dimensions.getInt("width") + " × " + dimensions.getInt("height");
             File sharedFile = cache;
+            String fileSize = android.text.format.Formatter.formatShortFileSize(this, cache.length());
             ui(
                 () -> {
                   lock(false);
@@ -3663,6 +3699,8 @@ public final class MainActivity extends Activity {
                                 + label
                                 + " · sRGB · "
                                 + format.toUpperCase(Locale.US)
+                                + " · "
+                                + fileSize
                                 + "\n\n"
                                 + (mode == 2 ? "TIFF 为 16 位文件；部分相册不显示其缩略图，可从文件管理器打开。\n\n" : "")
                                 + "包含本次调色、片边与日期。导出配方已保存在本机编辑记录中。")
@@ -3769,6 +3807,7 @@ public final class MainActivity extends Activity {
   protected void onDestroy() {
     if (flowingBackground != null) flowingBackground.setHostResumed(false);
     if (gallerySheet != null) gallerySheet.dismiss();
+    if (exportSheet != null) exportSheet.dismiss();
     if (backCallback != null && Build.VERSION.SDK_INT >= 33) {
       getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
       backCallback = null;
