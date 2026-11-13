@@ -31,6 +31,8 @@ public final class MainActivity extends Activity {
   static final int FADE_ROW_DP = 24;
   /** 面板的最大高度（dp）。预览区按这个值预留，所以它也决定照片能有多大。 */
   static final int PANEL_MAX_DP = 320;
+  private static final int GALLERY_SOURCE_EDGE = 1024;
+  private static final long GALLERY_CACHE_BYTES = 16L * 1024 * 1024;
   private UpdateController updates;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService importWorker = Executors.newFixedThreadPool(2);
@@ -73,7 +75,8 @@ public final class MainActivity extends Activity {
   private long engine; // readiness marker; native engine pointers remain in the renderer process.
   private volatile SpectralRenderer renderer;
   // 画廊只展示原片的默认胶片风格；二次调节仅影响主预览，不使画廊缓存失效。
-  private final Map<String, Bitmap> filmThumbs = new HashMap<>();
+  private final LinkedHashMap<String, Bitmap> filmThumbs =
+      new LinkedHashMap<>(32, .75f, true);
   private final Set<String> thumbQueued = new HashSet<>();
   private String thumbPrint = "";
   private volatile int thumbGeneration;
@@ -1080,8 +1083,8 @@ public final class MainActivity extends Activity {
       add(editor, filters, -1, 40);
       gap(editor, 8);
       // 画廊式胶片选择：方形缩略图就是「当前这张照片用这卷胶片显影后的样子」，标签在下方，
-      // 选中用 2dp 白色描边。缩略图必须每张独立 open —— 只换 film_stock 不会换显影结果
-      // （实测差异仅 1.5/255）；实测 open 67ms、render 648ms，所以只渲染进入可视区的几张。
+      // 选中用 2dp 白色描边。缩略图仍逐卷独立 open，但显影进程只解码一次 1024px 源图；
+      // 引擎完成规定的 800px 显影后，再把返回值和缓存压到卡片尺寸。
       final int thumbSize = 88, thumbGap = 10, labelHeight = 22;
       final int stride = thumbSize + thumbGap;
       final int cardHeight = thumbSize + 7 + labelHeight + 4;
@@ -2245,6 +2248,7 @@ public final class MainActivity extends Activity {
     final boolean raw = sourceRaw;
     final int generation = thumbGeneration;
     final String fingerprint = thumbPrint;
+    final int postLongEdge = galleryThumbEdge();
     thumbBusy = true;
     thumbQueued.add(stock);
     worker.execute(
@@ -2257,15 +2261,28 @@ public final class MainActivity extends Activity {
               // including errors, because opening a thumbnail changes the engine's fixed stock.
               try {
                 openedSource = null;
+                long started = SystemClock.elapsedRealtime();
                 if (raw) renderer.openRaw(file.getAbsolutePath(), openParams1, 800);
-                else if (file != null) renderer.openFile(file.getAbsolutePath(), openParams1);
+                else if (file != null)
+                  renderer.openFile(file.getAbsolutePath(), openParams1, GALLERY_SOURCE_EDGE);
                 else renderer.open(input, openParams1);
-                made = renderer.render(renderParams, "{}", false);
+                long opened = SystemClock.elapsedRealtime();
+                made = renderer.render(renderParams, "{}", false, postLongEdge);
+                long rendered = SystemClock.elapsedRealtime();
+                android.util.Log.i(
+                    "FilmThumb",
+                    stock
+                        + " opened="
+                        + (opened - started)
+                        + "ms rendered="
+                        + (rendered - opened)
+                        + "ms bitmap="
+                        + made.getWidth()
+                        + "x"
+                        + made.getHeight());
               } finally {
                 openedSource = null;
               }
-              android.util.Log.i(
-                  "FilmThumb", stock + " rendered " + made.getWidth() + "x" + made.getHeight());
             }
           } catch (Throwable ex) {
             failed = true;
@@ -2282,7 +2299,7 @@ public final class MainActivity extends Activity {
                         && generation == thumbGeneration
                         && fingerprint.equals(thumbFingerprint());
                 if (current && result != null) {
-                  filmThumbs.put(stock, result);
+                  cacheFilmThumb(stock, result);
                   ImageView live = thumbTargets.get(stock);
                   if (live != null && stock.equals(live.getTag())) live.setImageBitmap(result);
                 } else Bitmaps.release(result);
@@ -2290,6 +2307,38 @@ public final class MainActivity extends Activity {
                 if (!destroyed) refillThumbs();
               });
         });
+  }
+
+  private int galleryThumbEdge() {
+    // 88dp cards stay sharp on 4x-density screens without carrying an 800px bitmap for every
+    // stock. The engine still renders at its required 800px minimum.
+    return Math.max(256, Math.min(512, dp(112)));
+  }
+
+  private void cacheFilmThumb(String stock, Bitmap bitmap) {
+    filmThumbs.put(stock, bitmap);
+    trimThumbCache();
+  }
+
+  private void trimThumbCache() {
+    long bytes = 0;
+    for (Bitmap bitmap : filmThumbs.values()) bytes += bitmapBytes(bitmap);
+    if (bytes <= GALLERY_CACHE_BYTES) return;
+    Iterator<Map.Entry<String, Bitmap>> oldest = filmThumbs.entrySet().iterator();
+    while (bytes > GALLERY_CACHE_BYTES && oldest.hasNext()) {
+      Map.Entry<String, Bitmap> entry = oldest.next();
+      Bitmap stale = entry.getValue();
+      bytes -= bitmapBytes(stale);
+      ImageView target = thumbTargets.get(entry.getKey());
+      if (target != null && entry.getKey().equals(target.getTag()))
+        target.setImageDrawable(null);
+      oldest.remove();
+      Bitmaps.release(stale);
+    }
+  }
+
+  private long bitmapBytes(Bitmap bitmap) {
+    return bitmap == null || bitmap.isRecycled() ? 0 : bitmap.getAllocationByteCount();
   }
 
   /** Gallery recipes are fixed defaults; only photo/engine identity invalidates their results. */
@@ -2353,7 +2402,7 @@ public final class MainActivity extends Activity {
                   JSONObject comparison = new JSONObject(edits);
                   comparison.put("grade_enabled", false);
                   comparison.put("date_enabled", false);
-                  Bitmap before = NativeEngine.editBitmap(input, comparison.toString());
+                  Bitmap before = renderer.editBitmap(input, comparison.toString());
                   double sec = (System.nanoTime() - start) / 1e9;
                   ui(
                       () -> {

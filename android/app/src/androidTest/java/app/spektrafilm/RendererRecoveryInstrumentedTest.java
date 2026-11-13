@@ -60,6 +60,16 @@ public final class RendererRecoveryInstrumentedTest extends InstrumentationTestC
     return b;
   }
 
+  private Bitmap previewChart() {
+    int width = 1024, height = 1024;
+    int[] pixels = new int[width * height];
+    for (int y = 0; y < height; y++)
+      for (int x = 0; x < width; x++)
+        pixels[y * width + x] =
+            Color.rgb((x * 223) / width, (y * 223) / height, ((x + y) * 127) / (width + height));
+    return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888);
+  }
+
   private double brightness(Bitmap b) {
     double v = 0;
     for (int y = 0; y < b.getHeight(); y++)
@@ -115,6 +125,26 @@ public final class RendererRecoveryInstrumentedTest extends InstrumentationTestC
     }
     input.recycle();
     cpu.recycle();
+  }
+
+  public void testBitmapEditsRunInsideRendererProcess() throws Exception {
+    int editor = android.os.Process.myPid();
+    renderer = new SpectralRenderer(context);
+    renderer.start(resources.getAbsolutePath(), "cpu");
+    assertTrue(renderer.processId() != editor);
+    // The editor decodes raster previews at a 1024 px long edge. Exercise the same bitmap size
+    // across Binder rather than only the 96 x 64 pixel-parity fixture.
+    Bitmap input = previewChart();
+    String edits = "{\"grade_enabled\":true,\"grade_exposure\":0.35}";
+    Bitmap edited = renderer.editBitmap(input, edits);
+    Bitmap reference = NativeEngine.editBitmap(input, edits);
+    assertTrue(
+        "Private-process bitmap edit must match the native reference", edited.sameAs(reference));
+    assertTrue(renderer.isAlive());
+    assertEquals(editor, android.os.Process.myPid());
+    input.recycle();
+    edited.recycle();
+    reference.recycle();
   }
 
   public void testBlockedGpuStartupFallsBackToActualCpuWithoutKillingEditor() throws Exception {

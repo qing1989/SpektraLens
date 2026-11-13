@@ -193,8 +193,17 @@ public final class FilmGalleryInstrumentedTest
             assertEquals(((File) field("sourceFile")).getAbsolutePath(), opened.getString("path"));
             JSONObject open = new JSONObject(opened.getString("params"));
             assertEquals(800, open.getInt("preview_long_edge"));
+            assertEquals(1024, opened.getInt("edge"));
             assertTrue(open.getBoolean("product_defaults"));
             assertNull("Thumbnails invalidate main engine state", field("openedSource"));
+            long cacheBytes = 0;
+            for (Bitmap thumbnail : cache().values()) {
+              assertTrue(Math.max(thumbnail.getWidth(), thumbnail.getHeight()) <= 512);
+              cacheBytes += thumbnail.getAllocationByteCount();
+            }
+            assertTrue(
+                "Gallery bitmap cache must stay below its 16 MiB budget",
+                cacheBytes <= 16L * 1024 * 1024);
             Bitmap screenshot = getInstrumentation().getUiAutomation().takeScreenshot();
             try (FileOutputStream out =
                 new FileOutputStream(

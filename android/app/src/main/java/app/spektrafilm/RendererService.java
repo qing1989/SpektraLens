@@ -24,9 +24,14 @@ public class RendererService extends Service {
       RENDER = 7,
       EXPORT = 8,
       CLOSE_IMAGE = 9,
-      OPEN_FILE = 10;
+      OPEN_FILE = 10,
+      EDIT_BITMAP = 11;
   private final Object engineLock = new Object();
   private long engine;
+  // Gallery decoding is independent of the film stock. Decode a bounded raster preview once and
+  // reuse it for each reopen; NativeEngine copies the bitmap into its own session.
+  private Bitmap rasterPreview;
+  private String rasterPreviewKey;
   private final Binder binder =
       new Binder() {
         protected boolean onTransact(int code, Parcel data, Parcel reply, int flags)
@@ -81,7 +86,10 @@ public class RendererService extends Service {
                         args.getInt("edge"));
                     break;
                   case OPEN_FILE:
-                    openRasterFile(args.getString("path"), args.getString("params"));
+                    openRasterFile(
+                        args.getString("path"),
+                        args.getString("params"),
+                        args.getInt("edge", 0));
                     break;
                   case RAW_PREVIEW:
                     result.putParcelable(
@@ -92,11 +100,13 @@ public class RendererService extends Service {
                   case RENDER:
                     result.putParcelable(
                         "bitmap",
-                        NativeEngine.renderEdited(
-                            engine,
-                            args.getString("params"),
-                            args.getString("edits"),
-                            args.getBoolean("full")));
+                        resizeForTransfer(
+                            NativeEngine.renderEdited(
+                                engine,
+                                args.getString("params"),
+                                args.getString("edits"),
+                                args.getBoolean("full")),
+                            args.getInt("post_edge", 0)));
                     break;
                   case EXPORT:
                     result.putString(
@@ -110,6 +120,12 @@ public class RendererService extends Service {
                     break;
                   case CLOSE_IMAGE:
                     NativeEngine.closeImage(engine);
+                    break;
+                  case EDIT_BITMAP:
+                    result.putParcelable(
+                        "bitmap",
+                        NativeEngine.editBitmap(
+                            args.getParcelable("bitmap"), args.getString("edits")));
                     break;
                   default:
                     throw new IllegalArgumentException("Unknown renderer command");
@@ -130,26 +146,78 @@ public class RendererService extends Service {
     return binder;
   }
 
-  private void openRasterFile(String path, String params) throws java.io.IOException {
+  private void openRasterFile(String path, String params, int targetLongEdge)
+      throws java.io.IOException {
+    File source = new File(path);
+    String cacheKey =
+        targetLongEdge > 0
+            ? source.getAbsolutePath()
+                + ":"
+                + source.length()
+                + ":"
+                + source.lastModified()
+                + ":"
+                + targetLongEdge
+            : null;
+    Bitmap bitmap = null;
+    if (cacheKey != null
+        && cacheKey.equals(rasterPreviewKey)
+        && rasterPreview != null
+        && !rasterPreview.isRecycled()) bitmap = rasterPreview;
+    if (bitmap == null) {
+      bitmap = decodeRasterPreview(source, targetLongEdge);
+      if (cacheKey != null) {
+        Bitmaps.release(rasterPreview);
+        rasterPreview = bitmap;
+        rasterPreviewKey = cacheKey;
+      }
+    }
+    try {
+      NativeEngine.open(engine, bitmap, params);
+    } finally {
+      if (cacheKey == null) Bitmaps.release(bitmap);
+    }
+  }
+
+  private Bitmap decodeRasterPreview(File source, int targetLongEdge) throws java.io.IOException {
     Bitmap bitmap =
         ImageDecoder.decodeBitmap(
-            ImageDecoder.createSource(new File(path)),
-            (decoder, info, source) -> {
+            ImageDecoder.createSource(source),
+            (decoder, info, value) -> {
               decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
               decoder.setMutableRequired(true);
               decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB));
+              if (targetLongEdge > 0) {
+                int width = info.getSize().getWidth();
+                int height = info.getSize().getHeight();
+                float scale = Math.min(1, targetLongEdge / (float) Math.max(width, height));
+                decoder.setTargetSize(
+                    Math.max(1, Math.round(width * scale)),
+                    Math.max(1, Math.round(height * scale)));
+              }
             });
-    try {
-      if (bitmap.getConfig() != Bitmap.Config.ARGB_8888) {
-        Bitmap converted = bitmap.copy(Bitmap.Config.ARGB_8888, true);
-        if (converted == null) throw new java.io.IOException("无法转换原照片");
-        Bitmaps.release(bitmap);
-        bitmap = converted;
-      }
-      NativeEngine.open(engine, bitmap, params);
-    } finally {
-      Bitmaps.release(bitmap);
-    }
+    if (bitmap.getConfig() == Bitmap.Config.ARGB_8888) return bitmap;
+    Bitmap converted = bitmap.copy(Bitmap.Config.ARGB_8888, true);
+    Bitmaps.release(bitmap);
+    if (converted == null) throw new java.io.IOException("无法转换原照片");
+    return converted;
+  }
+
+  private Bitmap resizeForTransfer(Bitmap bitmap, int targetLongEdge) {
+    if (bitmap == null || targetLongEdge <= 0) return bitmap;
+    int width = bitmap.getWidth();
+    int height = bitmap.getHeight();
+    int longEdge = Math.max(width, height);
+    if (longEdge <= targetLongEdge) return bitmap;
+    float scale = targetLongEdge / (float) longEdge;
+    Bitmap scaled =
+        Bitmap.createScaledBitmap(
+            bitmap,
+            Math.max(1, Math.round(width * scale)),
+            Math.max(1, Math.round(height * scale)),
+            true);
+    if (scaled != bitmap) Bitmaps.release(bitmap);
+    return scaled;
   }
 
   // No blocking native cleanup on the service's UI thread. The process owns all these resources.

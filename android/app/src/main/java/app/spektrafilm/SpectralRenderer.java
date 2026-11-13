@@ -151,9 +151,18 @@ final class SpectralRenderer implements AutoCloseable {
   }
 
   void openFile(String path, String params) {
+    openFile(path, params, 0);
+  }
+
+  /**
+   * A bounded decode is used by the gallery. A value of zero preserves full-resolution decoding
+   * for export and recovery paths.
+   */
+  void openFile(String path, String params, int targetLongEdge) {
     Bundle a = new Bundle();
     a.putString("path", path);
     a.putString("params", params);
+    if (targetLongEdge > 0) a.putInt("edge", targetLongEdge);
     lastOpen = a;
     lastOpenCode = RendererService.OPEN_FILE;
     request(RendererService.OPEN_FILE, a, 120000);
@@ -177,11 +186,28 @@ final class SpectralRenderer implements AutoCloseable {
   }
 
   Bitmap render(String params, String edits, boolean full) {
+    return render(params, edits, full, 0);
+  }
+
+  /** Optionally reduce the returned bitmap after the engine's required render resolution. */
+  Bitmap render(String params, String edits, boolean full, int postLongEdge) {
     Bundle a = new Bundle();
     a.putString("params", params);
     a.putString("edits", edits);
     a.putBoolean("full", full);
+    if (postLongEdge > 0) a.putInt("post_edge", postLongEdge);
     return request(RendererService.RENDER, a, full ? 180000 : 60000).getParcelable("bitmap");
+  }
+
+  /**
+   * Secondary CPU edits belong to the private renderer process too. Keeping this JNI call in the
+   * editor process would let a device-specific native failure terminate the Activity.
+   */
+  Bitmap editBitmap(Bitmap bitmap, String edits) {
+    Bundle a = new Bundle();
+    a.putParcelable("bitmap", bitmap);
+    a.putString("edits", edits);
+    return request(RendererService.EDIT_BITMAP, a, 60000).getParcelable("bitmap");
   }
 
   String exportImage(String params, String edits, String path, String format) {
