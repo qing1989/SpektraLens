@@ -4,6 +4,8 @@ package app.spektrafilm;
 
 import android.app.*;
 import android.content.*;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.content.pm.PackageInstaller;
 import android.net.Uri;
 import android.os.Build;
@@ -20,6 +22,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class UpdateController {
   static final String MANIFEST = "https://github.com/qing1989/SpektraLens/releases/latest/download/latest.json";
   static final String RELEASES = "https://github.com/qing1989/SpektraLens/releases/latest";
+  static final String EXTRA_STARTING_VERSION_CODE = "spektra.starting_version_code";
+  static final String EXTRA_TARGET_VERSION_CODE = "spektra.target_version_code";
   private final Activity activity;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final AtomicBoolean cancelled = new AtomicBoolean();
@@ -200,6 +204,17 @@ final class UpdateController {
             session.fsync(out);
           }
           Intent callback = new Intent(activity, UpdateInstallActivity.class);
+          PackageManager packages = activity.getPackageManager();
+          PackageInfo candidate =
+              Build.VERSION.SDK_INT >= 33
+                  ? packages.getPackageArchiveInfo(
+                      apk().getAbsolutePath(), PackageManager.PackageInfoFlags.of(0))
+                  : packages.getPackageArchiveInfo(apk().getAbsolutePath(), 0);
+          if (candidate != null) {
+            callback
+                .putExtra(EXTRA_STARTING_VERSION_CODE, code)
+                .putExtra(EXTRA_TARGET_VERSION_CODE, candidate.getLongVersionCode());
+          }
           int flags = PendingIntent.FLAG_UPDATE_CURRENT;
           if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
           android.os.Bundle callbackOptions = null;
