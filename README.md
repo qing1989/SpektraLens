@@ -10,14 +10,18 @@
 [![许可](https://img.shields.io/badge/license-GPL--3.0--or--later-blue?style=flat-square)](LICENSE)
 [![CI](https://github.com/qing1989/SpektraLens/actions/workflows/android.yml/badge.svg)](https://github.com/qing1989/SpektraLens/actions/workflows/android.yml)
 
-SpektraLens 是一个**本地运行的光谱胶片模拟器**。它不复用任何预设滤镜或 LUT，而是把真实胶片的光谱响应曲线搬进手机：380–780 nm、每 5 nm 一个采样点、共 81 个波长，逐波长积分感光层、染料层与相纸的响应，再还原成 sRGB 图像。
+SpektraLens 是一个**跑在手机上的光谱胶片模拟器**。它不做 3×3 矩阵近似，也不查 LUT，而是把真实胶片的光谱响应搬进设备：380–780 nm、每 5 nm 一个采样点、共 81 个波长，逐波长积分感光层、染料层与相纸的响应，再还原成 sRGB 图像。
 
-RAW 解码、光谱显影、调色、颗粒与光晕合成、编码写盘全部在设备端完成。**没有服务器、没有账号、不上传照片。**
+RAW 解码、光谱显影、相纸印相、调色、颗粒与光晕合成、编码写盘全部在设备端完成。**没有服务器、没有账号、不上传照片**；只有检查更新和下载新版本时会联网。
+
+<p align="center">
+  <b>20</b> 款胶片 &nbsp;·&nbsp; <b>8</b> 款相纸 &nbsp;·&nbsp; <b>81</b> 个波长 &nbsp;·&nbsp; <b>0</b> 次上传
+</p>
 
 <p align="center">
   <img src="docs/images/01-home.jpg" width="26%" alt="首页" />
-  <img src="docs/images/02-film.jpg" width="26%" alt="胶片选择" />
-  <img src="docs/images/06-texture.jpg" width="26%" alt="质感控制" />
+  <img src="docs/images/02-film.jpg" width="26%" alt="胶片与画廊" />
+  <img src="docs/images/07-export.jpg" width="26%" alt="导出面板" />
 </p>
 
 ---
@@ -29,17 +33,17 @@ RAW 解码、光谱显影、调色、颗粒与光晕合成、编码写盘全部�
 | 原理 | 3×3 矩阵或 LUT 查表 | 81 波长光谱积分，物理胶片模型 |
 | 数据 | 制作者反复调色试出的近似 | 上游实测胶片光谱密度数据，未修改 |
 | 结果 | 换一张照片就失准 | 曝光、光源色温、胶片型号各自独立作用 |
-| 处理位置 | 常需上传云端 | 全程在手机 GPU / CPU 上计算 |
+| 处理位置 | 常需上传云端 | 全程在本机 GPU / CPU 上计算 |
 
 ## 界面
 
 <p align="center">
   <img src="docs/images/01-home.jpg" width="23%" alt="首页" />
-  <img src="docs/images/02-film.jpg" width="23%" alt="胶片面板" />
+  <img src="docs/images/02-film.jpg" width="23%" alt="胶片与画廊" />
   <img src="docs/images/03-paper.jpg" width="23%" alt="相纸与印相" />
 </p>
 <p align="center">
-  <sub><b>首页</b> 导入或继续最近的底片 · <b>胶片</b> 20 款胶片与胶片曝光 · <b>相纸</b> 8 款印相材料与滤色</sub>
+  <sub><b>首页</b> 导入或继续最近的底片，卡片上标着已套用的胶卷 &nbsp;·&nbsp; <b>胶片</b> 20 款，按负片 / 电影 / 反转分类，一格一个效果 &nbsp;·&nbsp; <b>相纸</b> 8 款印相材料与印相亮度</sub>
 </p>
 
 <p align="center">
@@ -48,44 +52,60 @@ RAW 解码、光谱显影、调色、颗粒与光晕合成、编码写盘全部�
   <img src="docs/images/06-texture.jpg" width="23%" alt="质感" />
 </p>
 <p align="center">
-  <sub><b>调整</b> 基础 / 曲线 / 色彩平衡 / HSL / 暗角 · <b>边框</b> 齿孔、白边、即时相纸与日期水印 · <b>质感</b> 颗粒、光晕与物理画幅</sub>
+  <sub><b>调整</b> 基础 / 曲线 / 色彩平衡 / HSL / 暗角 &nbsp;·&nbsp; <b>边框</b> 片边样式与日期水印 &nbsp;·&nbsp; <b>质感</b> 颗粒、光晕与乳剂散射</sub>
 </p>
 
-> 截图取自 v0.3.3；v0.3.5 起应用统一更名为 SpektraLens，界面与交互未变。
+<p align="center">
+  <img src="docs/images/07-export.jpg" width="23%" alt="导出面板" />
+  <img src="docs/images/08-about.jpg" width="23%" alt="关于页" />
+</p>
+<p align="center">
+  <sub><b>导出</b> JPEG 8 位 / PNG 16 位 / TIFF 16 位，JPEG 画质三档，先给体积再保存 &nbsp;·&nbsp; <b>关于</b> 版本、检查更新、上游与许可</sub>
+</p>
+
+> 截图取自 v0.4.3 实机运行。
 
 ## 功能
 
 **胶片与相纸**
 
-- 20 款彩色胶片：Kodak Portra 160/400/800（含 Push 1 / Push 2）、Ektar 100、Gold 200、Ultramax 400、Ektachrome 100、Kodachrome 64、Vision3 50D/200T/250D/500T、Verita 200D；Fujifilm C200、Pro 400H、X-Tra 400、Provia 100F、Velvia 100
-- 8 款相纸与拷贝片：Kodak Endura / Supra / Ultra / Portra Endura、Ektacolor Edge、Vision 2383 / Premier 2393、Fujifilm Crystal Archive Type II
-- 负片走完整印相链路（亮度 + 洋红/黄色滤色），反转片直接扫描；切换胶片自动联动推荐相纸与分类
+- 20 款彩色胶片：Kodak Portra 160 / 400 / 800（含 800 Push 1、Push 2）、Ektar 100、Gold 200、Ultramax 400、Ektachrome 100、Kodachrome 64、Vision3 50D / 200T / 250D / 500T、Verita 200D；Fujifilm C200、Pro 400H、X-Tra 400、Provia 100F、Velvia 100
+- 8 款相纸与拷贝片：Kodak Professional Endura Premier / Supra Endura / Ultra Endura / Portra Endura、Ektacolor Edge、Vision 2383 / Premier 2393、Fujifilm Crystal Archive Type II
+- 负片走完整印相链路（亮度 + 洋红 / 黄色滤色），反转片直接扫描；切换胶片时相纸与分类自动联动
+- 每张照片的胶片画廊缩略图都按当前照片现场显影，看到的就是这张图的实际效果，不是样片
 
 <p align="center">
   <img src="docs/images/film-canisters.png" width="70%" alt="20 款胶片图标" />
   <br/>
-  <sub>20 款胶卷图标全部由 Canvas 代码绘制，无位图素材</sub>
+  <sub>20 款胶卷图标全部由 Canvas 代码绘制，仓库内无位图素材</sub>
 </p>
 
 **显影与调色**
 
-- 基础：曝光、对比度、亮度、阴影/高光、黑白场、饱和度、冷暖与色调
+- 基础：曝光、对比度、亮度、阴影 / 高光、黑白场、饱和度、冷暖与色调
 - 曲线：RGB、亮度、R/G/B 共 5 组，点击加点、拖动调整、长按删点
 - 色彩平衡（四区）、HSL 八色分色、暗角
-- 整组扫描调色可一键旁路，便于对比原始显影结果
+- 整组扫描调色可一键旁路，随时对比原始显影结果
 
 **质感与呈现**
 
-- 银盐颗粒、高光光晕、光晕增益、乳剂散射、防光晕层、显影耦合、密度曲线、镜头/扫描柔化、相纸炫光与预闪
+- 银盐颗粒、高光光晕、光晕曝光增益、乳剂散射、防光晕层、显影耦合、密度曲线、镜头 / 扫描柔化、相纸炫光与预闪
 - 物理画幅（135 / 120 等）、自动测光（默认关闭，可手动开启）
-- 片边：135 黑色/暖色齿孔、白边、即时相纸，编号与英文题注，日期位置/颜色/字号/亮度可调
+- 片边：135 黑色 / 暖色齿孔、白边、即时相纸，编号与英文题注；日期位置 / 颜色 / 字号 / 亮度可调
 
 **输入与输出**
 
 - RAW：`.DNG` `.NEF` `.RAF` `.ARW` 等，LibRaw 原尺寸 AHD 去马赛克，使用传感器数据而非内嵌预览
 - 普通：JPEG / PNG / HEIC 等系统解码格式
-- 导出：sRGB JPEG（8 位 q96）、PNG / TIFF（16 位），从原文件重新显影、不放大小图；保留可读 EXIF 与 ICC，不复制 GPS
-- 每张照片独立编辑记录，30 步会话撤销/重做；导出配方与输入输出 SHA-256 存档，便于复现
+- 导出：sRGB JPEG（8 位，高画质 95 / 推荐 90 / 节省空间 85 三档）、PNG / TIFF（16 位），每次从原文件重新显影，不放大小图；保留可读 EXIF 与 ICC，不复制 GPS
+- 导出前按当前预览给出体积估算，PNG / TIFF 以实际导出为准，不阻塞保存
+- 每张照片独立编辑记录，30 步会话撤销 / 重做；导出配方与输入输出 SHA-256 存档，便于复现
+
+**应用内更新**
+
+- 「关于 → 检查更新」直接比对固定 Release 清单，按 versionCode 判断新旧，并显示这一版的更新说明
+- 下载显示进度、可取消、带 SHA-256 校验，校验不过直接删包；随后走系统安装确认，不需要再去网页找安装包
+- 只有一个用途的联网：检查与下载更新。照片始终留在本机
 
 ## 工作原理
 
@@ -104,7 +124,7 @@ flowchart LR
     J --> K["JPEG · PNG16 · TIFF16"]
 ```
 
-显影在后端独立进程中执行：优先尝试设备 GPU，通过严格数值自检后启用；初始化超时或失败则切换到随包 SwiftShader CPU 驱动。两类后端使用同一份材料数据与着色器，切换后结果一致性由仪器测试比对。
+显影在独立进程中执行：优先尝试设备 GPU，通过严格数值自检后启用；初始化超时或失败则切换到随包 SwiftShader CPU 驱动。两类后端使用同一份材料数据与着色器，切换后结果一致性由仪器测试比对。画廊缩略图在私有显影进程中复用已解码的 1024px 长边图，按 16 MiB LRU 缓存，滚动不重复显影。
 
 ## 技术栈
 
@@ -123,10 +143,10 @@ flowchart LR
 从 [Releases](https://github.com/qing1989/SpektraLens/releases/latest) 下载最新 `SpektraLens-v{version}.apk`（约 21 MB）：
 
 - 要求 Android 10+、arm64 设备；允许「安装未知来源应用」后直接安装
+- 装好之后可以只在应用内更新：「关于 → 检查更新」，不必再访问网页
 - **0.4.0 起改用正式签名。0.3.9 及更早的 debug 签名版本无法覆盖安装，需先卸载旧版；卸载会删除应用内图库、导入副本与编辑记录，请提前导出重要照片并保留原片。**
-- 从 0.4.0 开始，后续正式版本须沿用同一正式签名密钥，可覆盖安装，无需清除数据。
-- 应用仅在检查更新时联网（包括后续下载更新包），不上传照片；可在「关于 → 检查更新」手动更新。发版步骤见[应用内更新与发版](docs/应用内更新与发版.md)。
-- 每个版本的 SHA-256 与变更说明见对应 Release 页面
+- 0.4.0 之后的正式版本沿用同一把签名密钥，可直接覆盖安装，无需清除数据
+- 每个版本的 SHA-256 与变更说明见对应 Release 页面；发版步骤见[应用内更新与发版](docs/应用内更新与发版.md)
 
 ## 从源码构建
 
@@ -175,6 +195,7 @@ design/           启动图标与视觉设计稿
 ## 文档
 
 - [胶片显影对照](docs/胶片显影对照.md) — 原始 Python / 桌面 Metal / Android Vulkan 三端数值核对
+- [胶片画廊与缩略图](docs/胶片画廊与缩略图.md) — 有界解码、缓存与失效规则
 - [兼容显影实现](docs/兼容显影实现.md) — SwiftShader CPU 后端
 - [移动 GPU 移植](docs/移动GPU移植.md) — 社区 GPU 代码的适配范围与差异
 - [胶卷图标说明](docs/图标映射.md) — 20 款图标的绘制规则与清单
