@@ -28,6 +28,7 @@ final class AboutPage extends LinearLayout {
   private final Runnable close, licenses;
   private final TextView title;
   private final ScrollView overview, statement;
+  private UpdateBadge updateBadge;
   private boolean showingStatement;
 
   AboutPage(
@@ -84,6 +85,10 @@ final class AboutPage extends LinearLayout {
     } else close.run();
   }
 
+  void setUpdateAvailable(boolean available) {
+    updateBadge.setAvailable(available);
+  }
+
   private void openStatement() {
     showingStatement = true;
     overview.setVisibility(GONE);
@@ -137,9 +142,12 @@ final class AboutPage extends LinearLayout {
     identity.addView(summary, new LayoutParams(-1, -2));
     gap(identity, 22);
     TextView update = action("检查更新", AppStyle.BG, AppStyle.ACCENT);
+    update.setSingleLine(true);
     update.setPadding(dp(24), dp(14), dp(24), dp(14));
     update.setOnClickListener(v -> checkUpdates.run());
-    identity.addView(update, new LayoutParams(-2, -2));
+    updateBadge = new UpdateBadge(update, "可更新");
+    updateBadge.setTag("about.update");
+    identity.addView(updateBadge, new LayoutParams(-2, -2));
     content.addView(identity, new LayoutParams(-1, -2));
 
     sectionLabel(content, "更多");
@@ -167,7 +175,7 @@ final class AboutPage extends LinearLayout {
     content.addView(support, new LayoutParams(-1, -2));
     gap(content, 4);
     TextView network =
-        text("仅在手动检查更新及下载更新包时联网\n外部链接由系统浏览器或对应应用打开", AppStyle.TYPE_LABEL, AppStyle.MUTED);
+        text("打开应用时检查版本，下载更新包时联网\n外部链接由系统浏览器或对应应用打开", AppStyle.TYPE_LABEL, AppStyle.MUTED);
     network.setGravity(Gravity.CENTER);
     network.setLineSpacing(dp(4), 1);
     content.addView(network, new LayoutParams(-1, -2));
@@ -202,7 +210,8 @@ final class AboutPage extends LinearLayout {
         content,
         3,
         "更新与外部链接",
-        "仅在你手动检查更新及下载更新包时联网。更新清单来自本项目的固定 GitHub Release 地址，"
+        "打开应用时会在后台检查版本，也可手动检查更新。网络仅用于获取更新清单与下载更新包，"
+            + "照片始终在本机处理。更新清单来自本项目的固定 GitHub Release 地址，"
             + "APK 通过 HTTPS 下载并在安装前校验 SHA-256；安装仍需系统授权和你的确认，不会静默安装。\n\n"
             + "项目地址、内核地址和作者主页通过系统浏览器或对应应用打开，外部服务的数据处理方式以其自身说明为准。");
     statementSection(

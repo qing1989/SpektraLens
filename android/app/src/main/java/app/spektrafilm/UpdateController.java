@@ -29,10 +29,15 @@ final class UpdateController {
   private final AtomicBoolean cancelled = new AtomicBoolean();
   private volatile HttpURLConnection connection;
   private boolean busy, closed;
+  private boolean checking, manualCheck;
   private File updateFile;
   private AlertDialog progress;
+  private UpdateNotesDialog notice;
   private final String version;
   private final long code;
+  private final SharedPreferences noticeCache;
+  private final UpdateAvailability availability;
+  private Runnable availabilityChanged;
 
   UpdateController(Activity activity) {
     this.activity = activity;
@@ -41,36 +46,85 @@ final class UpdateController {
       android.content.pm.PackageInfo info = activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0);
       version = info.versionName; code = info.getLongVersionCode();
     } catch (Exception e) { throw new IllegalStateException(e); }
+    noticeCache = activity.getSharedPreferences("update_notice", Context.MODE_PRIVATE);
+    availability =
+        new UpdateAvailability(code, Build.VERSION.SDK_INT, noticeCache.getString("manifest", null));
+    persistAvailability();
+  }
+
+  boolean hasAvailableUpdate() { return availability.available() != null; }
+
+  void setAvailabilityListener(Runnable listener) {
+    availabilityChanged = listener;
+    if (listener != null) listener.run();
+  }
+
+  /** Called when the app becomes visible. Never opens a window or starts an APK download. */
+  void checkInBackground() {
+    // Returning from unknown-source settings must let resume() finish the pending install first.
+    if (busy || closed || pending().contains("sha256") || notice != null && notice.isShowing()) return;
+    startCheck(false);
   }
 
   void check() {
-    if (busy || closed) return;
-    busy = true; cancelled.set(false);
+    if (closed || notice != null && notice.isShowing()) return;
+    if (checking && !cancelled.get()) {
+      // A tap during startup joins the in-flight request instead of opening a second connection.
+      manualCheck = true;
+      showCheckProgress();
+      return;
+    }
+    if (busy) return;
+    startCheck(true);
+  }
+
+  private void showCheckProgress() {
+    if (progress != null) return;
     progress = new Haptics.DialogBuilder(activity).setTitle("检查更新")
         .setMessage("正在检查新版本…").setNegativeButton("取消", (d, n) -> cancel()).create();
     progress.setOnCancelListener(d -> cancel()); progress.show();
+  }
+
+  private void startCheck(boolean manual) {
+    busy = true; checking = true; manualCheck = manual; cancelled.set(false);
+    if (manual) showCheckProgress();
     worker.execute(() -> {
       try {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         transfer(MANIFEST, bytes, 65536, null);
-        UpdateManifest manifest = UpdateManifest.parse(bytes.toString(StandardCharsets.UTF_8.name()));
+        String json = bytes.toString(StandardCharsets.UTF_8.name());
+        UpdateManifest manifest = UpdateManifest.parse(json);
         post(() -> {
+          availability.accept(manifest, json);
+          persistAvailability();
+          if (availabilityChanged != null) availabilityChanged.run();
+          boolean showResult = manualCheck;
           finishProgress();
+          if (!showResult) return;
           if (!manifest.isNewerThan(code)) { message("已是最新版本", "当前版本为 " + version + "。"); return; }
           if (Build.VERSION.SDK_INT < manifest.minSdk) {
             message("暂时无法更新", "新版本需要 Android API " + manifest.minSdk + " 或更高版本。"); return;
           }
-          new Haptics.DialogBuilder(activity).setTitle("发现新版本 " + manifest.versionName)
-              .setMessage(manifest.releaseNotes.isEmpty() ? "此版本未提供更新说明。" : manifest.releaseNotes)
-              .setNegativeButton("稍后", null).setPositiveButton("下载", (d, n) -> download(manifest)).show();
+          notice = new UpdateNotesDialog(activity, version, manifest, () -> download(manifest));
+          notice.setOnDismissListener(dialog -> notice = null);
+          notice.show();
         });
       } catch (Exception e) {
-        fail(
-            "暂时无法检查更新",
-            "未能获取版本信息。可能是网络不可用，或发布页尚未提供更新清单；可稍后重试，或打开发布页查看。",
-            e);
+        Log.w("SpektraUpdate", "未能获取版本信息", e);
+        post(() -> {
+          boolean showError = manualCheck;
+          finishProgress();
+          // Preserve last confirmed metadata on network/parse failures; no background popups.
+          if (showError) message("暂时无法检查更新",
+              "未能获取版本信息。可能是网络不可用，或发布页尚未提供更新清单；可稍后重试，或打开发布页查看。");
+        });
       }
     });
+  }
+
+  private void persistAvailability() {
+    if (availability.cachedJson() == null) noticeCache.edit().remove("manifest").apply();
+    else noticeCache.edit().putString("manifest", availability.cachedJson()).apply();
   }
 
   private void download(UpdateManifest manifest) {
@@ -246,14 +300,17 @@ final class UpdateController {
     try { activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES))); }
     catch (Exception e) { Toast.makeText(activity, "未找到可打开网页的应用", Toast.LENGTH_SHORT).show(); }
   }
-  private void post(Runnable action) { activity.runOnUiThread(() -> { if (!closed && !activity.isFinishing() && !cancelled.get()) action.run(); }); }
+  private void post(Runnable action) { activity.runOnUiThread(() -> { if (!closed && !activity.isFinishing() && !activity.isDestroyed() && !cancelled.get()) action.run(); }); }
   private void fail(String title, String text, Exception e) {
     Log.w("SpektraUpdate", title + "：" + text, e);
     post(() -> { finishProgress(); message(title, text); });
   }
-  private void finishProgress() { busy = false; if (progress != null) { progress.dismiss(); progress = null; } }
+  private void finishProgress() {
+    busy = false; checking = false; manualCheck = false;
+    if (progress != null) { progress.dismiss(); progress = null; }
+  }
   private void cancel() {
-    cancelled.set(true);
+    if (closed || cancelled.getAndSet(true)) return;
     HttpURLConnection http = connection;
     if (http != null) workerDisconnect(http);
     // Keep the operation busy until its worker has unwound; a new operation cannot reuse its file.
@@ -261,9 +318,12 @@ final class UpdateController {
   }
   private void workerDisconnect(HttpURLConnection http) { new Thread(http::disconnect, "update-cancel").start(); }
   void close() {
+    if (closed) return;
     closed = true; cancelled.set(true);
+    availabilityChanged = null;
     if (connection != null) workerDisconnect(connection);
     if (progress != null) progress.dismiss();
+    if (notice != null) notice.dismiss();
     File cacheFile = apk();
     boolean preserve = cacheFile.getName().equals(pending().getString("file", null));
     worker.execute(() -> { if (!preserve) cacheFile.delete(); });

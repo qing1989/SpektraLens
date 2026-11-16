@@ -5,8 +5,12 @@ package app.spektrafilm;
 import android.content.Context;
 import android.graphics.*;
 import android.graphics.drawable.Drawable;
+import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.HapticFeedbackConstants;
+import android.view.MotionEvent;
+import android.view.ViewConfiguration;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.SeekBar;
 import java.util.Arrays;
 
@@ -16,6 +20,11 @@ final class AdjustmentSeekBar extends SeekBar {
   private OnSeekBarChangeListener delegate;
   private int lastProgress, detent = Integer.MIN_VALUE;
   private long lastTick;
+  private final int touchSlop, doubleTapSlop;
+  private Runnable reset;
+  private MotionEvent touchDown, pendingTap;
+  private boolean dragging, secondTap;
+  private final Runnable confirmTap = this::finishPendingTap;
 
   /** 拖动时每跨一格刻度震一下；过零刻度换成更明确的一下，方便盲拖回默认值。 */
   private final OnSeekBarChangeListener ticker =
@@ -42,6 +51,9 @@ final class AdjustmentSeekBar extends SeekBar {
 
   AdjustmentSeekBar(Context context, int[] colors) {
     super(context);
+    ViewConfiguration configuration = ViewConfiguration.get(context);
+    touchSlop = configuration.getScaledTouchSlop();
+    doubleTapSlop = configuration.getScaledDoubleTapSlop();
     float density = getResources().getDisplayMetrics().density;
     track = new Track(colors, Math.round(3 * density));
     Capsule thumb = new Capsule(Math.round(30 * density), Math.round(20 * density), density);
@@ -60,6 +72,177 @@ final class AdjustmentSeekBar extends SeekBar {
     int inset = half + Math.max(2, Math.round(2 * density));
     setThumbOffset(half);
     setPadding(inset, 0, inset, 0);
+  }
+
+  void setOnResetListener(Runnable listener) {
+    reset = listener;
+  }
+
+  /**
+   * 暂存单击，确认不是双击后才交给原生 SeekBar；拖动一旦越过系统阈值立即交接。
+   * 这样双击不会先跳到点击位置、写入一次历史，再复位。双击也必须在第二次抬手时才生效，
+   * 避免两次快速拖动、长按、竖直滚动或多指触摸误复位。
+   */
+  @Override
+  public boolean onTouchEvent(MotionEvent event) {
+    if (reset == null) return super.onTouchEvent(event);
+    if (!isEnabled()) {
+      cancelTouch();
+      return false;
+    }
+    int action = event.getActionMasked();
+    if (action == MotionEvent.ACTION_CANCEL || event.getPointerCount() > 1) {
+      cancelTouch();
+      return true;
+    }
+    if (action == MotionEvent.ACTION_DOWN) {
+      long interval = pendingTap == null ? -1 : event.getEventTime() - pendingTap.getEventTime();
+      secondTap =
+          pendingTap != null
+              && interval >= 0
+              && interval <= ViewConfiguration.getDoubleTapTimeout()
+              && distanceSquared(event, pendingTap) <= doubleTapSlop * doubleTapSlop;
+      if (secondTap) discardPendingTap();
+      else finishPendingTap();
+      releaseDown();
+      touchDown = MotionEvent.obtain(event);
+      dragging = false;
+      setPressed(true);
+      return true;
+    }
+    if (touchDown == null) return true;
+    if (action == MotionEvent.ACTION_MOVE) {
+      if (!dragging && distanceSquared(event, touchDown) > touchSlop * touchSlop) {
+        if (Math.abs(event.getY() - touchDown.getY())
+            > Math.abs(event.getX() - touchDown.getX())) {
+          // 让面板的 ScrollView 接管竖直滚动，不改变参数。
+          cancelTouch();
+          return true;
+        }
+        dragging = true;
+        secondTap = false;
+        if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);
+        super.onTouchEvent(touchDown);
+      }
+      if (dragging) super.onTouchEvent(event);
+      return true;
+    }
+    if (action == MotionEvent.ACTION_UP) {
+      if (dragging) {
+        super.onTouchEvent(event);
+      } else if (distanceSquared(event, touchDown) <= touchSlop * touchSlop) {
+        boolean shortTap =
+            event.getEventTime() - touchDown.getEventTime()
+                < ViewConfiguration.getLongPressTimeout();
+        if (secondTap && shortTap) {
+          reset.run();
+          performClick();
+        } else if (shortTap) {
+          pendingTap = MotionEvent.obtain(event);
+          postDelayed(confirmTap, ViewConfiguration.getDoubleTapTimeout());
+        } else {
+          seekTap(event);
+        }
+      }
+      releaseDown();
+      dragging = secondTap = false;
+      setPressed(false);
+      if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
+    }
+    return true;
+  }
+
+  /** 切换/收起工具前提交已经结束的单击，不把它带到下一张照片或另一页。 */
+  void finishPendingTap() {
+    removeCallbacks(confirmTap);
+    MotionEvent tap = pendingTap;
+    pendingTap = null;
+    if (tap == null) return;
+    if (isEnabled() && isShown()) seekTap(tap);
+    tap.recycle();
+  }
+
+  void finishPendingTapOutside(float rawX, float rawY) {
+    if (pendingTap == null) return;
+    int[] position = new int[2];
+    getLocationOnScreen(position);
+    if (rawX < position[0] || rawX >= position[0] + getWidth()
+        || rawY < position[1] || rawY >= position[1] + getHeight()) finishPendingTap();
+  }
+
+  private void seekTap(MotionEvent tap) {
+    MotionEvent down = MotionEvent.obtain(tap);
+    down.setAction(MotionEvent.ACTION_DOWN);
+    super.onTouchEvent(down);
+    super.onTouchEvent(tap);
+    down.recycle();
+    performClick();
+  }
+
+  private static float distanceSquared(MotionEvent a, MotionEvent b) {
+    float dx = a.getX() - b.getX(), dy = a.getY() - b.getY();
+    return dx * dx + dy * dy;
+  }
+
+  private void releaseDown() {
+    if (touchDown != null) touchDown.recycle();
+    touchDown = null;
+  }
+
+  private void discardPendingTap() {
+    removeCallbacks(confirmTap);
+    if (pendingTap != null) pendingTap.recycle();
+    pendingTap = null;
+  }
+
+  private void cancelTouch() {
+    discardPendingTap();
+    if (dragging && touchDown != null) {
+      MotionEvent cancel = MotionEvent.obtain(touchDown);
+      cancel.setAction(MotionEvent.ACTION_CANCEL);
+      super.onTouchEvent(cancel);
+      cancel.recycle();
+    }
+    releaseDown();
+    dragging = secondTap = false;
+    setPressed(false);
+  }
+
+  @Override
+  protected void onDetachedFromWindow() {
+    cancelTouch();
+    super.onDetachedFromWindow();
+  }
+
+  @Override
+  public void setEnabled(boolean enabled) {
+    if (!enabled && reset != null) cancelTouch();
+    super.setEnabled(enabled);
+  }
+
+  @Override
+  public boolean performClick() {
+    super.performClick();
+    return true;
+  }
+
+  @Override
+  public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+    super.onInitializeAccessibilityNodeInfo(info);
+    if (reset != null && isEnabled())
+      info.addAction(
+          new AccessibilityNodeInfo.AccessibilityAction(
+              R.id.reset_adjustment, "恢复默认值"));
+  }
+
+  @Override
+  public boolean performAccessibilityAction(int action, Bundle arguments) {
+    if (action == R.id.reset_adjustment && reset != null && isEnabled()) {
+      cancelTouch();
+      reset.run();
+      return true;
+    }
+    return super.performAccessibilityAction(action, arguments);
   }
 
   @Override

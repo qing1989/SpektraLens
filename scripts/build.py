@@ -8,11 +8,10 @@ import subprocess
 import sys
 from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
-# Toolchain lives in .tooling/ (or SPEKTRA_TOOLING). The sibling-project path below is a
-# convenience for this machine only; without either, pass JAVA_HOME and ANDROID_HOME.
+# Toolchain lives in .tooling/ (or SPEKTRA_TOOLING); without either, pass JAVA_HOME and
+# ANDROID_HOME.
 TOOLING = Path(os.environ.get('SPEKTRA_TOOLING') or ROOT / '.tooling')
-SIBLING = ROOT.parent / '听书 App/.tooling'
-ROOTS = [TOOLING] + ([SIBLING] if SIBLING.exists() else [])
+ROOTS = [TOOLING]
 
 sdk = Path(os.environ.get('ANDROID_HOME') or next(
     (r / 'sdk' for r in ROOTS if (r / 'sdk').exists()), ROOT / '.tooling/sdk'))

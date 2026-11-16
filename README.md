@@ -2,8 +2,8 @@
 
 **把一间光谱胶片实验室装进口袋。**
 
-[![版本](https://img.shields.io/badge/version-0.4.3-ff7a1a?style=flat-square)](CHANGELOG.md)
-[![下载](https://img.shields.io/badge/download-APK%20v0.4.3-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
+[![版本](https://img.shields.io/badge/version-0.4.5-ff7a1a?style=flat-square)](CHANGELOG.md)
+[![下载](https://img.shields.io/badge/download-APK%20v0.4.5-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
 [![平台](https://img.shields.io/badge/Android-10%2B-3ddc84?style=flat-square&logo=android&logoColor=white)](#兼容性)
 [![渲染](https://img.shields.io/badge/Vulkan-GPU%20%2B%20CPU%20%E5%9B%9E%E9%80%80-4a90d9?style=flat-square)](#工作原理)
 [![离线](https://img.shields.io/badge/100%25-%E6%9C%AC%E5%9C%B0%E6%98%BE%E5%BD%B1-8a8a8a?style=flat-square)](#为什么不是滤镜)
@@ -83,6 +83,8 @@ RAW 解码、光谱显影、相纸印相、调色、颗粒与光晕合成、编�
 **显影与调色**
 
 - 基础：曝光、对比度、亮度、阴影 / 高光、黑白场、饱和度、冷暖与色调
+- 所有参数滑块双击恢复单项默认值，复位可通过撤销 / 重做恢复
+- 再次点击当前工具或单击照片收起参数面板，再次单击照片回到刚才的编辑页
 - 曲线：RGB、亮度、R/G/B 共 5 组，点击加点、拖动调整、长按删点
 - 色彩平衡（四区）、HSL 八色分色、暗角
 - 整组扫描调色可一键旁路，随时对比原始显影结果
@@ -103,7 +105,8 @@ RAW 解码、光谱显影、相纸印相、调色、颗粒与光晕合成、编�
 
 **应用内更新**
 
-- 「关于 → 检查更新」直接比对固定 Release 清单，按 versionCode 判断新旧，并显示这一版的更新说明
+- 启动时后台检查固定 Release 清单；首页「关于」和关于页「检查更新」会提示可用更新，按 versionCode 判断新旧
+- 更新说明按发布日志逐条换行，长内容在弹窗正文滚动，底部操作按钮固定
 - 下载显示进度、可取消、带 SHA-256 校验，校验不过直接删包；随后走系统安装确认，不需要再去网页找安装包
 - 只有一个用途的联网：检查与下载更新。照片始终留在本机
 

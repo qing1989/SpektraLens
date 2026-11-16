@@ -2,6 +2,7 @@
 // Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.*;
 import android.view.GestureDetector;
@@ -37,6 +38,7 @@ public final class PhotoView extends View {
   private float zoom = 1, offsetX, offsetY, lastX, lastY;
   private float lastFocusX, lastFocusY;
   private boolean scaleGesture;
+  private boolean pendingSingleTapCanceled;
   private boolean dragging, dragDivider;
   private float downX, downY;
   private final int touchSlop;
@@ -46,13 +48,15 @@ public final class PhotoView extends View {
   public PhotoView(Context c) {
     super(c);
     touchSlop = ViewConfiguration.get(c).getScaledTouchSlop();
-    setContentDescription("照片预览；双指缩放，双击放大或复位；对比时拖动分界线，放大后拖动其他位置平移照片");
+    setContentDescription(
+        "照片预览；单击收起或恢复参数面板，双指缩放，双击放大或复位；对比时拖动分界线，放大后拖动其他位置平移照片");
     scale =
         new ScaleGestureDetector(
             c,
             new ScaleGestureDetector.SimpleOnScaleGestureListener() {
               @Override
               public boolean onScaleBegin(ScaleGestureDetector detector) {
+                pendingSingleTapCanceled = true;
                 lastFocusX = detector.getFocusX();
                 lastFocusY = detector.getFocusY();
                 return true;
@@ -82,12 +86,31 @@ public final class PhotoView extends View {
               }
 
               @Override
+              public void onLongPress(MotionEvent e) {
+                pendingSingleTapCanceled = true;
+              }
+
+              @Override
+              public boolean onSingleTapConfirmed(MotionEvent e) {
+                if (pendingSingleTapCanceled) return true;
+                performClick();
+                return true;
+              }
+
+              @Override
               public boolean onDoubleTap(MotionEvent e) {
+                pendingSingleTapCanceled = true;
                 if (zoom > 1) resetZoom();
                 else zoomAt(2, e.getX(), e.getY(), e.getX(), e.getY());
                 return true;
               }
-            });
+            },
+            new android.os.Handler(android.os.Looper.getMainLooper()));
+  }
+
+  /** Suppresses a tap whose single-tap confirmation has not fired yet. */
+  public void cancelPendingSingleTap() {
+    pendingSingleTapCanceled = true;
   }
 
   public void resetZoom() {
@@ -233,9 +256,11 @@ public final class PhotoView extends View {
   }
 
   @Override
+  @SuppressLint("ClickableViewAccessibility")
   public boolean onTouchEvent(MotionEvent e) {
     int action = e.getActionMasked();
     if (action == MotionEvent.ACTION_DOWN) {
+      pendingSingleTapCanceled = false;
       scaleGesture = false;
       dragging = false;
       downX = lastX = e.getX();
@@ -248,6 +273,7 @@ public final class PhotoView extends View {
     scale.onTouchEvent(e);
     taps.onTouchEvent(e);
     if (e.getPointerCount() > 1) {
+      pendingSingleTapCanceled = true;
       scaleGesture = true;
       intercept(true);
       return true;
@@ -261,11 +287,13 @@ public final class PhotoView extends View {
       return true;
     }
     if (action == MotionEvent.ACTION_CANCEL) {
+      pendingSingleTapCanceled = true;
       intercept(false);
       return true;
     }
     if (action == MotionEvent.ACTION_MOVE) {
       if (!dragging && Math.hypot(e.getX() - downX, e.getY() - downY) <= touchSlop) return true;
+      pendingSingleTapCanceled = true;
       dragging = true;
       intercept(true);
       updateFrame();
@@ -285,7 +313,6 @@ public final class PhotoView extends View {
     }
     if (action == MotionEvent.ACTION_UP) {
       intercept(false);
-      if (!dragging) performClick();
       return true;
     }
     return true;

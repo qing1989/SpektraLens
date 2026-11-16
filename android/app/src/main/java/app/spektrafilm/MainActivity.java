@@ -2,6 +2,9 @@
 // Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.app.*;
 import android.content.*;
 import android.graphics.*;
@@ -11,6 +14,7 @@ import android.net.Uri;
 import android.os.*;
 import android.provider.MediaStore;
 import android.view.*;
+import android.view.animation.PathInterpolator;
 import android.widget.*;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
@@ -31,9 +35,12 @@ public final class MainActivity extends Activity {
   static final int FADE_ROW_DP = 24;
   /** 面板的最大高度（dp）。预览区按这个值预留，所以它也决定照片能有多大。 */
   static final int PANEL_MAX_DP = 320;
+  private static final long PANEL_MOTION_MS = 200, TOOL_MOTION_MS = 140;
+  private static final PathInterpolator EDITOR_EASING = new PathInterpolator(.2f, 0f, 0f, 1f);
   private static final int GALLERY_SOURCE_EDGE = 1024;
   private static final long GALLERY_CACHE_BYTES = 16L * 1024 * 1024;
   private UpdateController updates;
+  private UpdateBadge homeAbout;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService importWorker = Executors.newFixedThreadPool(2);
   private PhotoImportJob activeImport;
@@ -116,6 +123,8 @@ public final class MainActivity extends Activity {
   private ExportSheet exportSheet;
   private String pickerSettings;
   private int selectedTab;
+  private boolean panelCollapsed;
+  private ValueAnimator panelAnimator;
   private String filmCategory = "全部";
   private final ArrayList<Frame> library = new ArrayList<>();
   private String activeId = "demo";
@@ -164,6 +173,7 @@ public final class MainActivity extends Activity {
     committed = settings.toString();
     loadLibrary();
     buildUI();
+    updates.setAvailabilityListener(this::refreshUpdateNotice);
     installBackHandler();
     updateStockLabels();
     setStatus("正在准备 " + getString(R.string.app_name) + "…", true);
@@ -373,8 +383,12 @@ public final class MainActivity extends Activity {
     putDefault("print_brightness", 0);
     putDefault("m_filter_shift", 0);
     putDefault("y_filter_shift", 0);
-    putDefault("grain_amount", 1);
-    putDefault("halation_amount", 1);
+    // 初始化与单项复位共用同一份默认值，非零默认值不能按 0 处理。
+    for (String key : new String[] {
+      "grain_amount", "halation_amount", "glare_amount", "dir_couplers_amount",
+      "halation_scatter_amount", "density_curve_gamma", "grade_vignette_midpoint",
+      "edge_amount", "edge_frame_number", "date_size", "date_intensity"
+    }) putDefault(key, sliderDefault(key));
     putDefault("film_format_mm", 36);
     putDefault("product_defaults", true);
     // Preserve the imported file's exposure until the user explicitly enables the meter.
@@ -387,25 +401,27 @@ public final class MainActivity extends Activity {
       if (meter.equals("center_weighted") || meter.equals("average") || meter.equals("median"))
         set("auto_exposure_method", "balanced");
     }
-    putDefault("glare_amount", 1);
-    putDefault("dir_couplers_amount", 1);
-    putDefault("halation_scatter_amount", 1);
-    putDefault("density_curve_gamma", 1);
-    putDefault("grade_vignette_midpoint", 50);
     putDefault("geo_w", 1);
     putDefault("geo_h", 1);
     putDefault("edge_style", "none");
-    putDefault("edge_amount", 6);
-    putDefault("edge_frame_number", 36);
     putDefault("date_text", new SimpleDateFormat("yyyy.MM.dd", Locale.US).format(new Date()));
-    putDefault("date_size", 1);
-    putDefault("date_intensity", 1);
     putDefault("date_corner", "bottom_right");
     putDefault("date_color", "orange");
   }
 
   private void putDefault(String k, Object v) {
     if (!settings.has(k)) set(k, v);
+  }
+
+  private static double sliderDefault(String key) {
+    return switch (key) {
+      case "grain_amount", "halation_amount", "glare_amount", "dir_couplers_amount",
+          "halation_scatter_amount", "density_curve_gamma", "date_size", "date_intensity" -> 1;
+      case "grade_vignette_midpoint" -> 50;
+      case "edge_amount" -> 6;
+      case "edge_frame_number" -> 36;
+      default -> 0;
+    };
   }
 
   private void set(String k, Object v) {
@@ -588,8 +604,8 @@ public final class MainActivity extends Activity {
     editorScreen.addView(editorBody, new LinearLayout.LayoutParams(-1, 0, 1));
     previewColumn = vertical();
     toolsColumn = vertical();
-    // 预览区高度固定，工具列贴底；两者之间留一段弹性间隔，面板矮下去时由它吸收，
-    // 照片不会跟着长高——这是「展开/收起不许动预览」的实现方式。
+    // 展开时各工具的预览高度一致；主动收起面板时把释放的空间交给照片。
+    // 弹性间隔只吸收像素取整余量，保证底部导航贴底。
     panelSpacer = new View(this);
     editorBody.addView(previewColumn);
     editorBody.addView(panelSpacer, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -602,6 +618,7 @@ public final class MainActivity extends Activity {
     photoStage = new FrameLayout(this);
     previewColumn.addView(photoStage, new LinearLayout.LayoutParams(-1, 0, 1));
     photo = new PhotoView(this);
+    photo.setOnClickListener(v -> togglePanelFromPreview());
     photoStage.addView(photo, new FrameLayout.LayoutParams(-1, -1));
     statusRow = horizontal();
     statusRow.setPadding(dp(18), 0, dp(18), 0);
@@ -699,32 +716,155 @@ public final class MainActivity extends Activity {
 
   private void updateEditorLayout() {
     if (editorBody == null || panel == null) return;
-    boolean wide = wideEditor();
+    cancelPanelAnimation();
+    finishToolAnimations();
+    panel.setAlpha(1f);
+    panel.setTranslationY(0f);
+    fixPanelContentHeight(false);
+    boolean wide = wideEditor() && !panelCollapsed;
     editorBody.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
     panelSpacer.setVisibility(wide ? View.GONE : View.VISIBLE);
+    panel.setVisibility(panelCollapsed ? View.GONE : View.VISIBLE);
     if (wide) {
       // 横屏平板：预览和工具列左右分栏，各占一份权重。
       previewColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1.1f));
       toolsColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1));
     } else {
-      // 竖屏：预览区高度写死（= 编辑区 − 工具列最大高度），工具列 wrap_content 贴底。
+      // 收起时横屏也切为上下布局：照片使用全宽，导航仍在底部。
       previewColumn.setLayoutParams(new LinearLayout.LayoutParams(-1, previewHeightPx()));
       toolsColumn.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
     }
     updatePanelHeight();
   }
 
+  /** 只取消时间轴，保留当前帧尺寸和透明度，供快速反向点击接着播放。 */
+  private void cancelPanelAnimation() {
+    ValueAnimator previous = panelAnimator;
+    panelAnimator = null;
+    if (previous == null) return;
+    // cancel() 也会发送 onAnimationEnd；移除旧监听，避免它把新动画吸到旧终点。
+    previous.removeAllListeners();
+    previous.removeAllUpdateListeners();
+    previous.cancel();
+  }
+
+  private void fixPanelContentHeight(boolean animating) {
+    if (panel.getChildCount() == 0) return;
+    View content = panel.getChildAt(0);
+    LinearLayout.LayoutParams layout = (LinearLayout.LayoutParams) content.getLayoutParams();
+    // 外层负责裁切收放，内部 ScrollView 保持完整高度，避免视口逐帧变小导致滚动跳动。
+    layout.height = animating ? dp(panelHeight()) : 0;
+    layout.weight = animating ? 0 : 1;
+    content.setLayoutParams(layout);
+  }
+
+  private void animatePanel() {
+    cancelPanelAnimation();
+    // 左右分栏切换涉及重排；旋转、小窗口初次布局和系统关闭动画时直接落到最终布局。
+    if (wideEditor() || !editorScreen.isShown() || editorBody.getHeight() <= 0
+        || !panel.isLaidOut() || !ValueAnimator.areAnimatorsEnabled()) {
+      updateEditorLayout();
+      refillRevealedPanel();
+      return;
+    }
+    LinearLayout.LayoutParams layout = (LinearLayout.LayoutParams) panel.getLayoutParams();
+    boolean visible = panel.getVisibility() == View.VISIBLE;
+    final int fromHeight = visible ? Math.max(0, layout.height) : 0;
+    final int fromMargin = visible ? layout.topMargin : 0;
+    final int toHeight = panelCollapsed ? 0 : dp(panelHeight());
+    final int toMargin = panelCollapsed ? 0 : dp(4);
+    if (fromHeight == toHeight) {
+      updateEditorLayout();
+      refillRevealedPanel();
+      return;
+    }
+    final float fromAlpha = visible ? panel.getAlpha() : 0f;
+    final float fromShift = visible ? panel.getTranslationY() : dp(8);
+    final float toAlpha = panelCollapsed ? 0f : 1f;
+    final float toShift = panelCollapsed ? dp(8) : 0f;
+    fixPanelContentHeight(true);
+    panel.setVisibility(View.VISIBLE);
+    layout.weight = 0;
+    ValueAnimator animation = ValueAnimator.ofFloat(0f, 1f);
+    panelAnimator = animation;
+    // 反向接续只走剩余路程，不再让短短几像素花满 200ms。
+    animation.setDuration(
+        Math.max(80, PANEL_MOTION_MS * Math.abs(toHeight - fromHeight) / dp(panelHeight())));
+    animation.setInterpolator(EDITOR_EASING);
+    animation.addUpdateListener(
+        value -> {
+          float fraction = (Float) value.getAnimatedValue();
+          layout.height = Math.round(fromHeight + (toHeight - fromHeight) * fraction);
+          layout.topMargin = Math.round(fromMargin + (toMargin - fromMargin) * fraction);
+          panel.setLayoutParams(layout);
+          LinearLayout.LayoutParams preview =
+              (LinearLayout.LayoutParams) previewColumn.getLayoutParams();
+          // 共用一次空间预算，连 4dp 顶距也一起收放，底部导航不会上下浮动。
+          preview.height =
+              Math.max(0, editorBody.getHeight() - dp(58) - dp(20)
+                  - layout.height - layout.topMargin);
+          previewColumn.setLayoutParams(preview);
+          panel.setAlpha(fromAlpha + (toAlpha - fromAlpha) * fraction);
+          panel.setTranslationY(fromShift + (toShift - fromShift) * fraction);
+        });
+    animation.addListener(
+        new AnimatorListenerAdapter() {
+          @Override
+          public void onAnimationEnd(Animator ended) {
+            if (panelAnimator != ended) return;
+            panelAnimator = null;
+            updateEditorLayout();
+            refillRevealedPanel();
+          }
+        });
+    animation.start();
+  }
+
+  private void refillRevealedPanel() {
+    if (!panelCollapsed)
+      panel.post(
+          () -> {
+            if (!destroyed && !panelCollapsed && panelAnimator == null) {
+              updatePanelFade();
+              refillThumbs();
+            }
+          });
+  }
+
+  private void finishToolAnimations() {
+    if (tabRow == null) return;
+    for (int i = 0; i < tabRow.getChildCount(); i++) {
+      View tab = tabRow.getChildAt(i);
+      tab.animate().cancel();
+      tab.setAlpha(1f);
+      tab.setScaleX(1f);
+      tab.setScaleY(1f);
+    }
+  }
+
+  private void animateSelectedTool() {
+    if (!editorScreen.isShown() || !ValueAnimator.areAnimatorsEnabled()) return;
+    for (int i = 0; i < tabRow.getChildCount(); i++) {
+      View tab = tabRow.getChildAt(i);
+      if (!tab.isSelected()) continue;
+      tab.setAlpha(.7f);
+      tab.setScaleX(.96f);
+      tab.setScaleY(.96f);
+      tab.animate().alpha(1f).scaleX(1f).scaleY(1f)
+          .setDuration(TOOL_MOTION_MS).setInterpolator(EDITOR_EASING).start();
+    }
+  }
+
   /**
-   * 预览区（照片 + 工具行）高度的像素值：编辑区扣掉工具列的最大可能高度——
-   * 面板顶距 4 + 面板最大高度 + 导航 58 及其两侧留白 20。
+   * 预览区（照片 + 工具行）高度的像素值：编辑区扣掉导航 58 及其两侧留白 20；
+   * 面板展开时再扣掉顶距 4 与统一面板高度。
    *
-   * <p>这里按「面板顶到最大」预留，而面板现在确实永远占满那个高度，所以这个减法算出来的
-   * 就是面板之外的全部空间：照片尺寸、位置在九个编辑页上一模一样。剩下一点零头落在
-   * {@link #panelSpacer} 上，把工具列推到底、贴住屏幕下沿。
+   * <p>各工具在展开状态尺寸相同，只有用户主动收起面板才扩大照片区。
    */
   private int previewHeightPx() {
     if (editorBody == null || editorBody.getHeight() <= 0) return 0;
-    int tools = dp(4) + dp(panelMaxHeight()) + dp(58) + dp(20);
+    int tools = dp(58) + dp(20);
+    if (!panelCollapsed) tools += dp(4) + dp(panelMaxHeight());
     // 不设下限：极小窗口（分屏、悬浮窗）里面板本身已经按 panelLimit 缩过，再把这里垫高
     // 会把工具列顶出编辑区。宁可让照片区先让位——这和之前 weight=1 时的行为一致。
     return Math.max(0, editorBody.getHeight() - tools);
@@ -755,10 +895,8 @@ public final class MainActivity extends Activity {
   /**
    * 面板高度（dp）：固定 {@link #panelMaxHeight()}，和当前页内容无关。
    *
-   * <p>九个编辑页一个高度，切 tab、切分段、换通道、内容多少都不改它一分。内容撑不满时
-   * 底部留白在面板内部（不缩、不贴内容），内容超出就在面板里上下滚。这里**没有**「展开」
-   * 这一档，也没有「按内容收缩」——展开要吃掉预览区的高度，收缩会让面板在切页时跳动，
-   * 而预览区高度和照片位置是钉死的。
+   * <p>九个编辑页一个高度，切 tab、切分段、换通道都不改变它。内容超出就在面板内滚动。
+   * 再点当前底部工具可整体隐藏面板，不引入随内容高矮变化的第三种高度。
    */
   private int panelHeight() {
     return panelMaxHeight();
@@ -815,8 +953,10 @@ public final class MainActivity extends Activity {
   private void updatePanelHeight() {
     if (panel == null) return;
     LinearLayout.LayoutParams layout = (LinearLayout.LayoutParams) panel.getLayoutParams();
-    layout.height = wideEditor() ? 0 : dp(panelHeight());
-    layout.weight = wideEditor() ? 1 : 0;
+    boolean wide = wideEditor() && !panelCollapsed;
+    layout.height = wide ? 0 : dp(panelHeight());
+    layout.weight = wide ? 1 : 0;
+    layout.topMargin = dp(4);
     panel.requestLayout();
     // 换页、换屏之后可视区可能变，「下面还有没有」得重新判一次。
     panel.post(this::updatePanelFade);
@@ -848,9 +988,15 @@ public final class MainActivity extends Activity {
     help.setTextSize(AppStyle.TYPE_LABEL);
     help.setPadding(0, 0, 0, 0);
     help.setSingleLine(true);
+    help.setMinWidth(dp(42));
     help.setContentDescription("关于、许可与支持范围");
     help.setOnClickListener(v -> about());
-    add(head, help, 42, 44);
+    homeAbout = new UpdateBadge(help, "new");
+    controls.remove(help);
+    controls.add(homeAbout);
+    homeAbout.setTag("home.about");
+    homeAbout.setAvailable(updates.hasAvailableUpdate());
+    add(head, homeAbout, -2, -2);
     add(content, head, -1, -2);
     gap(content, 24);
     FrameLayout hero = new FrameLayout(this);
@@ -899,6 +1045,9 @@ public final class MainActivity extends Activity {
 
   private void showHome() {
     if (homeScreen != null) {
+      if (photo != null) photo.cancelPendingSingleTap();
+      finishPendingSliderTaps();
+      updateEditorLayout();
       flowingBackground.setVisibility(View.VISIBLE);
       homeScreen.setVisibility(View.VISIBLE);
       editorScreen.setVisibility(View.GONE);
@@ -948,34 +1097,74 @@ public final class MainActivity extends Activity {
         AppStyle.R_MEDIUM);
   }
 
-  private void buildPanel() {
-    if (panel == null) return;
-    // Keep the deferred crop tool's ID reserved without exposing its panel.
-    if (selectedTab == 3) selectedTab = 0;
-    // 新照片一律从「全部」的第一张开始；同一张照片再次编辑则沿用上次的分类与位置。
-    String sessionKey = sourceFile == null ? "internal" : sourceFile.getAbsolutePath();
-    if (!sessionKey.equals(filmSessionKey)) {
-      filmSessionKey = sessionKey;
-      categoryScrollX.clear();
-      filmCategory = "全部";
-      pendingFilmScrollX = 0;
+  private boolean isCurrentTool(int tool) {
+    return selectedTab == tool || (tool == 0 && selectedTab == 1);
+  }
+
+  private void finishPendingSliderTaps() {
+    for (SeekBar bar : sliders.values())
+      if (bar instanceof AdjustmentSeekBar) ((AdjustmentSeekBar) bar).finishPendingTap();
+  }
+
+  private boolean touchIsInside(View view, MotionEvent event) {
+    Rect bounds = new Rect();
+    return view.getGlobalVisibleRect(bounds)
+        && bounds.contains(Math.round(event.getRawX()), Math.round(event.getRawY()));
+  }
+
+  @Override
+  public boolean dispatchTouchEvent(MotionEvent event) {
+    if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+      if (photo != null && !touchIsInside(photo, event)) photo.cancelPendingSingleTap();
+      // 点击另一个控件已不可能组成同一滑块的双击。先提交上一条单击，再执行切页、撤销、
+      // 导出或换照片，避免延迟确认把旧值写进下一次操作。
+      for (SeekBar bar : sliders.values())
+        if (bar instanceof AdjustmentSeekBar)
+          ((AdjustmentSeekBar) bar).finishPendingTapOutside(event.getRawX(), event.getRawY());
     }
-    controls.removeIf(v -> descendant(v, panel) || descendant(v, tabRow));
-    panel.removeAllViews();
-    filmScrollRef = null;
-    thumbTargets.clear();
-    thumbViewsRef = new ArrayList<>();
-    thumbStocksRef = new ArrayList<>();
+    return super.dispatchTouchEvent(event);
+  }
+
+  private void selectEditorTool(int tool) {
+    if (exporting || activeImport != null) return;
+    photo.cancelPendingSingleTap();
+    finishPendingSliderTaps();
+    if (isCurrentTool(tool)) {
+      togglePanelVisibility();
+    } else {
+      panelCollapsed = false;
+      selectedTab = tool;
+      buildPanel(true);
+      animatePanel();
+      animateSelectedTool();
+    }
+  }
+
+  private void togglePanelFromPreview() {
+    if (exporting || activeImport != null
+        || editorScreen == null || editorScreen.getVisibility() != View.VISIBLE) return;
+    finishPendingSliderTaps();
+    togglePanelVisibility();
+  }
+
+  /** Flips only presentation state; selectedTab retains the last tool and secondary tab. */
+  private void togglePanelVisibility() {
+    panelCollapsed = !panelCollapsed;
+    // 不重建参数内容：保留面板滚动位置、二级页签、画廊 View 和已完成的缩略图。
+    buildToolNavigation();
+    animatePanel();
+    animateSelectedTool();
+  }
+
+  private void buildToolNavigation() {
+    finishToolAnimations();
+    controls.removeIf(v -> descendant(v, tabRow));
     tabRow.removeAllViews();
-    sliders.clear();
-    values.clear();
     String[] labels = {"胶片", "调整", "边框", "质感"};
     int[] tools = {0, 2, 4, 5};
     for (int i = 0; i < labels.length; i++) {
-      final int n = tools[i];
-      boolean selected = selectedTab == n || (n == 0 && selectedTab == 1);
-      // 选中块与导航条同一档半径（26）。40 高装不下 26，平台会按半高裁成胶囊，
-      // 于是两条弧的曲率读起来是一个家族，而不是「方角塞进圆角」。
+      final int tool = tools[i];
+      boolean selected = !panelCollapsed && isCurrentTool(tool);
       TextView tab =
           button(
               labels[i],
@@ -986,20 +1175,45 @@ public final class MainActivity extends Activity {
       tab.setPadding(0, 0, 0, 0);
       tab.setMinHeight(0);
       tab.setSelected(selected);
-      // 选中块原来铺满整个格子，四角会顶到导航条自己的圆角上，看起来像套了个方框。
-      // 内缩 4/5dp 之后就是一颗独立的 chip，和面板里的分段控件是同一个语言。
-      if (selected) {
+      tab.setContentDescription(
+          labels[i] + (selected ? "，收起参数面板" : "，展开参数面板"));
+      // 选中块内缩，让外侧圆角与导航条协调。
+      if (selected)
         tab.setBackground(
             new android.graphics.drawable.InsetDrawable(
                 tab.getBackground(), dp(4), dp(5), dp(4), dp(5)));
-      }
-      tab.setOnClickListener(
-          v -> {
-            selectedTab = n;
-            buildPanel();
-          });
+      tab.setOnClickListener(v -> selectEditorTool(tool));
       tabRow.addView(tab, new LinearLayout.LayoutParams(0, -1, 1));
     }
+  }
+
+  private void buildPanel() {
+    buildPanel(false);
+  }
+
+  private void buildPanel(boolean preserveTransition) {
+    if (panel == null) return;
+    // Keep the deferred crop tool's ID reserved without exposing its panel.
+    if (selectedTab == 3) selectedTab = 0;
+    // 新照片一律从「全部」的第一张开始；同一张照片再次编辑则沿用上次的分类与位置。
+    String sessionKey = sourceFile == null ? "internal" : sourceFile.getAbsolutePath();
+    if (!sessionKey.equals(filmSessionKey)) {
+      filmSessionKey = sessionKey;
+      panelCollapsed = false;
+      preserveTransition = false;
+      categoryScrollX.clear();
+      filmCategory = "全部";
+      pendingFilmScrollX = 0;
+    }
+    controls.removeIf(v -> descendant(v, panel));
+    panel.removeAllViews();
+    filmScrollRef = null;
+    thumbTargets.clear();
+    thumbViewsRef = new ArrayList<>();
+    thumbStocksRef = new ArrayList<>();
+    sliders.clear();
+    values.clear();
+    buildToolNavigation();
     ScrollView scroll = new ScrollView(this);
     panelScroll = scroll;
     scroll.setFillViewport(true);
@@ -1028,7 +1242,7 @@ public final class MainActivity extends Activity {
         (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
             panel.post(this::updatePanelFade));
     scroll.addView(editor);
-    updatePanelHeight();
+    if (!preserveTransition) updateEditorLayout();
     if (selectedTab <= 1) {
       LinearLayout modes = horizontal();
       for (int i = 0; i < 2; i++) {
@@ -1829,7 +2043,9 @@ public final class MainActivity extends Activity {
   @Override
   public void onConfigurationChanged(android.content.res.Configuration c) {
     super.onConfigurationChanged(c);
+    if (photo != null) photo.cancelPendingSingleTap();
     if (panel != null) {
+      updateEditorLayout();
       editorScreen.post(
           () -> {
             updateEditorLayout();
@@ -1874,7 +2090,8 @@ public final class MainActivity extends Activity {
     value.setBackground(valueBox);
     AdjustmentSeekBar bar = new AdjustmentSeekBar(this, sliderColors(key));
     bar.setMax((int) Math.round((max - min) / step));
-    bar.setProgress((int) Math.round((settings.optDouble(key, 0) - min) / step));
+    double defaultValue = sliderDefault(key);
+    bar.setProgress((int) Math.round((settings.optDouble(key, defaultValue) - min) / step));
     // 双极参数（-x..+y）在 0（默认值）处设刻度，拖回默认那一下的触感更明确
     if (min < 0 && max > 0) bar.setDetentProgress((int) Math.round(-min / step));
     bar.setContentDescription(label);
@@ -1887,31 +2104,57 @@ public final class MainActivity extends Activity {
     add(editor, line, -1, 56);
     sliders.put(key, bar);
     values.put(key, value);
-    value.setText(number(settings.optDouble(key, 0), suffix));
+    value.setText(number(settings.optDouble(key, defaultValue), suffix));
     if (Build.VERSION.SDK_INT >= 30) bar.setStateDescription(value.getText());
+    bar.setOnResetListener(
+        () -> {
+          if (exporting || activeImport != null || destroyed
+              || Math.abs(settings.optDouble(key, defaultValue) - defaultValue) < .00001) return;
+          set(key, defaultValue);
+          bar.setProgress((int) Math.round((defaultValue - min) / step));
+          refreshSliderValue(key, defaultValue, suffix, bar, value);
+          bar.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
+          scheduleRender();
+        });
     bar.setOnSeekBarChangeListener(
         new SeekBar.OnSeekBarChangeListener() {
+          private double before;
+          private boolean tracking;
+
           public void onProgressChanged(SeekBar b, int pos, boolean user) {
-            if (user) {
+            if (user && !destroyed && !exporting && activeImport == null) {
               double v = Math.round((min + pos * step) * 10000) / 10000.0;
               set(key, v);
-              value.setText(number(v, suffix));
-              if (Build.VERSION.SDK_INT >= 30) b.setStateDescription(value.getText());
-              if (key.startsWith("balance_") && key.endsWith("_hue")) {
-                String saturation = key.substring(0, key.length() - 4) + "_saturation";
-                SeekBar related = sliders.get(saturation);
-                if (related instanceof AdjustmentSeekBar)
-                  ((AdjustmentSeekBar) related).setTrackColors(sliderColors(saturation));
-              }
+              refreshSliderValue(key, v, suffix, b, value);
+              // 键盘/无障碍调值没有拖动结束事件，也需要提交编辑。
+              if (!tracking) scheduleRender();
             }
           }
 
-          public void onStartTrackingTouch(SeekBar b) {}
+          public void onStartTrackingTouch(SeekBar b) {
+            tracking = true;
+            before = settings.optDouble(key, defaultValue);
+          }
 
           public void onStopTrackingTouch(SeekBar b) {
-            scheduleRender();
+            tracking = false;
+            if (!destroyed && !exporting && activeImport == null
+                && Math.abs(settings.optDouble(key, defaultValue) - before) > .00001)
+              scheduleRender();
           }
         });
+  }
+
+  private void refreshSliderValue(
+      String key, double v, String suffix, SeekBar bar, TextView value) {
+    value.setText(number(v, suffix));
+    if (Build.VERSION.SDK_INT >= 30) bar.setStateDescription(value.getText());
+    if (key.startsWith("balance_") && key.endsWith("_hue")) {
+      String saturation = key.substring(0, key.length() - 4) + "_saturation";
+      SeekBar related = sliders.get(saturation);
+      if (related instanceof AdjustmentSeekBar)
+        ((AdjustmentSeekBar) related).setTrackColors(sliderColors(saturation));
+    }
   }
 
   private int[] sliderColors(String key) {
@@ -2595,6 +2838,7 @@ public final class MainActivity extends Activity {
   }
 
   private void adopt(LoadedPhoto image) {
+    if (photo != null) photo.cancelPendingSingleTap();
     Bitmap previous = source;
     if (developed != null) {
       Bitmaps.release(developed);
@@ -3793,9 +4037,16 @@ public final class MainActivity extends Activity {
             this::licenses,
             this::showDiagnostics);
     aboutPage = page;
+    page.setUpdateAvailable(updates.hasAvailableUpdate());
     screens.addView(page, new FrameLayout.LayoutParams(-1, -1));
     page.setAlpha(0f);
     page.animate().alpha(1f).setDuration(160).start();
+  }
+
+  private void refreshUpdateNotice() {
+    boolean available = updates.hasAvailableUpdate();
+    if (homeAbout != null) homeAbout.setAvailable(available);
+    if (aboutPage != null) aboutPage.setUpdateAvailable(available);
   }
 
   private void closeAbout() {
@@ -3839,6 +4090,12 @@ public final class MainActivity extends Activity {
   }
 
   @Override
+  protected void onStart() {
+    super.onStart();
+    if (updates != null) updates.checkInBackground();
+  }
+
+  @Override
   protected void onResume() {
     super.onResume();
     if (updates != null) updates.resume();
@@ -3848,12 +4105,18 @@ public final class MainActivity extends Activity {
 
   @Override
   protected void onPause() {
+    if (photo != null) photo.cancelPendingSingleTap();
+    finishPendingSliderTaps();
+    updateEditorLayout();
     if (flowingBackground != null) flowingBackground.setHostResumed(false);
     super.onPause();
   }
 
   @Override
   protected void onDestroy() {
+    if (photo != null) photo.cancelPendingSingleTap();
+    cancelPanelAnimation();
+    finishToolAnimations();
     if (flowingBackground != null) flowingBackground.setHostResumed(false);
     if (gallerySheet != null) gallerySheet.dismiss();
     if (exportSheet != null) exportSheet.dismiss();

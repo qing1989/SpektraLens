@@ -6,11 +6,14 @@ import android.graphics.*;
 import android.os.SystemClock;
 import android.test.InstrumentationTestCase;
 import android.view.MotionEvent;
+import android.view.ViewConfiguration;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Check the pixels under real touch events, rather than inspecting zoom fields. */
 public final class PhotoPreviewInstrumentedTest extends InstrumentationTestCase {
   private PhotoView view;
   private Bitmap original, developed;
+  private final AtomicInteger clicks = new AtomicInteger();
   private long time;
 
   protected void setUp() throws Exception {
@@ -28,6 +31,7 @@ public final class PhotoPreviewInstrumentedTest extends InstrumentationTestCase 
                   original.setPixel(x, y, Color.rgb(x * 255 / 399, y * 255 / 399, 64));
               developed = original.copy(Bitmap.Config.ARGB_8888, true);
               view.images(original, developed);
+              view.setOnClickListener(v -> clicks.incrementAndGet());
             });
   }
 
@@ -121,6 +125,35 @@ public final class PhotoPreviewInstrumentedTest extends InstrumentationTestCase 
     event(MotionEvent.ACTION_MOVE, x - 420, y, x + 420, y);
   }
 
+  private void awaitSingleTapConfirmation() {
+    try {
+      Thread.sleep(ViewConfiguration.getDoubleTapTimeout() + 100);
+    } catch (InterruptedException ex) {
+      Thread.currentThread().interrupt();
+      fail("Interrupted while waiting for single-tap confirmation");
+    }
+    getInstrumentation().waitForIdleSync();
+  }
+
+  public void testSingleTapConfirmsAfterDoubleTapWindowAndCanBeCanceled() {
+    main(
+        () -> {
+          event(MotionEvent.ACTION_DOWN, 400, 400);
+          event(MotionEvent.ACTION_UP, 400, 400);
+          assertEquals("Click waits for the double-tap window", 0, clicks.get());
+        });
+    awaitSingleTapConfirmation();
+    assertEquals("One confirmed tap requests one click", 1, clicks.get());
+    main(
+        () -> {
+          event(MotionEvent.ACTION_DOWN, 400, 400);
+          event(MotionEvent.ACTION_UP, 400, 400);
+          view.cancelPendingSingleTap();
+        });
+    awaitSingleTapConfirmation();
+    assertEquals("Canceled pending tap does not request a click", 1, clicks.get());
+  }
+
   public void testDoubleTapKeepsTappedDetailInPlaceAndSecondDoubleTapResets() {
     main(
         () -> {
@@ -140,6 +173,8 @@ public final class PhotoPreviewInstrumentedTest extends InstrumentationTestCase 
           }
           near(other, pixel(630, 300));
         });
+    awaitSingleTapConfirmation();
+    assertEquals("A double tap never requests a panel toggle", 0, clicks.get());
   }
 
   public void testPinchKeepsDetailUnderFingers() {
@@ -159,6 +194,21 @@ public final class PhotoPreviewInstrumentedTest extends InstrumentationTestCase 
               300);
           event(MotionEvent.ACTION_UP, 130, 300);
         });
+    awaitSingleTapConfirmation();
+    assertEquals("Pinching does not request a click", 0, clicks.get());
+  }
+
+  public void testDragAndCancelDoNotConfirmClicks() {
+    main(
+        () -> {
+          event(MotionEvent.ACTION_DOWN, 300, 400);
+          event(MotionEvent.ACTION_MOVE, 500, 400);
+          event(MotionEvent.ACTION_UP, 500, 400);
+          event(MotionEvent.ACTION_DOWN, 300, 400);
+          event(MotionEvent.ACTION_CANCEL, 300, 400);
+        });
+    awaitSingleTapConfirmation();
+    assertEquals("Dragging and cancellation do not request clicks", 0, clicks.get());
   }
 
   public void testLiftingFingerAfterPinchDoesNotMoveComparisonDivider() {

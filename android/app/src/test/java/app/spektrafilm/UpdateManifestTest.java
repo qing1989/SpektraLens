@@ -40,5 +40,7 @@ public final class UpdateManifestTest {
       Files.write(file, new byte[0]); check(!UpdateManifest.verify(file.toFile(), HASH));
     } finally { Files.delete(file); }
     System.out.println("UpdateManifestTest: " + checks + " checks passed");
+    UpdateAvailabilityTest.run();
+    UpdateNotesTest.run();
   }
 }

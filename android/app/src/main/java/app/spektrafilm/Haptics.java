@@ -7,6 +7,7 @@ import android.content.Context;
 import android.graphics.Rect;
 import android.view.*;
 import android.widget.AdapterView;
+import android.widget.SeekBar;
 import java.lang.reflect.*;
 
 /** System-defined touch feedback: no custom waveform, amplitude, permission or setting override. */
@@ -80,10 +81,10 @@ final class Haptics implements InvocationHandler {
         if (child != null) return child;
       }
     }
+    // 滑块自己负责拖动刻度与双击复位反馈，即便平台样式将它标记为 clickable 也不重复震动。
+    if (view instanceof SeekBar) return null;
     return view.isClickable()
             || view instanceof AdapterView
-            // SeekBar 不在此列：AdjustmentSeekBar 自带刻度震动，点按跳值已有一下，
-            // 再叠全局点按反馈就是连续两震。
             || view instanceof PhotoView
             || view instanceof CurveEditor
             || view instanceof CropEditor

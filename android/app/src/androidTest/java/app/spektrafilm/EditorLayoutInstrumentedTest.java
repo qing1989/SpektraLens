@@ -65,6 +65,7 @@ public final class EditorLayoutInstrumentedTest
             () -> {
               try {
                 call("showEditor");
+                field("panelCollapsed").setBoolean(activity, false);
                 field("selectedTab").setInt(activity, tool);
                 field("gradeSection").set(activity, section);
                 call("buildPanel");
@@ -117,10 +118,10 @@ public final class EditorLayoutInstrumentedTest
   }
 
   /**
-   * 编辑区的一条硬规则，九页（胶片 / 相纸 / 调整五段 / 边框 / 质感）逐页验：
+   * 面板展开状态下的硬规则，九页（胶片 / 相纸 / 调整五段 / 边框 / 质感）逐页验：
    * <b>预览区高度与面板高度都必须一模一样</b>——面板固定占满 {@link
    * MainActivity#PANEL_MAX_DP}（或屏幕上限），不随内容收缩、不随内容跳动，内容多了就在
-   * 面板里滚动。照片因此永远不动。
+   * 面板里滚动。切换工具时照片不动；主动收起时扩大照片区，另由交互测试覆盖。
    *
    * <p>同时守住底部渐隐：它必须与「还能不能滚」一致——长页滚到底要灭，短页从头到尾不亮。
    */
@@ -140,6 +141,7 @@ public final class EditorLayoutInstrumentedTest
             () -> {
               try {
                 call("showEditor");
+                field("panelCollapsed").setBoolean(activity, false);
                 field("selectedTab").setInt(activity, tool);
                 field("gradeSection").set(activity, section);
                 call("buildPanel");

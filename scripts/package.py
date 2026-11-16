@@ -79,6 +79,7 @@ for name in current_docs:
     shutil.copy2(ROOT / 'docs' / name, OUT / name)
 
 sources = []
+signing_suffixes = {'.jks', '.keystore', '.p12', '.pem', '.key'}
 # Only the integrated launcher artwork belongs to the corresponding application source.
 # Parallel design proposals are separate deliverables and may still be under review.
 for directory in ('android', 'scripts', 'docs', 'design/app-icon/v4-spectrum-film-2026-11-11', 'third_party', 'patches'):
@@ -86,6 +87,8 @@ for directory in ('android', 'scripts', 'docs', 'design/app-icon/v4-spectrum-fil
         rel = path.relative_to(ROOT)
         if not path.is_file() or any(p in ('build', '.gradle', '.cxx', '__pycache__') for p in rel.parts): continue
         if path.name in ('local.properties', '.DS_Store') or path.name.startswith('emulator-'): continue
+        if path.name == 'keystore.properties' or rel.parts[:2] == ('android', 'keystore'): continue
+        if path.suffix.lower() in signing_suffixes or path.name == '.env' or path.name.startswith('.env.'): continue
         if rel.parts[:7] == ('android','app','src','main','assets','film_icons','grlife'): continue
         if rel.parts[:6] == ('android','app','src','main','assets','engine'): continue
         sources.append(path)
@@ -103,6 +106,15 @@ with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         z.write(path, 'SpektraLens/' + path.relative_to(ROOT).as_posix())
 with zipfile.ZipFile(archive) as z:
     assert z.testzip() is None
+    leaked_signing_material = [
+        name for name in z.namelist()
+        if name.endswith('/keystore.properties')
+        or '/android/keystore/' in name
+        or Path(name).suffix.lower() in signing_suffixes
+        or Path(name).name == '.env'
+        or Path(name).name.startswith('.env.')
+    ]
+    assert not leaked_signing_material, leaked_signing_material
     assert 'SpektraLens/SpektraLab/engine/src/gpu/vulkan_gpu.cpp' in z.namelist()
     assert 'SpektraLens/android/gradle/wrapper/gradle-wrapper.jar' in z.namelist()
     assert 'SpektraLens/third_party/SwiftShader-cddb5c91-source.zip' in z.namelist()
