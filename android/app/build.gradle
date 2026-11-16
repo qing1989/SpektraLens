@@ -7,6 +7,23 @@ if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
 }
 
+// Sponsor artwork stays outside the public source tree. Public builds delete any stale generated
+// resource, while local/release builds can inject a private JPEG through Gradle or the environment.
+def repositoryRoot = rootProject.projectDir.parentFile
+def publicBuild = (findProperty('publicBuild') ?: 'false').toString().toBoolean()
+def sponsorQrValue =
+        findProperty('sponsorQr') ?: System.getenv('SPEKTRA_SPONSOR_WECHAT_QR')
+def sponsorQrWasProvided = sponsorQrValue != null && !sponsorQrValue.toString().isBlank()
+def sponsorQrSource
+if (sponsorQrWasProvided) {
+    File configured = new File(sponsorQrValue.toString())
+    sponsorQrSource = configured.isAbsolute() ? configured : new File(repositoryRoot, configured.toString())
+} else {
+    sponsorQrSource = new File(repositoryRoot, '.local/sponsor/wechat-appreciation.jpg')
+}
+def sponsorQrEnabled = !publicBuild && sponsorQrSource.isFile()
+def sponsorResDir = layout.buildDirectory.dir('generated/sponsor-res')
+
 android {
     namespace 'app.spektrafilm'
     compileSdk 35
@@ -15,8 +32,8 @@ android {
         applicationId 'app.spektrafilm'
         minSdk 29
         targetSdk 35
-        versionCode 24
-        versionName '0.4.5'
+        versionCode 25
+        versionName '0.4.6'
         // Default ships arm64 only: the x86_64 SwiftShader ICD alone is 22 MB and phones never use
         // it. Emulator builds pass -Pabis=arm64-v8a,x86_64.
         def abiList = (findProperty('abis') ?: 'arm64-v8a').toString().split(',') as List
@@ -45,8 +62,44 @@ android {
         exclude 'film_icons/grlife/**', 'licenses/GRLife-Film-Icons.txt'
         into artworkSafeAssets
     }
+    def prepareSponsorAsset = tasks.register('prepareSponsorAsset') {
+        inputs.property('publicBuild', publicBuild)
+        inputs.property('sponsorProvided', sponsorQrWasProvided)
+        if (sponsorQrEnabled) inputs.file(sponsorQrSource)
+        outputs.dir(sponsorResDir)
+        doLast {
+            File root = sponsorResDir.get().asFile
+            delete(root)
+            if (publicBuild) return
+            if (!sponsorQrSource.isFile()) {
+                if (sponsorQrWasProvided) {
+                    throw new GradleException(
+                            "sponsorQr does not point to a readable file: " + sponsorQrSource)
+                }
+                return
+            }
+            DataInputStream input = new DataInputStream(new FileInputStream(sponsorQrSource))
+            try {
+                if (input.readUnsignedByte() != 0xff || input.readUnsignedByte() != 0xd8) {
+                    throw new GradleException("sponsorQr must be a JPEG file")
+                }
+            } finally {
+                input.close()
+            }
+            File raw = new File(root, 'raw')
+            if (!raw.mkdirs() && !raw.isDirectory()) {
+                throw new GradleException("Unable to create generated sponsor resource directory")
+            }
+            copy {
+                from sponsorQrSource
+                into raw
+                rename { 'sponsor_wechat_qr.jpg' }
+            }
+        }
+    }
     sourceSets.main.assets.setSrcDirs([artworkSafeAssets.get().asFile])
-    tasks.named('preBuild').configure { dependsOn prepareAssets }
+    sourceSets.main.res.srcDir(sponsorResDir.get().asFile)
+    tasks.named('preBuild').configure { dependsOn prepareAssets, prepareSponsorAsset }
     externalNativeBuild { cmake { path 'src/main/cpp/CMakeLists.txt'; version '3.22.1' } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     buildTypes {

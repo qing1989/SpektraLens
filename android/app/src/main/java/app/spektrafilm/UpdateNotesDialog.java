@@ -7,14 +7,12 @@ import android.app.Activity;
 import android.app.Dialog;
 import android.graphics.Color;
 import android.graphics.Rect;
-import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.BulletSpan;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.LeadingMarginSpan;
-import android.text.style.StyleSpan;
 import android.text.style.TypefaceSpan;
 import android.view.Gravity;
 import android.view.View;
@@ -56,15 +54,21 @@ final class UpdateNotesDialog extends Dialog {
     LinearLayout body = column();
     body.setPadding(dp(22), dp(24), dp(22), dp(22));
     TextView title = text("发现新版本", AppStyle.TYPE_HEADING, AppStyle.INK);
+    AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
     title.setAccessibilityHeading(true);
     body.addView(title);
     gap(body, 4);
     TextView version = text("v" + manifest.versionName, AppStyle.TYPE_BRAND, AppStyle.INK);
+    AppStyle.setTypeface(version, AppStyle.FONT_SEMIBOLD);
+    version.setFontFeatureSettings("tnum");
     body.addView(version);
     gap(body, 4);
     String size = manifest.sizeBytes == UpdateManifest.MAX_APK_BYTES ? ""
         : String.format(Locale.CHINA, " · 更新包 %.1f MiB", manifest.sizeBytes / 1048576.0);
-    body.addView(text("当前 v" + current + size, AppStyle.TYPE_LABEL, AppStyle.MUTED));
+    TextView currentInfo =
+        text("当前 v" + current + size, AppStyle.TYPE_LABEL, AppStyle.MUTED);
+    AppStyle.setNumericTypeface(currentInfo);
+    body.addView(currentInfo);
     gap(body, 22);
     TextView notes = text("", AppStyle.TYPE_TITLE, AppStyle.VALUE);
     notes.setTag("update.notes");
@@ -77,7 +81,7 @@ final class UpdateNotesDialog extends Dialog {
       if (!line.marker.isEmpty() && !bullet) paragraphs.append(line.marker).append(" ");
       paragraphs.append(emphasize(line.text));
       if (line.heading) {
-        paragraphs.setSpan(new StyleSpan(Typeface.BOLD),
+        paragraphs.setSpan(new TypefaceSpan(AppStyle.typeface(activity, AppStyle.FONT_BOLD)),
             start, paragraphs.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         paragraphs.setSpan(new ForegroundColorSpan(AppStyle.INK),
             start, paragraphs.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
@@ -100,7 +104,7 @@ final class UpdateNotesDialog extends Dialog {
     LinearLayout footer = column();
     footer.setTag("update.actions");
     View divider = new View(getContext());
-    divider.setBackgroundColor(AppStyle.OUTLINE);
+    divider.setBackgroundColor(AppStyle.DIVIDER);
     footer.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
     LinearLayout actions = new LinearLayout(getContext());
     actions.setPadding(dp(18), dp(14), dp(18), dp(18));
@@ -129,7 +133,10 @@ final class UpdateNotesDialog extends Dialog {
       int start = result.length();
       boolean bold = match.group(1) != null;
       result.append(bold ? match.group(1) : match.group(2));
-      result.setSpan(bold ? new StyleSpan(Typeface.BOLD) : new TypefaceSpan("monospace"),
+      result.setSpan(
+          bold
+              ? new TypefaceSpan(AppStyle.typeface(activity, AppStyle.FONT_BOLD))
+              : new TypefaceSpan(AppStyle.typeface(activity, AppStyle.FONT_MEDIUM)),
           start, result.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
       previous = match.end();
     }
@@ -144,8 +151,12 @@ final class UpdateNotesDialog extends Dialog {
     button.setSingleLine(true);
     button.setPadding(dp(12), dp(12), dp(12), dp(12));
     button.setMinHeight(dp(AppStyle.TOUCH_PRIMARY));
-    AppStyle.action(button, primary ? AppStyle.BG : AppStyle.INK,
-        primary ? AppStyle.ACCENT : Color.TRANSPARENT, AppStyle.R_MEDIUM);
+    AppStyle.pillAction(
+        button,
+        primary ? AppStyle.ON_PRIMARY : AppStyle.INK,
+        primary ? AppStyle.PRIMARY : Color.TRANSPARENT);
+    AppStyle.setTypeface(
+        button, primary ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
     button.setOnClickListener(view -> click.run());
     button.setAccessibilityDelegate(new View.AccessibilityDelegate() {
       @Override
@@ -163,6 +174,7 @@ final class UpdateNotesDialog extends Dialog {
     view.setTextSize(size);
     view.setTextColor(color);
     view.setIncludeFontPadding(false);
+    AppStyle.setTypeface(view, AppStyle.FONT_REGULAR);
     return view;
   }
 

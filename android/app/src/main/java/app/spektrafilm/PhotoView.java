@@ -6,6 +6,7 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.*;
 import android.view.GestureDetector;
+import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
@@ -39,7 +40,7 @@ public final class PhotoView extends View {
   private float lastFocusX, lastFocusY;
   private boolean scaleGesture;
   private boolean pendingSingleTapCanceled;
-  private boolean dragging, dragDivider;
+  private boolean dragging, dragDivider, showingOriginal;
   private float downX, downY;
   private final int touchSlop;
   private final ScaleGestureDetector scale;
@@ -47,9 +48,10 @@ public final class PhotoView extends View {
 
   public PhotoView(Context c) {
     super(c);
+    paint.setTypeface(AppStyle.typeface(c, AppStyle.FONT_MEDIUM));
     touchSlop = ViewConfiguration.get(c).getScaledTouchSlop();
     setContentDescription(
-        "照片预览；单击收起或恢复参数面板，双指缩放，双击放大或复位；对比时拖动分界线，放大后拖动其他位置平移照片");
+        "照片预览；单击收起或恢复参数面板，未开启对比时长按查看原图，双指缩放，双击放大或复位；对比时拖动分界线，放大后拖动其他位置平移照片");
     scale =
         new ScaleGestureDetector(
             c,
@@ -88,6 +90,18 @@ public final class PhotoView extends View {
               @Override
               public void onLongPress(MotionEvent e) {
                 pendingSingleTapCanceled = true;
+                if (!compare
+                    && !scaleGesture
+                    && !dragging
+                    && !showingOriginal
+                    && e.getPointerCount() == 1
+                    && before != null
+                    && after != null
+                    && visibleFrame.contains(e.getX(), e.getY())) {
+                  showingOriginal = true;
+                  invalidate();
+                  performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                }
               }
 
               @Override
@@ -111,6 +125,7 @@ public final class PhotoView extends View {
   /** Suppresses a tap whose single-tap confirmation has not fired yet. */
   public void cancelPendingSingleTap() {
     pendingSingleTapCanceled = true;
+    finishHeldOriginal();
   }
 
   public void resetZoom() {
@@ -136,6 +151,7 @@ public final class PhotoView extends View {
   }
 
   public void images(Bitmap a, Bitmap b) {
+    finishHeldOriginal();
     before = a;
     after = b;
     invalidate();
@@ -143,6 +159,7 @@ public final class PhotoView extends View {
 
   public void compare(boolean value) {
     compare = value;
+    if (value) finishHeldOriginal();
     invalidate();
   }
 
@@ -156,7 +173,7 @@ public final class PhotoView extends View {
   protected void onDraw(Canvas c) {
     super.onDraw(c);
     c.drawColor(Color.BLACK);
-    Bitmap image = after != null ? after : before;
+    Bitmap image = showingOriginal && before != null ? before : after != null ? after : before;
     if (image == null) return;
     updateFrame();
     if (frame.isEmpty()) return;
@@ -260,6 +277,7 @@ public final class PhotoView extends View {
   public boolean onTouchEvent(MotionEvent e) {
     int action = e.getActionMasked();
     if (action == MotionEvent.ACTION_DOWN) {
+      finishHeldOriginal();
       pendingSingleTapCanceled = false;
       scaleGesture = false;
       dragging = false;
@@ -273,6 +291,7 @@ public final class PhotoView extends View {
     scale.onTouchEvent(e);
     taps.onTouchEvent(e);
     if (e.getPointerCount() > 1) {
+      finishHeldOriginal();
       pendingSingleTapCanceled = true;
       scaleGesture = true;
       intercept(true);
@@ -287,12 +306,14 @@ public final class PhotoView extends View {
       return true;
     }
     if (action == MotionEvent.ACTION_CANCEL) {
+      finishHeldOriginal();
       pendingSingleTapCanceled = true;
       intercept(false);
       return true;
     }
     if (action == MotionEvent.ACTION_MOVE) {
       if (!dragging && Math.hypot(e.getX() - downX, e.getY() - downY) <= touchSlop) return true;
+      finishHeldOriginal();
       pendingSingleTapCanceled = true;
       dragging = true;
       intercept(true);
@@ -312,6 +333,7 @@ public final class PhotoView extends View {
       return true;
     }
     if (action == MotionEvent.ACTION_UP) {
+      finishHeldOriginal();
       intercept(false);
       return true;
     }
@@ -320,6 +342,12 @@ public final class PhotoView extends View {
 
   private void intercept(boolean disallow) {
     if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(disallow);
+  }
+
+  private void finishHeldOriginal() {
+    if (!showingOriginal) return;
+    showingOriginal = false;
+    invalidate();
   }
 
   @Override

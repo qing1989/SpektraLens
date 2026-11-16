@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<lint>
+  <!-- The raw QR is resolved by name so public-source builds can omit the private resource. -->
+  <issue id="UnusedResources">
+    <ignore regexp="sponsor_wechat_qr"/>
+  </issue>
+</lint>

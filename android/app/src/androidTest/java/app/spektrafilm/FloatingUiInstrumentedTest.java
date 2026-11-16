@@ -74,6 +74,76 @@ public final class FloatingUiInstrumentedTest
         location[0], location[1], location[0] + view.getWidth(), location[1] + view.getHeight());
   }
 
+  private View findText(View root, String label) {
+    if (root instanceof TextView && label.contentEquals(((TextView) root).getText())) return root;
+    if (!(root instanceof ViewGroup)) return null;
+    ViewGroup group = (ViewGroup) root;
+    for (int i = 0; i < group.getChildCount(); i++) {
+      View match = findText(group.getChildAt(i), label);
+      if (match != null) return match;
+    }
+    return null;
+  }
+
+  public void testFilmCategoryChipsFitShortAndFourCharacterLabels() throws Exception {
+    main(
+        () -> {
+          try {
+            field("selectedTab").setInt(activity, 0);
+            invoke("buildPanel", new Class<?>[0]);
+          } catch (Exception error) {
+            throw new RuntimeException(error);
+          }
+        });
+    final View editor = (View) value("editorScreen");
+    main(
+        () -> {
+          TextView all = (TextView) findText(editor, "全部");
+          TextView colorNegative = (TextView) findText(editor, "彩色负片");
+          assertNotNull(all);
+          assertNotNull(colorNegative);
+          float density = activity.getResources().getDisplayMetrics().density;
+          int minimum = Math.round(40 * density), shortMaximum = Math.round(48 * density),
+              maximum = Math.round(70 * density);
+          assertTrue("Two-character chip stays compact", all.getWidth() >= minimum);
+          assertTrue(
+              "Two-character chip does not get four-character padding",
+              all.getWidth() <= shortMaximum);
+          assertTrue(
+              "Four-character chip stays within the category slot",
+              colorNegative.getWidth() <= maximum);
+          assertTrue(
+              "Four-character label fits without clipping",
+              colorNegative.getPaint().measureText("彩色负片")
+                      + colorNegative.getPaddingLeft()
+                      + colorNegative.getPaddingRight()
+                  <= colorNegative.getWidth() + 1);
+          assertTrue(
+              "The four-character chip gets only the extra width its label needs",
+              colorNegative.getWidth() > all.getWidth());
+        });
+    main(
+        () -> {
+          TextView colorNegative = (TextView) findText(editor, "彩色负片");
+          assertNotNull(colorNegative);
+          colorNegative.performClick();
+        });
+    final View selectedEditor = (View) value("editorScreen");
+    main(
+        () -> {
+          TextView selected = (TextView) findText(selectedEditor, "彩色负片");
+          assertNotNull(selected);
+          assertTrue(selected.isSelected());
+          float density = activity.getResources().getDisplayMetrics().density;
+          assertTrue(selected.getWidth() <= Math.round(70 * density));
+          assertTrue(
+              selected.getPaint().measureText("彩色负片")
+                      + selected.getPaddingLeft()
+                      + selected.getPaddingRight()
+                  <= selected.getWidth() + 1);
+        });
+  }
+
   /**
    * 面板贴底、永不压住照片，而且切工具时照片的矩形一动不动——面板高度现在跟着内容走
    * （装得下就收短，装不下就停在上限滚动），所以「照片不许跟着长」必须靠布局保证。
@@ -166,7 +236,8 @@ public final class FloatingUiInstrumentedTest
       try {
         Button positive = dialog[0].getButton(android.app.AlertDialog.BUTTON_POSITIVE);
         assertEquals(
-            "Primary text contrasts with orange fill", AppStyle.BG, positive.getCurrentTextColor());
+            "Primary text contrasts with ivory fill",
+            AppStyle.ON_PRIMARY, positive.getCurrentTextColor());
         assertTrue(
             "Primary action stays horizontal: " + names[0],
             positive.getWidth() >= positive.getHeight() * 2);

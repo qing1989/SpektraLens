@@ -173,14 +173,14 @@ public final class FilmGalleryInstrumentedTest
               assertNull("Labels stay unfilled", label.getBackground());
               if (card.isSelected()) {
                 selected = true;
-                assertEquals(AppStyle.ACCENT, label.getCurrentTextColor());
+                assertEquals(AppStyle.GOLD, label.getCurrentTextColor());
                 Bitmap pixels =
                     Bitmap.createBitmap(
                         frame.getWidth(), frame.getHeight(), Bitmap.Config.ARGB_8888);
                 frame.draw(new Canvas(pixels));
                 assertEquals(
-                    "White selection stroke",
-                    Color.WHITE,
+                    "Gold selection stroke",
+                    AppStyle.GOLD,
                     pixels.getPixel(pixels.getWidth() / 2, 1));
                 pixels.recycle();
               }

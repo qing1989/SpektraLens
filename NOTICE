@@ -16,6 +16,10 @@ The current stock cartridges are drawn by SpektraLens. The rendering code,
 stock definitions and resulting project artwork are GPL-3.0-or-later.
 Archived GRLife artwork retains its original rights and is excluded from current builds.
 
+Interface fonts: Inter 4.1 by Rasmus Andersson and Noto Sans SC by the Noto
+project contributors, each under the SIL Open Font License 1.1. The original
+font files and license texts are bundled with the application.
+
 No affiliation or endorsement by the upstream authors or film manufacturers
 is claimed. Full component copyright notices and licenses are preserved in
 the vendored sources and android/app/src/main/assets/licenses/.

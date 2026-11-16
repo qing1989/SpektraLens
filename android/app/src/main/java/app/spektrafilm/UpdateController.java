@@ -136,6 +136,7 @@ final class UpdateController {
     ProgressBar bar = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
     bar.setMax(100); bar.setIndeterminate(manifest.sizeBytes == UpdateManifest.MAX_APK_BYTES);
     TextView label = new TextView(activity); label.setText("正在下载…");
+    AppStyle.setTypeface(label, AppStyle.FONT_REGULAR);
     content.addView(label); content.addView(bar);
     progress = new Haptics.DialogBuilder(activity).setTitle("下载更新 " + manifest.versionName)
         .setView(content).setNegativeButton("取消", (d, n) -> cancel()).create();

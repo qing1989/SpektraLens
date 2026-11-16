@@ -3,7 +3,6 @@
 package app.spektrafilm;
 
 import android.annotation.SuppressLint;
-import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
@@ -19,18 +18,20 @@ final class UpdateBadge extends FrameLayout {
   private final CharSequence description;
 
   UpdateBadge(TextView action, String label) {
+    this(action, label, true);
+  }
+
+  UpdateBadge(TextView action, String label, boolean reserveHorizontalSpace) {
     super(action.getContext());
     this.action = action;
     description = action.getContentDescription() == null
         ? action.getText() : action.getContentDescription();
     LayoutParams actionParams = new LayoutParams(-2, -2);
     actionParams.topMargin = dp(10);
-    // The badge needs room to the action's end, but the wrapper itself can be centered (as it is
-    // on the About page). Reserve the same amount at the start so the actual action remains on
-    // the wrapper's visual center rather than shifting left by half the end reserve.
     actionParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-    actionParams.setMarginStart(dp(14));
-    actionParams.setMarginEnd(dp(14));
+    int horizontalInset = reserveHorizontalSpace ? dp(14) : 0;
+    actionParams.setMarginStart(horizontalInset);
+    actionParams.setMarginEnd(horizontalInset);
     addView(action, actionParams);
     action.setClickable(false);
     action.setFocusable(false);
@@ -49,14 +50,14 @@ final class UpdateBadge extends FrameLayout {
     badge = new TextView(getContext());
     badge.setText(label);
     badge.setTextSize(AppStyle.TYPE_MICRO);
-    badge.setTextColor(AppStyle.BG);
-    badge.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+    badge.setTextColor(AppStyle.ON_PRIMARY);
+    AppStyle.setTypeface(badge, AppStyle.FONT_SEMIBOLD);
     badge.setIncludeFontPadding(false);
     badge.setSingleLine(true);
     badge.setGravity(Gravity.CENTER);
     badge.setPadding(dp(7), dp(3), dp(7), dp(3));
     GradientDrawable fill =
-        AppStyle.shape(getContext(), AppStyle.ACCENT, AppStyle.R_SMALL, false);
+        AppStyle.pill(getContext(), AppStyle.GOLD, false);
     fill.setStroke(dp(2), AppStyle.BG);
     badge.setBackground(fill);
     badge.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);

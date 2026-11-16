@@ -8,25 +8,35 @@ import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.graphics.fonts.Font;
+import android.graphics.fonts.FontFamily;
+import android.graphics.fonts.FontStyle;
 import android.graphics.drawable.*;
 import android.view.*;
 import android.widget.*;
+import java.io.IOException;
 import java.util.ArrayList;
 
 /** Shared C-direction surfaces and controls, drawn natively without blurring photographs. */
 final class AppStyle {
   static final int BG = 0xff000000,
-      SURFACE = 0xff222225,
-      CONTROL = 0xff2d2d32,
-      SELECTED = 0xff3b3b41,
-      FIELD = 0xff1b1b1e,
-      OUTLINE = 0xff39393f,
-      INK = 0xfff4f4f6,
-      MUTED = 0xffa1a1aa,
-      ACCENT = 0xffff7a1a,
-      GRIP = 0xff74747e,
-      DISABLED = 0xff8a8a93,
-      VALUE = 0xffd4d4d9,
+      SURFACE = 0xff16141a,
+      CONTROL = 0xff241f28,
+      SELECTED = 0xff241f28,
+      FIELD = 0xff16141a,
+      OUTLINE = 0xff3a3340,
+      DIVIDER = 0xff2a272e,
+      INK = 0xfff6f3f4,
+      MUTED = 0xffa399a0,
+      PRIMARY = 0xfff7f3ea,
+      ON_PRIMARY = 0xff16141a,
+      GOLD = 0xffe0b47a,
+      SWITCH_TRACK_ON = 0xff8f6a3e,
+      SWITCH_TRACK_OFF = 0xff4a4a4e,
+      SWITCH_THUMB_OFF = 0xffd0d0d2,
+      GRIP = 0xff7a7278,
+      DISABLED = 0xff8a8086,
+      VALUE = 0xfff6f3f4,
       // 曲线通道色：只用于曲线图与图例，别拿去当正文色。
       CURVE_R = 0xfff28179,
       CURVE_G = 0xff99c786,
@@ -37,13 +47,14 @@ final class AppStyle {
   static final int TYPE_MICRO = 11, TYPE_LABEL = 12, TYPE_BODY = 13,
       TYPE_TITLE = 15, TYPE_HEADING = 18, TYPE_BRAND = 30;
 
-  // 圆角三档，按用途分，不许再插第四种：
-  //   R_SMALL  10 —— 输入框、值框、状态条
-  //   R_MEDIUM 16 —— 按钮、chip、卡片、胶片卡材质卡
-  //   R_LARGE  26 —— 面板、底部导航条、弹层、对话框
+  // 普通圆角矩形仍分三档；按钮、页签、数值框和底部导航使用独立的 pill() 胶囊轮廓，
+  // 按实际短边的一半绘制，不靠某个固定半径近似，字体或窗口变大时也保持半圆端部。
+  //   R_SMALL  10 —— 输入框、状态条
+  //   R_MEDIUM 16 —— 卡片、胶片卡、材质卡、导出分段选项
+  //   R_LARGE  26 —— 面板、弹层、对话框
   // 两条配套规则比档位更重要，凡是「套在一起」的形状都按它们来：
-  //   ① 容器里的选中块用容器同档（底部导航 26 → 选中块也 26，高度不够时由平台
-  //      按半高裁成胶囊），不要用小一档的半径，否则就是「方角塞进圆角」；
+  //   ① 容器里的选中块用相同形状规则（底部导航与选中块都用 pill，各按内缩后的
+  //      实际半高绘制），不要用小一档的固定半径，否则就是「方角塞进圆角」；
   //   ② 包住图形的环要和图形共用同一个矩形与半径（描边向内画），别另算一个数。
   //      必须留间隙时，外径要同时补上间隙和描边宽度——描边占的是内侧，只补间隙
   //      会让环的内弧比图形更圆，四角挤出一道楔形空隙，看着就是「两个圆角不一样」。
@@ -52,6 +63,12 @@ final class AppStyle {
   // 触控基准：主操作 48、常规 44。低于 44 的只留给纯展示元素。
   static final int TOUCH_PRIMARY = 48, TOUCH_MIN = 44;
 
+  static final int FONT_REGULAR = 400, FONT_MEDIUM = 500, FONT_SEMIBOLD = 600,
+      FONT_BOLD = 700;
+  private static final int[] FONT_WEIGHTS = {
+    FONT_REGULAR, FONT_MEDIUM, FONT_SEMIBOLD, FONT_BOLD
+  };
+  private static final Typeface[] TYPEFACES = new Typeface[FONT_WEIGHTS.length];
 
   /** Same colour at a different opacity, for wells and overlays. */
   static int withAlpha(int color, float alpha) {
@@ -62,12 +79,120 @@ final class AppStyle {
     return Math.round(value * context.getResources().getDisplayMetrics().density);
   }
 
+  /**
+   * Inter is the Latin base and Noto Sans SC is the bundled CJK fallback. The explicit system
+   * fallback covers uncommon symbols, while all ordinary UI text stays local and deterministic.
+   */
+  static Typeface typeface(Context context, int weight) {
+    int index = 0;
+    for (int i = 0; i < FONT_WEIGHTS.length; i++)
+      if (weight >= FONT_WEIGHTS[i]) index = i;
+    Typeface cached = TYPEFACES[index];
+    if (cached != null) return cached;
+    synchronized (AppStyle.class) {
+      cached = TYPEFACES[index];
+      if (cached != null) return cached;
+      Context app = context.getApplicationContext();
+      try {
+        int selectedWeight = FONT_WEIGHTS[index];
+        String variations = "'wght' " + selectedWeight;
+        Font inter =
+            new Font.Builder(app.getResources(), R.font.inter_variable)
+                .setFontVariationSettings(variations)
+                .setWeight(selectedWeight)
+                .build();
+        Font noto =
+            new Font.Builder(app.getResources(), R.font.noto_sans_sc_variable)
+                .setFontVariationSettings(variations)
+                .setWeight(selectedWeight)
+                .build();
+        Typeface.CustomFallbackBuilder fallback =
+            new Typeface.CustomFallbackBuilder(new FontFamily.Builder(inter).build());
+        fallback.addCustomFallback(new FontFamily.Builder(noto).build());
+        fallback.setStyle(new FontStyle(selectedWeight, FontStyle.FONT_SLANT_UPRIGHT));
+        fallback.setSystemFallback("sans-serif");
+        cached = fallback.build();
+      } catch (IOException error) {
+        throw new IllegalStateException("Bundled fonts could not be loaded", error);
+      }
+      TYPEFACES[index] = cached;
+      return cached;
+    }
+  }
+
+  static void setTypeface(TextView view, int weight) {
+    view.setTypeface(typeface(view.getContext(), weight));
+    view.setFontFeatureSettings("kern");
+  }
+
+  static void setNumericTypeface(TextView view) {
+    view.setTypeface(typeface(view.getContext(), FONT_MEDIUM));
+    view.setFontFeatureSettings("tnum");
+  }
+
+  static void styleSwitch(Switch view) {
+    Context context = view.getContext();
+    int inset = dp(context, 2), diameter = dp(context, 22);
+    GradientDrawable thumb = new GradientDrawable();
+    thumb.setShape(GradientDrawable.OVAL);
+    thumb.setSize(diameter, diameter);
+    thumb.setColor(switchColors(GOLD, SWITCH_THUMB_OFF));
+    // Switch measures two thumb content widths. This padding represents the overlap at the
+    // rounded ends, keeping a 44 × 26 dp rail and a circular 22 dp thumb with a 2 dp inset.
+    thumb.setPadding(inset, 0, inset, 0);
+    GradientDrawable track = pill(context, SWITCH_TRACK_OFF, false);
+    track.setSize(diameter * 2, diameter + inset * 2);
+    track.setPadding(inset * 2, inset, inset * 2, inset);
+    track.setColor(switchColors(SWITCH_TRACK_ON, SWITCH_TRACK_OFF));
+    // Replace the geometry as well as the colours; OEM tinting must not restyle these drawables.
+    view.setThumbTintList(null);
+    view.setTrackTintList(null);
+    view.setThumbDrawable(new InsetDrawable(thumb, 0, inset, 0, inset));
+    view.setTrackDrawable(track);
+    view.setShowText(false);
+    view.setSplitTrack(false);
+    view.setSwitchMinWidth(diameter * 2);
+    view.setSwitchPadding(dp(context, 12));
+    view.setMinHeight(dp(context, TOUCH_MIN));
+    view.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+    view.setIncludeFontPadding(false);
+    view.getThumbDrawable().setState(view.getDrawableState());
+    view.getTrackDrawable().setState(view.getDrawableState());
+  }
+
+  private static ColorStateList switchColors(int checked, int unchecked) {
+    return new ColorStateList(
+        new int[][] {
+          {-android.R.attr.state_enabled, android.R.attr.state_checked},
+          {-android.R.attr.state_enabled},
+          {android.R.attr.state_checked},
+          {}
+        },
+        new int[] {withAlpha(checked, .45f), withAlpha(unchecked, .45f), checked, unchecked});
+  }
+
   static GradientDrawable shape(Context context, int color, float radius, boolean outline) {
     GradientDrawable drawable = new GradientDrawable();
     drawable.setColor(color);
     drawable.setCornerRadius(dp(context, radius));
     if (outline) drawable.setStroke(Math.max(1, dp(context, .5f)), OUTLINE);
     return drawable;
+  }
+
+  static GradientDrawable pill(Context context, int color, boolean outline) {
+    GradientDrawable drawable = new PillDrawable();
+    drawable.setColor(color);
+    if (outline) drawable.setStroke(Math.max(1, dp(context, .5f)), OUTLINE);
+    return drawable;
+  }
+
+  /** Derive the outline from the final drawable bounds, including any navigation insets. */
+  private static final class PillDrawable extends GradientDrawable {
+    @Override
+    protected void onBoundsChange(Rect bounds) {
+      super.onBoundsChange(bounds);
+      setCornerRadius(Math.min(bounds.width(), bounds.height()) / 2f);
+    }
   }
 
   static void surface(View view, int color, float radius) {
@@ -82,22 +207,31 @@ final class AppStyle {
   }
 
   static void action(TextView view, int color, int fill, float radius) {
+    action(view, color, fill, radius, false);
+  }
+
+  static void pillAction(TextView view, int color, int fill) {
+    action(view, color, fill, 0, true);
+  }
+
+  private static void action(TextView view, int color, int fill, float radius, boolean pill) {
     Context context = view.getContext();
     StateListDrawable states = new StateListDrawable();
     states.addState(
         new int[] {-android.R.attr.state_enabled},
         actionShape(
-            context, fill == Color.TRANSPARENT ? Color.TRANSPARENT : CONTROL, radius));
-    states.addState(new int[] {}, actionShape(context, fill, radius));
+            context, fill == Color.TRANSPARENT ? Color.TRANSPARENT : CONTROL, radius, pill));
+    states.addState(new int[] {}, actionShape(context, fill, radius, pill));
     view.setBackground(
         new RippleDrawable(
             ColorStateList.valueOf(0x24ffffff),
             states,
-            actionShape(context, Color.WHITE, radius)));
+            actionShape(context, Color.WHITE, radius, pill)));
     view.setTextColor(
         new ColorStateList(
             new int[][] {new int[] {-android.R.attr.state_enabled}, new int[] {}},
-            new int[] {DISABLED, color}));    view.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+            new int[] {DISABLED, color}));
+    setTypeface(view, FONT_REGULAR);
     view.setIncludeFontPadding(false);
     // A capsule needs breathing room. With WRAP_CONTENT width and no padding the pill comes out
     // exactly as wide as its text, so the glyphs sit on the curved ends and read as spilling out of
@@ -127,8 +261,9 @@ final class AppStyle {
     view.setClickable(true);
   }
 
-  private static GradientDrawable actionShape(Context context, int color, float radius) {
-    return shape(context, color, radius, false);
+  private static GradientDrawable actionShape(
+      Context context, int color, float radius, boolean pill) {
+    return pill ? pill(context, color, false) : shape(context, color, radius, false);
   }
 
   static void field(EditText input) {
@@ -138,8 +273,10 @@ final class AppStyle {
     input.setPadding(dp(input.getContext(), 14), 0, dp(input.getContext(), 14), 0);
     input.setBackground(shape(input.getContext(), FIELD, R_SMALL, true));
     input.setBackgroundTintList(null);
+    setTypeface(input, FONT_REGULAR);
   }
 
+  @android.annotation.SuppressLint("DiscouragedApi") // AlertDialog exposes no public title-id API.
   static void dialog(AlertDialog dialog) {
     Window window = dialog.getWindow();
     if (window == null) return;
@@ -160,11 +297,18 @@ final class AppStyle {
                         dialog.getContext().getResources().getDisplayMetrics().widthPixels
                             - dp(dialog.getContext(), 32));
                 window.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT);
+                styleDialogTree(
+                    decor,
+                    dialog
+                        .getContext()
+                        .getResources()
+                        .getIdentifier("alertTitle", "id", "android"));
                 TextView message = dialog.findViewById(android.R.id.message);
                 if (message != null) {
                   message.setTextColor(INK);
                   message.setTextSize(15);
                   message.setLineSpacing(dp(dialog.getContext(), 4), 1);
+                  setTypeface(message, FONT_REGULAR);
                 }
                 for (int which :
                     new int[] {
@@ -175,7 +319,11 @@ final class AppStyle {
                   Button button = dialog.getButton(which);
                   if (button == null) continue;
                   boolean primary = which == AlertDialog.BUTTON_POSITIVE;
-                  action(button, primary ? BG : INK, primary ? ACCENT : Color.TRANSPARENT, R_MEDIUM);
+                  pillAction(
+                      button,
+                      primary ? ON_PRIMARY : INK,
+                      primary ? PRIMARY : Color.TRANSPARENT);
+                  setTypeface(button, primary ? FONT_BOLD : FONT_REGULAR);
                   button.setAllCaps(false);
                   button.setTextSize(14);
                   // 与主界面按钮同一规则：操作按钮不折行。否则「取消」这种两字标签在窄槽里
@@ -193,6 +341,16 @@ final class AppStyle {
                 return false;
               }
             });
+  }
+
+  private static void styleDialogTree(View view, int titleId) {
+    if (view instanceof TextView) {
+      setTypeface((TextView) view, view.getId() == titleId ? FONT_BOLD : FONT_REGULAR);
+    }
+    if (view instanceof ViewGroup) {
+      ViewGroup group = (ViewGroup) view;
+      for (int i = 0; i < group.getChildCount(); i++) styleDialogTree(group.getChildAt(i), titleId);
+    }
   }
 
   private static void layoutDialogActions(AlertDialog dialog, int width) {

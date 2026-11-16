@@ -9,7 +9,6 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
-import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Handler;
 import android.os.Looper;
@@ -80,6 +79,7 @@ final class ExportSheet extends Dialog {
     text.setTextSize(type);
     text.setTextColor(color);
     text.setIncludeFontPadding(false);
+    AppStyle.setTypeface(text, AppStyle.FONT_REGULAR);
     return text;
   }
 
@@ -92,7 +92,7 @@ final class ExportSheet extends Dialog {
     button.setPadding(dp(12), dp(12), dp(12), dp(12));
     button.setFocusable(true);
     button.setOnClickListener(view -> action.run());
-    AppStyle.action(button, color, fill, AppStyle.R_MEDIUM);
+    AppStyle.pillAction(button, color, fill);
     return button;
   }
 
@@ -108,7 +108,7 @@ final class ExportSheet extends Dialog {
     LinearLayout header = new LinearLayout(getContext());
     header.setGravity(Gravity.CENTER_VERTICAL);
     TextView title = text("导出照片", AppStyle.TYPE_HEADING, AppStyle.INK);
-    title.setTypeface(null, Typeface.BOLD);
+    AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
     header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
     header.addView(
         action("取消", "export.cancel", AppStyle.MUTED, Color.TRANSPARENT, this::dismiss),
@@ -116,6 +116,7 @@ final class ExportSheet extends Dialog {
     root.addView(header);
     TextView dimensionsText =
         text("原尺寸 · " + dimensions, AppStyle.TYPE_LABEL, AppStyle.MUTED);
+    AppStyle.setNumericTypeface(dimensionsText);
     dimensionsText.setTag("export.dimensions");
     root.addView(dimensionsText);
     gap(root, 18);
@@ -125,14 +126,14 @@ final class ExportSheet extends Dialog {
     LinearLayout content = column();
     scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
     root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-    content.addView(text("文件格式", AppStyle.TYPE_TITLE, AppStyle.INK));
+    content.addView(heading("文件格式"));
     gap(content, 10);
     String[] formats = {"JPEG\n8 位", "PNG\n16 位", "TIFF\n16 位"};
     LinearLayout formatRail = rail(content);
     for (int index = 0; index < formats.length; index++) {
       int selected = index;
       TextView button =
-          action(formats[index], "export.format." + index, AppStyle.INK, Color.TRANSPARENT,
+          action(formats[index], "export.format." + index, AppStyle.MUTED, Color.TRANSPARENT,
               () -> {
                 format = selected;
                 refresh();
@@ -149,14 +150,14 @@ final class ExportSheet extends Dialog {
 
     qualityPanel = column();
     qualityPanel.setTag("export.quality");
-    qualityPanel.addView(text("JPEG 画质", AppStyle.TYPE_TITLE, AppStyle.INK));
+    qualityPanel.addView(heading("JPEG 画质"));
     gap(qualityPanel, 10);
     LinearLayout qualityRail = rail(qualityPanel);
     for (int index = 0; index < qualities.length; index++) {
       int selected = qualities[index];
       TextView button =
           action(ExportOptions.qualityLabel(selected), "export.quality." + selected,
-              AppStyle.INK, Color.TRANSPARENT,
+              AppStyle.MUTED, Color.TRANSPARENT,
               () -> {
                 quality = selected;
                 refresh();
@@ -182,16 +183,24 @@ final class ExportSheet extends Dialog {
     content.addView(text("预计大小", AppStyle.TYPE_LABEL, AppStyle.MUTED));
     gap(content, 8);
     size = text("", AppStyle.TYPE_HEADING, AppStyle.VALUE);
+    AppStyle.setNumericTypeface(size);
     size.setTag("export.estimate");
     content.addView(size);
     gap(content, 8);
     sizeNote = text("", AppStyle.TYPE_LABEL, AppStyle.MUTED);
+    AppStyle.setNumericTypeface(sizeNote);
     sizeNote.setLineSpacing(dp(3), 1);
     content.addView(sizeNote);
     gap(content, 12);
     gap(root, 12);
     TextView save =
-        action("保存到相册", "export.save", AppStyle.BG, AppStyle.ACCENT, () -> submit(false));
+        action(
+            "保存到相册",
+            "export.save",
+            AppStyle.ON_PRIMARY,
+            AppStyle.PRIMARY,
+            () -> submit(false));
+    AppStyle.setTypeface(save, AppStyle.FONT_BOLD);
     save.setMinHeight(dp(AppStyle.TOUCH_PRIMARY));
     root.addView(save, new LinearLayout.LayoutParams(-1, -2));
     share =
@@ -209,7 +218,15 @@ final class ExportSheet extends Dialog {
     return rail;
   }
 
+  private TextView heading(String value) {
+    TextView view = text(value, AppStyle.TYPE_TITLE, AppStyle.INK);
+    AppStyle.setTypeface(view, AppStyle.FONT_BOLD);
+    return view;
+  }
+
   private void choice(LinearLayout rail, TextView button) {
+    // These nested segments are rounded rectangles in the mock, unlike the standalone CTAs.
+    AppStyle.action(button, AppStyle.MUTED, Color.TRANSPARENT, AppStyle.R_MEDIUM);
     button.setAccessibilityDelegate(
         new View.AccessibilityDelegate() {
           public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfo info) {
@@ -275,8 +292,13 @@ final class ExportSheet extends Dialog {
     if (button.isSelected() == selected) return;
     button.setSelected(selected);
     AppStyle.action(
-        button, selected ? AppStyle.ACCENT : AppStyle.INK,
-        selected ? AppStyle.SELECTED : Color.TRANSPARENT, AppStyle.R_MEDIUM);
+        button, selected ? AppStyle.GOLD : AppStyle.MUTED,
+        selected ? AppStyle.SURFACE : Color.TRANSPARENT, AppStyle.R_MEDIUM);
+    AppStyle.setTypeface(
+        button, selected ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
+    if (button.getTag() != null
+        && button.getTag().toString().startsWith("export.format."))
+      button.setFontFeatureSettings("tnum");
   }
 
   private void submit(boolean sharing) {

@@ -43,7 +43,9 @@ final class FilmBadge extends View {
     JSONObject stock = recipes.optJSONObject(id);
     if (stock == null)
       throw new IllegalArgumentException("No film icon for " + id + " (" + name + ")");
-    artwork = cache.computeIfAbsent(id, ignored -> FilmCanisterArtwork.render(id, stock));
+    artwork =
+        cache.computeIfAbsent(
+            id, ignored -> FilmCanisterArtwork.render(context, id, stock));
     setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
   }
 
@@ -57,11 +59,11 @@ final class FilmBadge extends View {
     p.setColor(Color.WHITE);
     canvas.drawBitmap(artwork, null, bounds, p);
     if (selected) {
-      p.setColor(MainActivity.ACCENT);
+      p.setColor(AppStyle.GOLD);
       canvas.drawCircle(85, 10, 7, p);
-      p.setColor(0xff182017);
+      p.setColor(AppStyle.ON_PRIMARY);
       p.setTextAlign(Paint.Align.CENTER);
-      p.setTypeface(Typeface.DEFAULT_BOLD);
+      p.setTypeface(AppStyle.typeface(getContext(), AppStyle.FONT_SEMIBOLD));
       p.setTextSize(9);
       canvas.drawText("✓", 85, 13.5f, p);
     }

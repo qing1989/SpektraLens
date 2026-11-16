@@ -26,8 +26,10 @@ SpektraLens is an independent Android photo editor and port. It is not an offici
 | [JSpecify](https://github.com/jspecify/jspecify), The JSpecify Authors | 1.0.0 | Apache-2.0; original copyright statements retained in JVM dependency notices |
 | [Android NDK / LLVM runtimes](https://github.com/android/ndk), LLVM contributors | NDK 27.2.12479018, static C++ runtime and compiler runtime support | Apache-2.0 WITH LLVM-exception and per-component notices, preserved verbatim as `NDK-LLVM-runtime-NOTICE.txt` |
 | zlib, Jean-loup Gailly and Mark Adler | Android platform `libz` | zlib license; accessed as a system library, not a separate redistributed binary |
+| [Inter](https://github.com/rsms/inter), Rasmus Andersson and Inter contributors | 4.1 official `InterVariable.ttf`, SHA-256 `4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf` | SIL OFL 1.1; bundled in `res/font/`, original license retained as `Inter-OFL-1.1.txt` |
+| [Noto Sans SC](https://github.com/notofonts/noto-cjk), Noto project contributors | Official `NotoSansSC-VF.ttf`, SHA-256 `d68bafcb48a2707749396aa12bbbd833cb70401f3a9a689fd2902c7e0d295964` | SIL OFL 1.1; bundled in `res/font/`, original license retained as `Noto-Sans-SC-OFL-1.1.txt` |
 
-Runtime notices above are under `android/app/src/main/assets/licenses/` and available from the application's About screen. Vendored source archives retain their own complete license trees, including dependencies not compiled into this Android build. Android framework APIs, platform image decoding and system fonts are used through the OS; their implementation is not copied into this repository. Gradle Wrapper, Gradle 8.11.1 and Android build tools are build dependencies, not changes to the model license.
+Runtime notices above are under `android/app/src/main/assets/licenses/` and available from the application's About screen. Vendored source archives retain their own complete license trees, including dependencies not compiled into this Android build. Android framework APIs, platform image decoding and the final system glyph fallback are used through the OS; the app-specific Inter and Noto Sans SC font files are bundled and licensed above. Gradle Wrapper, Gradle 8.11.1 and Android build tools are build dependencies, not changes to the model license.
 
 ## Android modifications and corresponding source
 

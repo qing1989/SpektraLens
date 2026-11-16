@@ -26,7 +26,7 @@ final class GallerySheet extends Dialog {
     void permission();
   }
 
-  private static final int INK = AppStyle.INK, MUTED = AppStyle.MUTED, ORANGE = AppStyle.ACCENT;
+  private static final int INK = AppStyle.INK, MUTED = AppStyle.MUTED, GOLD = AppStyle.GOLD;
   private final Activity activity;
   private final Listener listener;
   private final List<GalleryPhotos.Photo> imported;
@@ -109,8 +109,8 @@ final class GallerySheet extends Dialog {
     view.setTextSize(size);
     view.setTextColor(color);
     view.setGravity(Gravity.CENTER_VERTICAL);
-    view.setFontFeatureSettings("kern");
     view.setIncludeFontPadding(false);
+    AppStyle.setTypeface(view, AppStyle.FONT_REGULAR);
     return view;
   }
 
@@ -120,7 +120,18 @@ final class GallerySheet extends Dialog {
     view.setPadding(dp(12), 0, dp(12), 0);
     view.setOnClickListener(v -> run.run());
     view.setFocusable(true);
-    AppStyle.action(view, color, Color.TRANSPARENT, AppStyle.R_MEDIUM);
+    AppStyle.pillAction(view, color, Color.TRANSPARENT);
+    return view;
+  }
+
+  private TextView primaryAction(String value, Runnable run) {
+    TextView view = text(value, 13, AppStyle.ON_PRIMARY);
+    view.setGravity(Gravity.CENTER);
+    view.setPadding(dp(12), 0, dp(12), 0);
+    view.setOnClickListener(v -> run.run());
+    view.setFocusable(true);
+    AppStyle.pillAction(view, AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
+    AppStyle.setTypeface(view, AppStyle.FONT_BOLD);
     return view;
   }
 
@@ -133,7 +144,7 @@ final class GallerySheet extends Dialog {
     grab.setClickable(true);
     View handle = new View(getContext());
     GradientDrawable pill = new GradientDrawable();
-    pill.setColor(0xff74747e);
+    pill.setColor(AppStyle.GRIP);
     pill.setCornerRadius(dp(3));
     handle.setBackground(pill);
     FrameLayout.LayoutParams line =
@@ -185,14 +196,14 @@ final class GallerySheet extends Dialog {
     title.setTextSize(18);
     title.setSingleLine(true);
     title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-    title.setTypeface(null, Typeface.BOLD);
+    AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
     title.setGravity(Gravity.CENTER_VERTICAL);
     title.setContentDescription("图库，切换相册");
     header.addView(title, new LinearLayout.LayoutParams(0, dp(49), 1));
     header.addView(
         action("取消", MUTED, this::dismiss), new LinearLayout.LayoutParams(dp(64), dp(49)));
     root.addView(header);
-    access = action("", ORANGE, listener::permission);
+    access = action("", GOLD, listener::permission);
     access.setTextSize(11);
     access.setGravity(Gravity.CENTER_VERTICAL);
     access.setPadding(dp(20), 0, dp(20), 0);
@@ -240,7 +251,7 @@ final class GallerySheet extends Dialog {
     footer.addView(
         action(
             "从文件选择",
-            ORANGE,
+            GOLD,
             () -> {
               dismiss();
               listener.files();
@@ -348,7 +359,7 @@ final class GallerySheet extends Dialog {
       emptyText.setText("允许访问相册后，在这里浏览照片");
       LinearLayout.LayoutParams button = new LinearLayout.LayoutParams(-1, dp(44));
       button.topMargin = dp(14);
-      empty.addView(action("允许访问相册", ORANGE, listener::permission), button);
+      empty.addView(primaryAction("允许访问相册", listener::permission), button);
     } else emptyText.setText(loadError.isEmpty() ? "这个相册还没有可用照片" : loadError);
     if (!importedMode && !loading && visible.isEmpty())
       empty.addView(
@@ -477,7 +488,7 @@ final class GallerySheet extends Dialog {
       if (photo.frameId == null || !photo.frameId.equals(activeId)) return null;
       GradientDrawable border = new GradientDrawable();
       border.setColor(Color.TRANSPARENT);
-      border.setStroke(dp(2), ORANGE);
+      border.setStroke(dp(2), GOLD);
       border.setCornerRadius(dp(9));
       return border;
     }

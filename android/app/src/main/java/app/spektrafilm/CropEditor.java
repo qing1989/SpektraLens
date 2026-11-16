@@ -78,7 +78,7 @@ final class CropEditor extends View {
     c.drawRect(area.left, r.bottom, area.right, area.bottom, p);
     c.drawRect(area.left, r.top, r.left, r.bottom, p);
     c.drawRect(r.right, r.top, area.right, r.bottom, p);
-    p.setColor(0xffd9b77a);
+    p.setColor(AppStyle.GOLD);
     p.setStrokeWidth(2 * d);
     p.setStyle(Paint.Style.STROKE);
     c.drawRect(r, p);
@@ -89,7 +89,7 @@ final class CropEditor extends View {
       c.drawLine(r.left, r.top + i * r.height() / 3, r.right, r.top + i * r.height() / 3, p);
     }
     p.setStyle(Paint.Style.FILL);
-    p.setColor(0xffd9b77a);
+    p.setColor(AppStyle.GOLD);
     c.drawCircle(r.left, r.top, 6 * d, p);
     c.drawCircle(r.right, r.top, 6 * d, p);
     c.drawCircle(r.left, r.bottom, 6 * d, p);

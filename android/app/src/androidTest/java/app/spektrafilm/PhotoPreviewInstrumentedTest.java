@@ -135,6 +135,11 @@ public final class PhotoPreviewInstrumentedTest extends InstrumentationTestCase 
     getInstrumentation().waitForIdleSync();
   }
 
+  private void waitForLongPress() throws Exception {
+    Thread.sleep(ViewConfiguration.getLongPressTimeout() + 100);
+    getInstrumentation().waitForIdleSync();
+  }
+
   public void testSingleTapConfirmsAfterDoubleTapWindowAndCanBeCanceled() {
     main(
         () -> {
@@ -209,6 +214,77 @@ public final class PhotoPreviewInstrumentedTest extends InstrumentationTestCase 
         });
     awaitSingleTapConfirmation();
     assertEquals("Dragging and cancellation do not request clicks", 0, clicks.get());
+  }
+
+  public void testHoldingPreviewShowsOriginalUntilReleaseOrCancel() throws Exception {
+    main(
+        () -> {
+          original.eraseColor(Color.RED);
+          developed.eraseColor(Color.BLUE);
+          event(MotionEvent.ACTION_DOWN, 400, 400);
+        });
+    waitForLongPress();
+    assertEquals(
+        "A long press reveals the original while the finger stays down",
+        Color.RED,
+        pixel(400, 400));
+    main(
+        () -> {
+          event(MotionEvent.ACTION_UP, 400, 400);
+        });
+    assertEquals("Releasing restores the developed preview", Color.BLUE, pixel(400, 400));
+
+    main(
+        () -> {
+          event(MotionEvent.ACTION_DOWN, 400, 400);
+        });
+    waitForLongPress();
+    assertEquals(Color.RED, pixel(400, 400));
+    main(
+        () -> {
+          event(MotionEvent.ACTION_CANCEL, 400, 400);
+        });
+    assertEquals("Cancelling restores the developed preview", Color.BLUE, pixel(400, 400));
+
+    main(
+        () -> {
+          event(MotionEvent.ACTION_DOWN, 400, 400);
+        });
+    waitForLongPress();
+    assertEquals(Color.RED, pixel(400, 400));
+    main(
+        () -> {
+          event(MotionEvent.ACTION_MOVE, 500, 400);
+        });
+    assertEquals(
+        "Turning the hold into a drag restores the developed preview immediately",
+        Color.BLUE,
+        pixel(400, 400));
+    main(
+        () -> {
+          event(MotionEvent.ACTION_UP, 500, 400);
+        });
+    awaitSingleTapConfirmation();
+    assertEquals("The hold gesture must never toggle the parameter panel", 0, clicks.get());
+  }
+
+  public void testHoldOriginalIsDisabledWhileComparisonIsActive() throws Exception {
+    main(
+        () -> {
+          original.eraseColor(Color.RED);
+          developed.eraseColor(Color.BLUE);
+          view.compare(true);
+          event(MotionEvent.ACTION_DOWN, 400, 400);
+        });
+    waitForLongPress();
+    assertEquals(
+        "Comparison owns the preview gesture, so the developed side must remain visible",
+        Color.BLUE,
+        pixel(650, 400));
+    main(
+        () -> {
+          event(MotionEvent.ACTION_UP, 400, 400);
+        });
   }
 
   public void testLiftingFingerAfterPinchDoesNotMoveComparisonDivider() {

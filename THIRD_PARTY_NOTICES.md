@@ -10,6 +10,13 @@ AndroidX ExifInterface 的实际运行时依赖还包括 AndroidX Annotation/ann
 
 本项目生成的启动图标和合成测试图像按 CC0-1.0 开放（以可授予的权利为限）；图标提示词与源图保留。图标导出脚本、公开文字标签绘制代码及 Android 修改仍采用 GPL-3.0-or-later。
 
+## 界面字体
+
+- [Inter 4.1](https://github.com/rsms/inter/releases/tag/v4.1)，作者 Rasmus Andersson 及 Inter contributors，SIL Open Font License 1.1。应用使用官方 `InterVariable.ttf`，SHA-256 为 `4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf`。
+- [Noto Sans SC](https://github.com/notofonts/noto-cjk/tree/main/Sans/Variable/TTF/Subset)，Noto project contributors，SIL Open Font License 1.1。应用使用官方 `NotoSansSC-VF.ttf`，SHA-256 为 `d68bafcb48a2707749396aa12bbbd833cb70401f3a9a689fd2902c7e0d295964`。
+
+两份字体均随 APK 本地打包，不使用运行时字体下载；原始 OFL 文本分别保留为 `Inter-OFL-1.1.txt` 与 `Noto-Sans-SC-OFL-1.1.txt`，可从应用“关于 → 许可全文”查看。
+
 ## 物理模型与数据
 
 Andrea Volpato 的 [spektrafilm](https://github.com/andreavolpato/spektrafilm) 提供原始光谱胶片/印相模型与彩色胶片、相纸数据。程序许可为 GPL；JSON 配置注明 CC BY-SA 4.0。各文件内的来源、版权和 citation 保持原样，完整许可见 `SpektraLab/license/` 与 `android/app/src/main/assets/licenses/`。

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
+import android.annotation.SuppressLint;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
@@ -29,7 +30,7 @@ public final class MainActivity extends Activity {
   static final int BG = AppStyle.BG,
       INK = AppStyle.INK,
       MUTED = AppStyle.MUTED,
-      ACCENT = AppStyle.ACCENT,
+      GOLD = AppStyle.GOLD,
       LINE = AppStyle.OUTLINE;
   /** 面板下沿的渐隐高度（dp）：提示「下面还有」，滚到底就淡出。 */
   static final int FADE_ROW_DP = 24;
@@ -114,6 +115,7 @@ public final class MainActivity extends Activity {
   private final Map<String, TextView> values = new HashMap<>();
   private FrameLayout screens;
   private AboutPage aboutPage;
+  private SponsorPage sponsorPage;
   private FlowingBackgroundView flowingBackground;
   private LinearLayout homeScreen, editorScreen, panel, tabRow, filmCards, historyList;
   private ImageView homeHero;
@@ -458,7 +460,7 @@ public final class MainActivity extends Activity {
     v.setTextColor(color);
     v.setGravity(Gravity.CENTER_VERTICAL);
     v.setIncludeFontPadding(false);
-    v.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+    AppStyle.setTypeface(v, AppStyle.FONT_REGULAR);
     return v;
   }
 
@@ -470,26 +472,16 @@ public final class MainActivity extends Activity {
   }
 
   private TextView button(String title, int color, int background) {
-    return button(title, color, background, AppStyle.R_MEDIUM);
-  }
-
-  /** 同一容器里的控件可以指定和容器同档的半径，见 AppStyle 的两条配套规则。 */
-  private TextView button(String title, int color, int background, float radius) {
     TextView v = text(title, AppStyle.TYPE_BODY, color);
     v.setGravity(Gravity.CENTER);
     // 按钮里折行必然压到上下留白，所以默认锁单行，放不下就用省略号。
     v.setSingleLine(true);
     v.setEllipsize(android.text.TextUtils.TruncateAt.END);
     v.setPadding(dp(14), dp(8), dp(14), dp(8));
-    AppStyle.action(
+    AppStyle.pillAction(
         v,
         color,
-        background == BG
-            ? Color.TRANSPARENT
-            : background == ACCENT
-                ? ACCENT
-                : background == AppStyle.SELECTED ? AppStyle.SELECTED : AppStyle.CONTROL,
-        radius);
+        background == BG ? Color.TRANSPARENT : background);
     v.setMinHeight(dp(44));
     controls.add(v);
     return v;
@@ -525,11 +517,11 @@ public final class MainActivity extends Activity {
   private void section(String index, String name, String detail) {
     gap(editor, 25);
     LinearLayout r = horizontal();
-    TextView a = text(index, AppStyle.TYPE_LABEL, ACCENT);
-    a.setTypeface(Typeface.MONOSPACE);
+    TextView a = text(index, AppStyle.TYPE_LABEL, GOLD);
+    AppStyle.setNumericTypeface(a);
     add(r, a, 33, 28);
     TextView b = text(name, AppStyle.TYPE_HEADING, INK);
-    b.setTypeface(null, Typeface.BOLD);
+    AppStyle.setTypeface(b, AppStyle.FONT_BOLD);
     r.addView(b, new LinearLayout.LayoutParams(0, dp(28), 1));
     TextView c = text(detail, AppStyle.TYPE_MICRO, MUTED);
     c.setSingleLine(true);
@@ -582,18 +574,18 @@ public final class MainActivity extends Activity {
         new FrameLayout.LayoutParams(dp(48), dp(44), Gravity.START | Gravity.CENTER_VERTICAL));
     TextView title = text("照片编辑", AppStyle.TYPE_TITLE, INK);
     title.setGravity(Gravity.CENTER);
-    title.setTypeface(null, Typeface.BOLD);
+    AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
     title.setSingleLine(true);
     title.setEllipsize(android.text.TextUtils.TruncateAt.END);
     FrameLayout.LayoutParams titleLayout = new FrameLayout.LayoutParams(-1, dp(40), Gravity.CENTER);
     // Equal insets reserve the wider action on both sides, so the title stays on the screen axis.
     titleLayout.leftMargin = titleLayout.rightMargin = dp(94);
     toolbar.addView(title, titleLayout);
-    exportButton = button("显影准备中…", AppStyle.BG, ACCENT);
+    exportButton = button("显影准备中…", AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
     exportButton.setTextSize(AppStyle.TYPE_LABEL);
     exportButton.setPadding(dp(8), 0, dp(8), 0);
     exportButton.setSingleLine(true);
-    exportButton.setTypeface(null, Typeface.BOLD);
+    AppStyle.setTypeface(exportButton, AppStyle.FONT_BOLD);
     exportButton.setOnClickListener(v -> exportOptions());
     exportButton.setEnabled(false);
     toolbar.addView(
@@ -626,6 +618,7 @@ public final class MainActivity extends Activity {
     add(statusRow, progress, 12, 12);
     add(statusRow, new View(this), 7, 1);
     status = text("准备中", AppStyle.TYPE_MICRO, MUTED);
+    AppStyle.setNumericTypeface(status);
     status.setSingleLine(true);
     status.setEllipsize(android.text.TextUtils.TruncateAt.END);
     status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
@@ -686,10 +679,12 @@ public final class MainActivity extends Activity {
     add(meta, compareButton, 80, 40);
     add(previewColumn, meta, -1, 40);
     tabRow = horizontal();
-    tabRow.setPadding(dp(6), dp(4), dp(6), dp(4));
-    AppStyle.surface(tabRow, AppStyle.SURFACE, AppStyle.R_LARGE, false);
+    tabRow.setPadding(dp(5), dp(4), dp(5), dp(4));
+    tabRow.setBackground(AppStyle.pill(this, AppStyle.SURFACE, false));
+    tabRow.setClipToOutline(true);
     panel = vertical();
-    AppStyle.surface(panel, AppStyle.SURFACE, AppStyle.R_LARGE);
+    AppStyle.surface(panel, AppStyle.SURFACE, AppStyle.R_LARGE, false);
+    panel.setElevation(0);
     LinearLayout.LayoutParams panelLayout = new LinearLayout.LayoutParams(-1, dp(panelHeight()));
     panelLayout.setMargins(dp(12), dp(4), dp(12), 0);
     toolsColumn.addView(panel, panelLayout);
@@ -978,7 +973,7 @@ public final class MainActivity extends Activity {
     LinearLayout head = horizontal();
     LinearLayout branding = vertical();
     TextView logo = text(getString(R.string.app_name), AppStyle.TYPE_BRAND, INK);
-    logo.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+    AppStyle.setTypeface(logo, AppStyle.FONT_SEMIBOLD);
     logo.setLetterSpacing(-.035f);
     add(branding, logo, -1, 44);
     TextView cn = text("随身的胶片实验室", AppStyle.TYPE_LABEL, MUTED);
@@ -1019,9 +1014,10 @@ public final class MainActivity extends Activity {
         homeHero, heroFile, restored == null ? null : developedLook(restored.id), null, true);
     add(content, hero, -1, 240);
     gap(content, 16);
-    TextView start = button("导入照片，开始显影", AppStyle.BG, ACCENT);
+    TextView start =
+        button("导入照片，开始显影", AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
     start.setTextSize(AppStyle.TYPE_TITLE);
-    start.setTypeface(null, Typeface.BOLD);
+    AppStyle.setTypeface(start, AppStyle.FONT_BOLD);
     start.setOnClickListener(v -> importPhoto());
     add(content, start, -1, 54);
     gap(content, 12);
@@ -1032,9 +1028,10 @@ public final class MainActivity extends Activity {
     gap(content, 24);
     LinearLayout historyHead = horizontal();
     TextView recent = text("最近的底片", AppStyle.TYPE_HEADING, INK);
-    recent.setTypeface(null, Typeface.BOLD);
+    AppStyle.setTypeface(recent, AppStyle.FONT_BOLD);
     historyHead.addView(recent, new LinearLayout.LayoutParams(0, dp(40), 1));
     recentCount = text(library.size() + " 张", AppStyle.TYPE_MICRO, MUTED);
+    AppStyle.setNumericTypeface(recentCount);
     add(historyHead, recentCount, -2, 40);
     add(content, historyHead, -1, -2);
     gap(content, 9);
@@ -1090,11 +1087,12 @@ public final class MainActivity extends Activity {
     photo.compare(comparing);
     compareButton.setText(comparing ? "结束对比" : "对比原图");
     compareButton.setSelected(comparing);
-    AppStyle.action(
+    AppStyle.pillAction(
         compareButton,
-        comparing ? ACCENT : INK,
-        comparing ? AppStyle.CONTROL : Color.TRANSPARENT,
-        AppStyle.R_MEDIUM);
+        comparing ? GOLD : INK,
+        comparing ? AppStyle.CONTROL : Color.TRANSPARENT);
+    AppStyle.setTypeface(
+        compareButton, comparing ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
   }
 
   private boolean isCurrentTool(int tool) {
@@ -1168,20 +1166,21 @@ public final class MainActivity extends Activity {
       TextView tab =
           button(
               labels[i],
-              selected ? ACCENT : MUTED,
-              selected ? AppStyle.SELECTED : BG,
-              AppStyle.R_LARGE);
+              selected ? GOLD : MUTED,
+              selected ? AppStyle.SELECTED : BG);
       tab.setTextSize(AppStyle.TYPE_TITLE);
       tab.setPadding(0, 0, 0, 0);
       tab.setMinHeight(0);
       tab.setSelected(selected);
+      AppStyle.setTypeface(
+          tab, selected ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
       tab.setContentDescription(
           labels[i] + (selected ? "，收起参数面板" : "，展开参数面板"));
-      // 选中块内缩，让外侧圆角与导航条协调。
+      // 导航本身已有 4dp 上下内边距，只再缩 1dp，避免选中胶囊被双重内缩压扁。
       if (selected)
         tab.setBackground(
             new android.graphics.drawable.InsetDrawable(
-                tab.getBackground(), dp(4), dp(5), dp(4), dp(5)));
+                tab.getBackground(), 0, dp(1), 0, dp(1)));
       tab.setOnClickListener(v -> selectEditorTool(tool));
       tabRow.addView(tab, new LinearLayout.LayoutParams(0, -1, 1));
     }
@@ -1250,12 +1249,14 @@ public final class MainActivity extends Activity {
         TextView tab =
             button(
                 i == 0 ? "胶片型号" : "相纸与印相",
-                selectedTab == i ? ACCENT : MUTED,
+                selectedTab == i ? GOLD : MUTED,
                 selectedTab == i ? AppStyle.SELECTED : BG);
         tab.setTextSize(AppStyle.TYPE_LABEL);
         tab.setPadding(0, 0, 0, 0);
         tab.setMinHeight(0);
         tab.setSelected(selectedTab == i);
+        AppStyle.setTypeface(
+            tab, selectedTab == i ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
         tab.setOnClickListener(
             v -> {
               selectedTab = mode;
@@ -1273,16 +1274,26 @@ public final class MainActivity extends Activity {
         TextView chip =
             button(
                 category,
-                category.equals(filmCategory) ? INK : MUTED,
+                category.equals(filmCategory) ? GOLD : MUTED,
                 category.equals(filmCategory) ? AppStyle.CONTROL : BG);
         chip.setTextSize(AppStyle.TYPE_MICRO);
         chip.setSelected(category.equals(filmCategory));
-        chip.setPadding(dp(10), 0, dp(10), 0);
+        chip.setPadding(dp(9), 0, dp(9), 0);
         chip.setSingleLine(true);
         chip.setHorizontallyScrolling(false);
         chip.setAutoSizeTextTypeUniformWithConfiguration(
             10, 12, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
         chip.setMinHeight(0);
+        AppStyle.setTypeface(
+            chip,
+            category.equals(filmCategory) ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
+        // 分类行同时容纳「全部」和四个汉字。按实际字宽加左右各 9dp，避免通用胶囊给短文字
+        // 自动补出过大的留白；70dp 上限保证四个分类在窄屏上仍互不侵入。
+        int chipWidth =
+            Math.max(
+                dp(40),
+                Math.min(
+                    dp(70), Math.round(chip.getPaint().measureText(category) + dp(18))));
         chip.setOnClickListener(
             v -> {
               filmCategory = category;
@@ -1290,9 +1301,10 @@ public final class MainActivity extends Activity {
               pendingFilmScrollX = categoryScrollX.getOrDefault(category, 0);
               buildPanel();
             });
-        LinearLayout.LayoutParams chipLayout = new LinearLayout.LayoutParams(0, dp(40), 1);
-        chipLayout.rightMargin = dp(3);
-        filters.addView(chip, chipLayout);
+        FrameLayout slot = new FrameLayout(this);
+        slot.addView(
+            chip, new FrameLayout.LayoutParams(chipWidth, dp(40), Gravity.CENTER));
+        filters.addView(slot, new LinearLayout.LayoutParams(0, dp(40), 1));
       }
       add(editor, filters, -1, 40);
       gap(editor, 8);
@@ -1326,7 +1338,7 @@ public final class MainActivity extends Activity {
 
         FrameLayout frame = new FrameLayout(this);
         GradientDrawable ring = box(Color.TRANSPARENT, AppStyle.R_MEDIUM);
-        if (selected) ring.setStroke(dp(2), 0xffffffff);
+        if (selected) ring.setStroke(dp(2), GOLD);
         // The image and its inset stroke share the same bounds/radius (no fourth corner size).
         frame.setForeground(ring);
         ImageView thumb = new ImageView(this);
@@ -1338,7 +1350,10 @@ public final class MainActivity extends Activity {
         add(card, frame, thumbSize, thumbSize);
 
         // 标签保持原来的样子：选中用强调色、未选中用正文色，不加底。
-        TextView name = text(shortName(stock.name), AppStyle.TYPE_MICRO, selected ? ACCENT : INK);
+        TextView name =
+            text(shortName(stock.name), AppStyle.TYPE_MICRO, selected ? GOLD : INK);
+        AppStyle.setTypeface(
+            name, selected ? AppStyle.FONT_MEDIUM : AppStyle.FONT_REGULAR);
         name.setSingleLine(true);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         name.setGravity(Gravity.CENTER);
@@ -1428,8 +1443,9 @@ public final class MainActivity extends Activity {
       }
       LinearLayout heading = horizontal();
       TextView title = text("印相材料", AppStyle.TYPE_BODY, INK);
+      AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
       heading.addView(title, new LinearLayout.LayoutParams(0, dp(40), 1));
-      TextView pick = button("全部 8 款", ACCENT, AppStyle.CONTROL);
+      TextView pick = button("全部 8 款", GOLD, AppStyle.CONTROL);
       pick.setPadding(dp(16), 0, dp(16), 0);
       pick.setMinHeight(0);
       pick.setTextSize(AppStyle.TYPE_LABEL);
@@ -1437,7 +1453,7 @@ public final class MainActivity extends Activity {
       pick.setSingleLine(true);
       pick.setEllipsize(android.text.TextUtils.TruncateAt.END);
       pick.setOnClickListener(v -> chooseStock(false));
-      add(heading, pick, -2, 40);
+      add(heading, pick, -2, 32);
       add(editor, heading, -1, 40);
       gap(editor, 6);
       Stock stock = find(papers, settings.optString("print_stock"));
@@ -1469,11 +1485,9 @@ public final class MainActivity extends Activity {
     } else if (selectedTab == 4) {
       buildFramePanel();
     } else {
-      TextView intro = text("质感从胶片计算而来", AppStyle.TYPE_BODY, INK);
-      add(editor, intro, -1, 28);
-      TextView note = text("以物理画幅缩放颗粒与光晕，保留各胶片的特性。", AppStyle.TYPE_MICRO, MUTED);
-      add(editor, note, -1, 28);
-      gap(editor, 8);
+      panelNote(
+          "质感从胶片计算而来",
+          "以物理画幅缩放颗粒与光晕，保留各胶片的特性。");
       slider("grain_amount", "银盐颗粒", 0, 2, .05, " ×");
       slider("halation_amount", "高光光晕", 0, 4, .1, " ×");
       slider("halation_boost_ev", "光晕曝光增益", 0, 8, .1, " EV");
@@ -1497,11 +1511,13 @@ public final class MainActivity extends Activity {
       String activeMeter = meterState();
       for (int i = 0; i < meterNames.length; i++) {
         boolean on = meterIds[i].equals(activeMeter);
-        TextView chip = button(meterNames[i], on ? INK : MUTED, on ? AppStyle.CONTROL : BG);
+        TextView chip = button(meterNames[i], on ? GOLD : MUTED, on ? AppStyle.CONTROL : BG);
         chip.setTextSize(AppStyle.TYPE_LABEL);
         chip.setPadding(dp(4), 0, dp(4), 0);
         chip.setMinHeight(0);
         chip.setSelected(on);
+        AppStyle.setTypeface(
+            chip, on ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
         chip.setAutoSizeTextTypeUniformWithConfiguration(
             9, 11, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
         final String meter = meterIds[i];
@@ -1521,7 +1537,7 @@ public final class MainActivity extends Activity {
       LinearLayout format = horizontal();
       TextView label = text("胶片画幅", AppStyle.TYPE_LABEL, INK);
       format.addView(label, new LinearLayout.LayoutParams(0, dp(40), 1));
-      TextView pick = button(formatName(), ACCENT, AppStyle.CONTROL);
+      TextView pick = button(formatName(), GOLD, AppStyle.CONTROL);
       pick.setTextSize(AppStyle.TYPE_LABEL);
       pick.setPadding(dp(16), 0, dp(16), 0);
       // 宽度跟着文字走，小屏 + 大字号时容易被父容器挤到省略号；锁一个下限宽度，
@@ -1566,6 +1582,7 @@ public final class MainActivity extends Activity {
 
   private void panelNote(String title, String detail) {
     TextView t = text(title, AppStyle.TYPE_BODY, INK);
+    AppStyle.setTypeface(t, AppStyle.FONT_BOLD);
     add(editor, t, -1, 30);
     TextView d = text(detail, AppStyle.TYPE_MICRO, MUTED);
     d.setLineSpacing(dp(3), 1);
@@ -1578,6 +1595,8 @@ public final class MainActivity extends Activity {
     sw.setText(label);
     sw.setTextSize(AppStyle.TYPE_BODY);
     sw.setTextColor(INK);
+    AppStyle.setTypeface(sw, AppStyle.FONT_REGULAR);
+    AppStyle.styleSwitch(sw);
     sw.setChecked(settings.optBoolean(key, fallback));
     sw.setPadding(0, dp(6), 0, dp(6));
     add(editor, sw, -1, 46);
@@ -1593,7 +1612,7 @@ public final class MainActivity extends Activity {
     String current = settings.optString(key, ids[0]);
     int index = Arrays.asList(ids).indexOf(current);
     TextView pick =
-        button(title + "   " + names[Math.max(0, index)] + "", ACCENT, AppStyle.CONTROL);
+        button(title + "   " + names[Math.max(0, index)] + "", GOLD, AppStyle.CONTROL);
     pick.setTextSize(AppStyle.TYPE_LABEL);
     pick.setMinHeight(0);
     add(editor, pick, -1, 39);
@@ -1620,12 +1639,14 @@ public final class MainActivity extends Activity {
       TextView tab =
           button(
               name.equals("HSL 分色") ? "HSL" : name,
-              gradeSection.equals(name) ? ACCENT : MUTED,
+              gradeSection.equals(name) ? GOLD : MUTED,
               gradeSection.equals(name) ? AppStyle.SELECTED : BG);
       tab.setTextSize(AppStyle.TYPE_MICRO);
       tab.setPadding(0, 0, 0, 0);
       tab.setMinHeight(0);
       tab.setSelected(gradeSection.equals(name));
+      AppStyle.setTypeface(
+          tab, gradeSection.equals(name) ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
       tab.setOnClickListener(
           v -> {
             gradeSection = name;
@@ -1693,7 +1714,7 @@ public final class MainActivity extends Activity {
               ? AppStyle.CURVE_R
               : curveChannel.equals("g")
                   ? AppStyle.CURVE_G
-                  : curveChannel.equals("b") ? AppStyle.CURVE_B : ACCENT;
+                  : curveChannel.equals("b") ? AppStyle.CURVE_B : INK;
       final CurveEditor[] holder = new CurveEditor[1];
       holder[0] =
           new CurveEditor(
@@ -1786,7 +1807,9 @@ public final class MainActivity extends Activity {
             + " · 导出 "
             + dimensionsLabel()
             + "\n裁切只保存范围，旋转、翻转和拉直会用于预览与导出。");
-    TextView crop = button("打开裁切框", ACCENT, 0xff24211c);
+    TextView crop =
+        button("打开裁切框", AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
+    AppStyle.setTypeface(crop, AppStyle.FONT_BOLD);
     add(editor, crop, -1, 43);
     gap(editor, 10);
     crop.setOnClickListener(v -> cropDialog());
@@ -1834,7 +1857,7 @@ public final class MainActivity extends Activity {
             (float) (settings.optDouble("geo_x", 0) + settings.optDouble("geo_w", 1)),
             (float) (settings.optDouble("geo_y", 0) + settings.optDouble("geo_h", 1)));
     CropEditor crop = new CropEditor(this, source, initial);
-    TextView ratio = button("比例：自由裁切", ACCENT, AppStyle.CONTROL);
+    TextView ratio = button("比例：自由裁切", GOLD, AppStyle.CONTROL);
     add(body, ratio, -1, 39);
     ratio.setOnClickListener(
         v ->
@@ -1976,7 +1999,7 @@ public final class MainActivity extends Activity {
     date.setOnClickListener(
         v -> editTextValue("date_text", "日期文字", 24, "支持英文、数字、空格及 - . /，最多 24 字符"));
     if (sourceMetadata.optLong("timestamp") > 0) {
-      TextView shot = button("使用原片拍摄日期", ACCENT, AppStyle.CONTROL);
+      TextView shot = button("使用原片拍摄日期", GOLD, AppStyle.CONTROL);
       add(editor, shot, -1, 36);
       gap(editor, 8);
       shot.setOnClickListener(
@@ -2020,6 +2043,10 @@ public final class MainActivity extends Activity {
   }
 
   private void handleBack() {
+    if (sponsorPage != null) {
+      sponsorPage.navigateBack();
+      return;
+    }
     if (aboutPage != null) {
       // 免责声明子页先退回概览，再退才关闭整页。
       aboutPage.navigateBack();
@@ -2077,7 +2104,7 @@ public final class MainActivity extends Activity {
     boolean narrow = narrowControls();
     add(line, name, narrow ? 66 : 76, 48);
     TextView value = text("", AppStyle.TYPE_LABEL, AppStyle.VALUE);
-    value.setTypeface(Typeface.MONOSPACE);
+    AppStyle.setNumericTypeface(value);
     value.setGravity(Gravity.CENTER);
     value.setSingleLine(true);
     value.setHorizontallyScrolling(false);
@@ -2085,7 +2112,7 @@ public final class MainActivity extends Activity {
     value.setPadding(dp(4), 0, dp(4), 0);
     value.setAutoSizeTextTypeUniformWithConfiguration(
         8, 11, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
-    GradientDrawable valueBox = box(AppStyle.FIELD, AppStyle.R_SMALL);
+    GradientDrawable valueBox = AppStyle.pill(this, AppStyle.FIELD, false);
     valueBox.setStroke(Math.max(1, dp(.6f)), AppStyle.OUTLINE);
     value.setBackground(valueBox);
     AdjustmentSeekBar bar = new AdjustmentSeekBar(this, sliderColors(key));
@@ -2208,7 +2235,7 @@ public final class MainActivity extends Activity {
         || key.equals("grade_white")
         || key.startsWith("grade_vignette")
         || key.endsWith("_luminance")) return new int[] {0xff53535c, 0xff909098, 0xffd8d8dd};
-    return new int[] {0xff67646a, 0xffac7e58, ACCENT};
+    return new int[] {0xff67646a, 0xffac7e58, 0xffff7a1a};
   }
 
   private int hueColor(float hue) {
@@ -3613,6 +3640,7 @@ public final class MainActivity extends Activity {
                     + android.text.format.Formatter.formatShortFileSize(this, original.length()),
                 10,
                 MUTED);
+        AppStyle.setNumericTypeface(details);
         add(names, details, -1, 22);
         String stock = "已保存调整";
         try {
@@ -3621,7 +3649,7 @@ public final class MainActivity extends Activity {
         } catch (Exception ignored) {
           // 历史记录引用的胶片已不存在，保留原来的标签
         }
-        TextView look = text(stock, AppStyle.TYPE_MICRO, ACCENT);
+        TextView look = text(stock, AppStyle.TYPE_MICRO, GOLD);
         look.setSingleLine(true);
         look.setEllipsize(android.text.TextUtils.TruncateAt.END);
         add(names, look, -1, 24);
@@ -3797,7 +3825,20 @@ public final class MainActivity extends Activity {
               }
               export(options);
             });
+    exportSheet.setOnDismissListener(dialog -> styleExportButtonForSheet(false));
+    styleExportButtonForSheet(true);
     exportSheet.show();
+  }
+
+  private void styleExportButtonForSheet(boolean sheetOpen) {
+    if (exportButton == null) return;
+    if (sheetOpen) {
+      AppStyle.pillAction(exportButton, INK, AppStyle.CONTROL);
+      AppStyle.setTypeface(exportButton, AppStyle.FONT_REGULAR);
+    } else {
+      AppStyle.pillAction(exportButton, AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
+      AppStyle.setTypeface(exportButton, AppStyle.FONT_BOLD);
+    }
   }
 
   private void lock(boolean value) {
@@ -4028,10 +4069,12 @@ public final class MainActivity extends Activity {
 
   private void about() {
     if (aboutPage != null) return;
+    int sponsorQr = sponsorQrResource();
     AboutPage page =
         new AboutPage(
             this,
             getPackageVersion(),
+            sponsorQr == 0 ? null : this::sponsor,
             this::closeAbout,
             () -> updates.check(),
             this::licenses,
@@ -4050,6 +4093,7 @@ public final class MainActivity extends Activity {
   }
 
   private void closeAbout() {
+    closeSponsor();
     if (aboutPage == null) return;
     AboutPage page = aboutPage;
     aboutPage = null;
@@ -4058,6 +4102,37 @@ public final class MainActivity extends Activity {
         .setDuration(120)
         .withEndAction(() -> screens.removeView(page))
         .start();
+  }
+
+  private void sponsor() {
+    if (sponsorPage != null) return;
+    int resource = sponsorQrResource();
+    if (resource == 0) return;
+    SponsorPage page = new SponsorPage(this, resource, worker, this::closeSponsor);
+    sponsorPage = page;
+    screens.addView(page, new FrameLayout.LayoutParams(-1, -1));
+    page.setAlpha(0f);
+    page.animate().alpha(1f).setDuration(160).start();
+  }
+
+  private void closeSponsor() {
+    SponsorPage page = sponsorPage;
+    if (page == null) return;
+    sponsorPage = null;
+    page.animate()
+        .alpha(0f)
+        .setDuration(120)
+        .withEndAction(
+            () -> {
+              screens.removeView(page);
+              page.release();
+            })
+        .start();
+  }
+
+  @SuppressLint("DiscouragedApi") // Public source builds intentionally omit this private resource.
+  private int sponsorQrResource() {
+    return getResources().getIdentifier("sponsor_wechat_qr", "raw", getPackageName());
   }
 
   private void licenses() {
@@ -4120,6 +4195,12 @@ public final class MainActivity extends Activity {
     if (flowingBackground != null) flowingBackground.setHostResumed(false);
     if (gallerySheet != null) gallerySheet.dismiss();
     if (exportSheet != null) exportSheet.dismiss();
+    if (sponsorPage != null) {
+      SponsorPage page = sponsorPage;
+      sponsorPage = null;
+      screens.removeView(page);
+      page.release();
+    }
     if (backCallback != null && Build.VERSION.SDK_INT >= 33) {
       getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
       backCallback = null;

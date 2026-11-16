@@ -5,7 +5,7 @@ package app.spektrafilm;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
-import android.graphics.Typeface;
+import android.graphics.Paint;
 import android.net.Uri;
 import android.view.Gravity;
 import android.view.View;
@@ -25,7 +25,7 @@ final class AboutPage extends LinearLayout {
   static final String AUTHOR_URL = "https://xhslink.cn/o/AIvtVWQhXyF";
 
   private final Activity activity;
-  private final Runnable close, licenses;
+  private final Runnable close, licenses, sponsor;
   private final TextView title;
   private final ScrollView overview, statement;
   private UpdateBadge updateBadge;
@@ -34,6 +34,7 @@ final class AboutPage extends LinearLayout {
   AboutPage(
       Activity activity,
       String version,
+      Runnable sponsor,
       Runnable close,
       Runnable checkUpdates,
       Runnable licenses,
@@ -42,6 +43,7 @@ final class AboutPage extends LinearLayout {
     this.activity = activity;
     this.close = close;
     this.licenses = licenses;
+    this.sponsor = sponsor;
     setOrientation(VERTICAL);
     setBackgroundColor(AppStyle.BG);
     setAccessibilityPaneTitle("关于");
@@ -58,7 +60,7 @@ final class AboutPage extends LinearLayout {
     back.setOnClickListener(v -> navigateBack());
     header.addView(back, new LayoutParams(backWidth, -2));
     title = text("关于", AppStyle.TYPE_HEADING, AppStyle.INK);
-    title.setTypeface(null, Typeface.BOLD);
+    AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
     title.setGravity(Gravity.CENTER);
     title.setAccessibilityHeading(true);
     header.addView(title, new LayoutParams(0, -2, 1));
@@ -117,17 +119,19 @@ final class AboutPage extends LinearLayout {
     identity.addView(icon, new LayoutParams(dp(88), dp(88)));
     gap(identity, 18);
     TextView name = text(activity.getString(R.string.app_name), AppStyle.TYPE_BRAND, AppStyle.INK);
-    name.setTypeface(null, Typeface.BOLD);
+    AppStyle.setTypeface(name, AppStyle.FONT_SEMIBOLD);
+    name.setLetterSpacing(-.035f);
     name.setGravity(Gravity.CENTER);
     identity.addView(name, new LayoutParams(-1, -2));
     gap(identity, 12);
 
     LinearLayout badges = new LinearLayout(activity);
     badges.setGravity(Gravity.CENTER);
-    TextView versionBadge = badge("v" + version, AppStyle.ACCENT, AppStyle.CONTROL);
+    TextView versionBadge = badge("v" + version, AppStyle.GOLD, AppStyle.CONTROL);
+    AppStyle.setNumericTypeface(versionBadge);
     badges.addView(versionBadge, new LayoutParams(-2, -2));
-    TextView licenseBadge = badge("GPL-3.0+", AppStyle.MUTED, AppStyle.SURFACE);
-    AppStyle.action(licenseBadge, AppStyle.MUTED, AppStyle.SURFACE, AppStyle.R_MEDIUM);
+    TextView licenseBadge = badge("GPL-3.0+", AppStyle.MUTED, AppStyle.CONTROL);
+    AppStyle.pillAction(licenseBadge, AppStyle.MUTED, AppStyle.CONTROL);
     licenseBadge.setContentDescription("GPL-3.0-or-later，查看许可全文");
     licenseBadge.setOnClickListener(v -> licenses.run());
     LayoutParams licenseParams = new LayoutParams(-2, -2);
@@ -141,13 +145,55 @@ final class AboutPage extends LinearLayout {
     summary.setLineSpacing(dp(6), 1);
     identity.addView(summary, new LayoutParams(-1, -2));
     gap(identity, 22);
-    TextView update = action("检查更新", AppStyle.BG, AppStyle.ACCENT);
+    boolean stackActions =
+        getResources().getConfiguration().fontScale >= 1.7f
+            || getResources().getConfiguration().screenWidthDp < 330;
+    LinearLayout actions = new LinearLayout(activity);
+    actions.setOrientation(stackActions ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+    actions.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+    actions.setBaselineAligned(false);
+    TextView update =
+        action("检查更新", AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
+    AppStyle.setTypeface(update, AppStyle.FONT_BOLD);
     update.setSingleLine(true);
-    update.setPadding(dp(24), dp(14), dp(24), dp(14));
     update.setOnClickListener(v -> checkUpdates.run());
-    updateBadge = new UpdateBadge(update, "可更新");
+    TextView sponsorAction = null;
+    if (sponsor != null) {
+      sponsorAction = action("赞助开发者", AppStyle.INK, AppStyle.CONTROL);
+      sponsorAction.setTag("about.sponsor");
+      sponsorAction.setContentDescription("自愿赞助 SpektraLens 开发者");
+      sponsorAction.setOnClickListener(v -> sponsor.run());
+    }
+
+    int textWidth =
+        (int) Math.ceil(
+            Math.max(
+                update.getPaint().measureText(update.getText().toString()),
+                sponsorAction == null
+                    ? 0
+                    : sponsorAction
+                        .getPaint()
+                        .measureText(sponsorAction.getText().toString())));
+    Paint.FontMetrics metrics = update.getPaint().getFontMetrics();
+    int textHeight = (int) Math.ceil(metrics.descent - metrics.ascent);
+    int actionWidth = Math.max(dp(108), textWidth + dp(32));
+    int actionHeight = Math.max(dp(48), textHeight + dp(20));
+    update.setPadding(dp(16), dp(10), dp(16), dp(10));
+    updateBadge = new UpdateBadge(update, "可更新", false);
+    FrameLayout.LayoutParams updateActionLayout =
+        (FrameLayout.LayoutParams) update.getLayoutParams();
+    updateActionLayout.width = actionWidth;
+    updateActionLayout.height = actionHeight;
     updateBadge.setTag("about.update");
-    identity.addView(updateBadge, new LayoutParams(-2, -2));
+    actions.addView(updateBadge, new LayoutParams(actionWidth, -2));
+    if (sponsorAction != null) {
+      sponsorAction.setPadding(dp(16), dp(10), dp(16), dp(10));
+      LayoutParams supportParams = new LayoutParams(actionWidth, actionHeight);
+      if (stackActions) supportParams.topMargin = dp(8);
+      else supportParams.leftMargin = dp(10);
+      actions.addView(sponsorAction, supportParams);
+    }
+    identity.addView(actions, new LayoutParams(-1, -2));
     content.addView(identity, new LayoutParams(-1, -2));
 
     sectionLabel(content, "更多");
@@ -168,14 +214,20 @@ final class AboutPage extends LinearLayout {
     support.setGravity(Gravity.CENTER);
     TextView licenseLink = action("许可全文", AppStyle.MUTED, android.graphics.Color.TRANSPARENT);
     licenseLink.setOnClickListener(v -> licenses.run());
-    support.addView(licenseLink, new LayoutParams(0, dp(48), 1));
+    licenseLink.setPadding(dp(8), 0, dp(8), 0);
+    support.addView(licenseLink, new LayoutParams(-2, dp(48)));
+    TextView separator = text("·", AppStyle.TYPE_LABEL, AppStyle.MUTED);
+    separator.setGravity(Gravity.CENTER);
+    separator.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+    support.addView(separator, new LayoutParams(dp(24), dp(48)));
     TextView diagnosticLink = action("处理诊断", AppStyle.MUTED, android.graphics.Color.TRANSPARENT);
     diagnosticLink.setOnClickListener(v -> diagnostics.run());
-    support.addView(diagnosticLink, new LayoutParams(0, dp(48), 1));
+    diagnosticLink.setPadding(dp(8), 0, dp(8), 0);
+    support.addView(diagnosticLink, new LayoutParams(-2, dp(48)));
     content.addView(support, new LayoutParams(-1, -2));
     gap(content, 4);
     TextView network =
-        text("打开应用时检查版本，下载更新包时联网\n外部链接由系统浏览器或对应应用打开", AppStyle.TYPE_LABEL, AppStyle.MUTED);
+        text("仅在应用更新时联网，照片始终留在本机", AppStyle.TYPE_LABEL, AppStyle.MUTED);
     network.setGravity(Gravity.CENTER);
     network.setLineSpacing(dp(4), 1);
     content.addView(network, new LayoutParams(-1, -2));
@@ -205,6 +257,8 @@ final class AboutPage extends LinearLayout {
         "本地处理与权限",
         "本软件无需账号，不上传照片，不收集设备标识或遥测数据。照片读取与显影在手机本地完成；"
             + "相册访问范围由你的系统授权决定，编辑记录保存在本机，导出的照片写入 Pictures / SpektraLens。\n\n"
+            + "自愿赞助页只在本地展示随应用内置的微信赞赏码，不读取、保存或上传付款信息，也不校验或记录付款结果；"
+            + "实际付款由微信处理，并受其账户与风控规则约束。\n\n"
             + "删除应用或清除应用数据可能移除本机编辑记录与导入副本，请自行保留原始照片和重要导出文件。");
     statementSection(
         content,
@@ -263,11 +317,12 @@ final class AboutPage extends LinearLayout {
     LinearLayout row = new LinearLayout(activity);
     row.setGravity(Gravity.CENTER_VERTICAL);
     TextView count = text(String.valueOf(number), AppStyle.TYPE_TITLE, AppStyle.MUTED);
+    AppStyle.setNumericTypeface(count);
     count.setGravity(Gravity.CENTER);
     count.setBackground(AppStyle.shape(activity, AppStyle.SURFACE, AppStyle.R_MEDIUM, false));
     row.addView(count, new LayoutParams(dp(32), dp(32)));
     TextView label = text(heading, AppStyle.TYPE_HEADING, AppStyle.INK);
-    label.setTypeface(null, Typeface.BOLD);
+    AppStyle.setTypeface(label, AppStyle.FONT_BOLD);
     label.setAccessibilityHeading(true);
     LayoutParams labelParams = new LayoutParams(0, -2, 1);
     labelParams.leftMargin = dp(12);
@@ -328,7 +383,7 @@ final class AboutPage extends LinearLayout {
   private void sectionLabel(LinearLayout parent, String name) {
     gap(parent, 22);
     TextView label = text(name, AppStyle.TYPE_HEADING, AppStyle.MUTED);
-    label.setTypeface(null, Typeface.BOLD);
+    AppStyle.setTypeface(label, AppStyle.FONT_BOLD);
     label.setAccessibilityHeading(true);
     label.setPadding(dp(4), 0, dp(4), dp(12));
     parent.addView(label, new LayoutParams(-1, -2));
@@ -349,6 +404,7 @@ final class AboutPage extends LinearLayout {
     LinearLayout copy = column();
     row.addView(copy, new LayoutParams(0, -2, 1));
     TextView label = text(name, AppStyle.TYPE_TITLE, AppStyle.INK);
+    AppStyle.setTypeface(label, AppStyle.FONT_MEDIUM);
     label.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     copy.addView(label, new LayoutParams(-1, -2));
     gap(copy, 5);
@@ -368,7 +424,7 @@ final class AboutPage extends LinearLayout {
 
   private void divider(LinearLayout parent) {
     View line = new View(activity);
-    line.setBackgroundColor(AppStyle.OUTLINE);
+    line.setBackgroundColor(AppStyle.DIVIDER);
     LayoutParams params = new LayoutParams(-1, dp(1));
     params.leftMargin = params.rightMargin = dp(20);
     parent.addView(line, params);
@@ -377,7 +433,7 @@ final class AboutPage extends LinearLayout {
   private TextView badge(String label, int color, int fill) {
     TextView view = text(label, AppStyle.TYPE_LABEL, color);
     view.setPadding(dp(14), dp(9), dp(14), dp(9));
-    view.setBackground(AppStyle.shape(activity, fill, AppStyle.R_MEDIUM, false));
+    view.setBackground(AppStyle.pill(activity, fill, false));
     return view;
   }
 
@@ -385,7 +441,7 @@ final class AboutPage extends LinearLayout {
     TextView view = text(label, AppStyle.TYPE_TITLE, color);
     view.setGravity(Gravity.CENTER);
     view.setMinHeight(dp(44));
-    AppStyle.action(view, color, fill, AppStyle.R_MEDIUM);
+    AppStyle.pillAction(view, color, fill);
     view.setPadding(dp(16), dp(10), dp(16), dp(10));
     return view;
   }
@@ -402,6 +458,7 @@ final class AboutPage extends LinearLayout {
     view.setTextSize(size);
     view.setTextColor(color);
     view.setIncludeFontPadding(false);
+    AppStyle.setTypeface(view, AppStyle.FONT_REGULAR);
     return view;
   }
 

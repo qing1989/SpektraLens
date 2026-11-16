@@ -1,27 +1,27 @@
 <resources>
     <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
-        <item name="android:fontFamily">sans-serif</item>
-        <item name="android:colorAccent">#FF7A1A</item>
+        <item name="android:fontFamily">@font/noto_sans_sc_variable</item>
+        <item name="android:colorAccent">#E0B47A</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:statusBarColor">#000000</item>
         <item name="android:navigationBarColor">#000000</item>
         <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowBackground">#000000</item>
         <item name="android:colorBackground">#000000</item>
-        <item name="android:colorBackgroundFloating">#222225</item>
-        <item name="android:textColorPrimary">#F4F4F6</item>
-        <item name="android:textColorSecondary">#A1A1AA</item>
+        <item name="android:colorBackgroundFloating">#16141A</item>
+        <item name="android:textColorPrimary">#F6F3F4</item>
+        <item name="android:textColorSecondary">#A399A0</item>
         <item name="android:colorControlHighlight">#24FFFFFF</item>
         <item name="android:alertDialogTheme">@style/SpektraLensDialogTheme</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
     <style name="SpektraLensDialogTheme" parent="android:style/Theme.Material.Dialog.Alert">
-        <item name="android:fontFamily">sans-serif</item>
-        <item name="android:colorAccent">#FF7A1A</item>
-        <item name="android:colorBackgroundFloating">#222225</item>
-        <item name="android:colorBackground">#222225</item>
-        <item name="android:textColorPrimary">#F4F4F6</item>
-        <item name="android:textColorSecondary">#A1A1AA</item>
+        <item name="android:fontFamily">@font/noto_sans_sc_variable</item>
+        <item name="android:colorAccent">#E0B47A</item>
+        <item name="android:colorBackgroundFloating">#16141A</item>
+        <item name="android:colorBackground">#16141A</item>
+        <item name="android:textColorPrimary">#F6F3F4</item>
+        <item name="android:textColorSecondary">#A399A0</item>
         <item name="android:colorControlHighlight">#24FFFFFF</item>
         <item name="android:windowMinWidthMajor">90%</item>
         <item name="android:windowMinWidthMinor">90%</item>
@@ -30,7 +30,7 @@
     </style>
     <style name="SpektraLensListText" parent="android:style/TextAppearance.Material.Body1">
         <item name="android:textSize">14sp</item>
-        <item name="android:textColor">#F4F4F6</item>
-        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textColor">#F6F3F4</item>
+        <item name="android:fontFamily">@font/noto_sans_sc_variable</item>
     </style>
 </resources>

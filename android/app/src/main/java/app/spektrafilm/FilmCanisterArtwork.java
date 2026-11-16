@@ -2,6 +2,7 @@
 // Copyright (c) 2026 SpektraLens contributors.
 package app.spektrafilm;
 
+import android.content.Context;
 import android.graphics.*;
 import java.util.Locale;
 import org.json.JSONObject;
@@ -24,19 +25,23 @@ final class FilmCanisterArtwork {
   private static final int DARK_INK = 0xff0d1010, LIGHT_INK = 0xfffaf6ec;
 
   private final Canvas c;
+  private final Typeface labelTypeface;
   private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
   private final RectF rect = new RectF();
 
-  static Bitmap render(String id, JSONObject stock) {
+  static Bitmap render(Context context, String id, JSONObject stock) {
     Bitmap bitmap = Bitmap.createBitmap(WIDTH * 3, HEIGHT * 3, Bitmap.Config.ARGB_8888);
     Canvas canvas = new Canvas(bitmap);
     canvas.scale(3, 3);
-    new FilmCanisterArtwork(canvas).draw(id, stock);
+    new FilmCanisterArtwork(
+            canvas, AppStyle.typeface(context, AppStyle.FONT_SEMIBOLD))
+        .draw(id, stock);
     return bitmap;
   }
 
-  private FilmCanisterArtwork(Canvas canvas) {
+  private FilmCanisterArtwork(Canvas canvas, Typeface labelTypeface) {
     c = canvas;
+    this.labelTypeface = labelTypeface;
   }
 
   /** Maker line, taken from the stock id prefix: fujifilm_c200 → FUJIFILM. */
@@ -105,7 +110,7 @@ final class FilmCanisterArtwork {
     rect.set(18, 57.6f, push > 0 ? 56 : 82, 60.2f);
     c.drawRoundRect(rect, 1.3f, 1.3f, p);
 
-    p.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+    p.setTypeface(labelTypeface);
     if (push > 0) {
       // 角标放大到 32×18：仍在图标内（圆角裁切半径 13，右上角圆心 (87,67)，
       // 角标右下角 (90,74.5) 到圆心 8.1 < 13，不会被裁掉），字号 8.6 → 11。
@@ -134,7 +139,7 @@ final class FilmCanisterArtwork {
     tracked(stock.optString("family", "FILM"), 50, 22, 10.5f, 1.8f, 76);
 
     fill(ink);
-    p.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+    p.setTypeface(labelTypeface);
     centered(stock.optString("mark", "35"), 50, 49, 28, 78);
   }
 
