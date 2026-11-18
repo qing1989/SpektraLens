@@ -4,7 +4,7 @@
 
 ## 当前胶卷图标与历史交付
 
-SpektraLens 的 20 款胶卷图标由本项目根据胶片目录绘制。开发和公开版本均使用同一套代码和配色。历史版本曾获授权使用 11 张 GRLife PNG，这些图片及含有原图的历史交付物继续受原授权限制。历史来源与校验值见 [历史胶卷图标来源](docs/历史胶卷图标来源.json)。
+SpektraLens 的 25 款胶卷图标由本项目根据胶片目录绘制。开发和公开版本均使用同一套代码和配色。历史版本曾获授权使用 11 张 GRLife PNG，这些图片及含有原图的历史交付物继续受原授权限制。历史来源与校验值见 [历史胶卷图标来源](docs/历史胶卷图标来源.json)。
 
 AndroidX ExifInterface 的实际运行时依赖还包括 AndroidX Annotation/annotation-jvm 1.8.1、Kotlin stdlib/common 1.7.10、JetBrains Annotations 13.0、JSpecify 1.0.0，均保留 Apache-2.0 条款及原作者声明。新补充的 `JVM-Dependency-NOTICES.txt` 从官方发布的源码制品提取版权行，包括 JetBrains、Kotlin contributors、Sascha Weinreuter 与 JSpecify Authors。NDK 静态 C++ 运行库与编译器运行时的原始 LLVM/第三方声明保留于 `NDK-LLVM-runtime-NOTICE.txt`，包括 LLVM exception。完整许可可从应用“关于 → 许可全文”查看。
 
@@ -17,9 +17,15 @@ AndroidX ExifInterface 的实际运行时依赖还包括 AndroidX Annotation/ann
 
 两份字体均随 APK 本地打包，不使用运行时字体下载；原始 OFL 文本分别保留为 `Inter-OFL-1.1.txt` 与 `Noto-Sans-SC-OFL-1.1.txt`，可从应用“关于 → 许可全文”查看。
 
+## 界面功能图标
+
+图库相册箭头、收藏、批量选择和关于页导航箭头来自 [Google Material Icons](https://github.com/google/material-design-icons)，Copyright 2014 Google LLC，采用 Apache-2.0。应用仅把 `keyboard_arrow_down`、`favorite`、`check` 与 `chevron_right` 四项转为本地 VectorDrawable，并使用项目主题着色；不引入运行时图标 SDK、Google Font 或网络加载。来源声明为 `Material-Icons-NOTICE.txt`，完整许可为 `Apache-2.0.txt`。
+
 ## 物理模型与数据
 
 Andrea Volpato 的 [spektrafilm](https://github.com/andreavolpato/spektrafilm) 提供原始光谱胶片/印相模型与彩色胶片、相纸数据。程序许可为 GPL；JSON 配置注明 CC BY-SA 4.0。各文件内的来源、版权和 citation 保持原样，完整许可见 `SpektraLab/license/` 与 `android/app/src/main/assets/licenses/`。
+
+四款黑白胶片、Ilford Multigrade IV RC 相纸与 CineStill 800T alias 来自 Hanze Qiu / SpektraLab 的 `engine/resources_product/`，不是原始 spektrafilm 的 28 款数据。六份配置按固定提交原样复制，保留 Kodak、FUJIFILM、HARMAN 技术资料来源、拟合假设和原始 NOTICE；应用内可查看 `SpektraLab-Product-Data-NOTICE.txt`。Android 仅移植配对规则、滤色包、颗粒强度映射和高光余量步骤，不修改材料数组或别名指向的底片测量数据。型号名称用于识别模拟对象，不代表厂家认可。
 
 ## 原生引擎
 
@@ -35,7 +41,7 @@ Khronos [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) 固定 
 
 ## 示例照片
 
-Fronalpstock big.jpg，作者 Hannes Röst，来源 [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Fronalpstock_big.jpg)。采用 CC BY-SA 3.0 Unported：<https://creativecommons.org/licenses/by-sa/3.0/>。打包的是 Wikimedia 的 1280px 缩略版本，未进一步修改文件；应用内显影预览、首页裁切展示和示例导出属于该照片的改编。传播这些示例输出时应保留署名并遵守对应的分享条款。用户自己的照片不因此改变许可。
+内置示例照片为一张胶片边缘微距图，由项目作者于 2026-11-18 提供，用于应用内默认预览与示例导出。此前的 Fronalpstock big.jpg（Hannes Röst，CC BY-SA 3.0）已不再随包分发；此前由它生成的示例输出仍按原许可处理。
 
 ## 胶卷图标
 

@@ -25,8 +25,9 @@ def validate(apk=None):
         assert recipe['family'] and recipe['mark'].upper() in films[stock]['name'].upper(), stock
         for color in ('coat', 'accent'):
             assert re.fullmatch('#[0-9A-Fa-f]{6}', recipe[color]), stock
-        assert recipe['series'] in ('negative', 'reversal', 'cine'), stock
+        assert recipe['series'] in ('negative', 'reversal', 'cine', 'monochrome'), stock
         assert (recipe['series'] == 'reversal') == (films[stock]['type'] == 'positive'), stock
+        assert (recipe['series'] == 'monochrome') == films[stock].get('monochrome', False), stock
         assert recipe.get('push', 0) == (int(stock[-1]) if '_push' in stock else 0), stock
     if apk:
         archived = json.loads((ROOT / 'docs/历史胶卷图标来源.json').read_text())

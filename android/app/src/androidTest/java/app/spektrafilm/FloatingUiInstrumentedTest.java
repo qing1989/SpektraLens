@@ -85,7 +85,40 @@ public final class FloatingUiInstrumentedTest
     return null;
   }
 
-  public void testFilmCategoryChipsFitShortAndFourCharacterLabels() throws Exception {
+  public void testPreviewActionsAndMeterSpacing() throws Exception {
+    main(
+        () -> {
+          try {
+            field("selectedTab").setInt(activity, 5);
+            invoke("buildPanel", new Class<?>[0]);
+          } catch (Exception error) {
+            throw new RuntimeException(error);
+          }
+        });
+    main(
+        () -> {
+          try {
+            View root = (View) value("editorScreen");
+            assertNull("Preview action bar no longer contains the photo picker", findText(root, "照片"));
+            assertNotNull(findText(root, "适应画面"));
+            assertNotNull(findText(root, "对比原图"));
+            View title = root.findViewWithTag("editor.meter.label");
+            View options = root.findViewWithTag("editor.meter.options");
+            View format = findText(root, "胶片画幅");
+            assertNotNull(title);
+            assertNotNull(options);
+            assertNotNull(format);
+            assertTrue("Meter title has space above its options",
+                bounds(options).top - bounds(title).bottom >= AppStyle.dp(activity, 8));
+            assertTrue("Meter options are separated from the next setting",
+                bounds(format).top - bounds(options).bottom >= AppStyle.dp(activity, 14));
+          } catch (Exception error) {
+            throw new RuntimeException(error);
+          }
+        });
+  }
+
+  public void testFilmCategoryChipsUseEqualWidthSlots() throws Exception {
     main(
         () -> {
           try {
@@ -100,27 +133,20 @@ public final class FloatingUiInstrumentedTest
         () -> {
           TextView all = (TextView) findText(editor, "全部");
           TextView colorNegative = (TextView) findText(editor, "彩色负片");
+          TextView monochrome = (TextView) findText(editor, "黑白");
           assertNotNull(all);
           assertNotNull(colorNegative);
-          float density = activity.getResources().getDisplayMetrics().density;
-          int minimum = Math.round(40 * density), shortMaximum = Math.round(48 * density),
-              maximum = Math.round(70 * density);
-          assertTrue("Two-character chip stays compact", all.getWidth() >= minimum);
+          assertNotNull(monochrome);
           assertTrue(
-              "Two-character chip does not get four-character padding",
-              all.getWidth() <= shortMaximum);
-          assertTrue(
-              "Four-character chip stays within the category slot",
-              colorNegative.getWidth() <= maximum);
+              "All category chips share the 0.4.5 equal-width rule",
+              Math.abs(all.getWidth() - colorNegative.getWidth()) <= 1
+                  && Math.abs(colorNegative.getWidth() - monochrome.getWidth()) <= 1);
           assertTrue(
               "Four-character label fits without clipping",
               colorNegative.getPaint().measureText("彩色负片")
                       + colorNegative.getPaddingLeft()
                       + colorNegative.getPaddingRight()
                   <= colorNegative.getWidth() + 1);
-          assertTrue(
-              "The four-character chip gets only the extra width its label needs",
-              colorNegative.getWidth() > all.getWidth());
         });
     main(
         () -> {
@@ -132,10 +158,13 @@ public final class FloatingUiInstrumentedTest
     main(
         () -> {
           TextView selected = (TextView) findText(selectedEditor, "彩色负片");
+          TextView all = (TextView) findText(selectedEditor, "全部");
           assertNotNull(selected);
+          assertNotNull(all);
           assertTrue(selected.isSelected());
-          float density = activity.getResources().getDisplayMetrics().density;
-          assertTrue(selected.getWidth() <= Math.round(70 * density));
+          assertTrue(
+              "Selection rebuild preserves equal category widths",
+              Math.abs(selected.getWidth() - all.getWidth()) <= 1);
           assertTrue(
               selected.getPaint().measureText("彩色负片")
                       + selected.getPaddingLeft()
@@ -288,7 +317,7 @@ public final class FloatingUiInstrumentedTest
                 "editTextValue",
                 new Class<?>[] {String.class, String.class, int.class, String.class},
                 "edge_caption",
-                "相纸题注",
+                "相纸文字",
                 20,
                 "仅支持英文字母与数字"));
     try {
@@ -299,7 +328,7 @@ public final class FloatingUiInstrumentedTest
               .performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, input));
       assertTrue(ui("应用", null).performAction(AccessibilityNodeInfo.ACTION_CLICK));
       getInstrumentation().waitForIdleSync();
-      assertNotNull("Invalid input keeps the dialog open", ui("相纸题注", null));
+      assertNotNull("Invalid input keeps the dialog open", ui("相纸文字", null));
       assertEquals(
           "Invalid text was not applied",
           previous,

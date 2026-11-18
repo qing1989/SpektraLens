@@ -1,0 +1,15 @@
+Material Icons
+Copyright 2014 Google LLC
+Apache License 2.0
+Source: https://github.com/google/material-design-icons
+
+SpektraLens packages the following vectors locally and recolours them with the
+application theme. No Google font, network request, runtime icon SDK or telemetry
+is included:
+
+- keyboard_arrow_down
+- favorite
+- check
+- chevron_right
+
+The complete Apache License 2.0 text is bundled as Apache-2.0.txt.

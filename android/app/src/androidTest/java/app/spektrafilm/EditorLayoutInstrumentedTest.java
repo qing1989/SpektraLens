@@ -59,7 +59,7 @@ public final class EditorLayoutInstrumentedTest
     Set<String> checked = new HashSet<>();
     for (int tab : new int[] {0, 1, 2, 4, 5}) {
       for (String section :
-          tab == 2 ? new String[] {"基础", "曲线", "色彩平衡", "HSL 分色", "暗角"} : new String[] {"基础"}) {
+          tab == 2 ? new String[] {"基础", "曲线", "颜色分级", "颜色混合", "暗角"} : new String[] {"基础"}) {
         final int tool = tab;
         main(
             () -> {
@@ -134,7 +134,7 @@ public final class EditorLayoutInstrumentedTest
     for (int tab : new int[] {0, 1, 2, 4, 5}) {
       for (String section :
           tab == 2
-              ? new String[] {"基础", "曲线", "色彩平衡", "HSL 分色", "暗角"}
+              ? new String[] {"基础", "曲线", "颜色分级", "颜色混合", "暗角"}
               : new String[] {"基础"}) {
         final int tool = tab;
         main(

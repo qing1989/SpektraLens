@@ -38,6 +38,34 @@ final class PhotoFormats {
     return false; // TIFF/DNG/other camera containers still need RAW inspection.
   }
 
+  /**
+   * Motion Photos and iPhone Live Photos are ordinary still containers plus a motion asset. Reject
+   * them before they enter the local library; MediaStore's XMP hint catches most providers, this
+   * byte scan also covers providers that omit or rewrite the XMP column.
+   */
+  static boolean isMovingPhoto(File file) throws IOException {
+    try (RandomAccessFile input = new RandomAccessFile(file, "r")) {
+      long length = input.length();
+      if (length <= 0) return false;
+      long headLength = Math.min(length, 1024L * 1024);
+      byte[] head = new byte[(int) headLength];
+      input.readFully(head);
+      if (containsMovingPhotoMarker(head, head.length)) return true;
+      long tailLength = Math.min(length - headLength, 512L * 1024);
+      if (tailLength <= 0) return false;
+      byte[] tail = new byte[(int) tailLength];
+      input.seek(length - tailLength);
+      input.readFully(tail);
+      return containsMovingPhotoMarker(tail, tail.length);
+    }
+  }
+
+  private static boolean containsMovingPhotoMarker(byte[] bytes, int length) {
+    if (length <= 0) return false;
+    String text = new String(bytes, 0, length, StandardCharsets.ISO_8859_1);
+    return PhotoFormatPolicy.movingPhotoMetadata(text);
+  }
+
   private static String ascii(byte[] b, int start, int length) {
     return new String(b, start, length, StandardCharsets.US_ASCII);
   }

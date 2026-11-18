@@ -299,7 +299,7 @@ final class UpdateController {
   }
   static void openReleases(Activity activity) {
     try { activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES))); }
-    catch (Exception e) { Toast.makeText(activity, "未找到可打开网页的应用", Toast.LENGTH_SHORT).show(); }
+    catch (Exception e) { AppNotice.show(activity, "未找到可打开网页的应用"); }
   }
   private void post(Runnable action) { activity.runOnUiThread(() -> { if (!closed && !activity.isFinishing() && !activity.isDestroyed() && !cancelled.get()) action.run(); }); }
   private void fail(String title, String text, Exception e) {

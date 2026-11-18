@@ -8,8 +8,12 @@ and Android GPU adaptations by SAINTTaiYi and the upstream contributors.
 Original authors retain copyright in their works. See UPSTREAMS.md,
 THIRD_PARTY_NOTICES.md and the original license/citation files.
 
-Film/paper profiles and direct LUT encodings: CC BY-SA 4.0.
-Demo photograph: Fronalpstock big.jpg, Hannes Röst, CC BY-SA 3.0.
+Original spektrafilm film/paper profiles and direct LUT encodings: CC BY-SA 4.0.
+Four black-and-white film profiles, Multigrade IV RC paper and the
+CineStill 800T alias: SpektraLab product data by Hanze Qiu, copied
+unmodified with the original engine/resources_product/NOTICE.md and
+profile metadata.
+Demo photograph: supplied by the project author (2026-11-18).
 Project-generated launcher artwork and synthetic test data: CC0-1.0 to the
 extent rights can be granted. Code renderers and scripts: GPL-3.0-or-later.
 The current stock cartridges are drawn by SpektraLens. The rendering code,
@@ -19,6 +23,10 @@ Archived GRLife artwork retains its original rights and is excluded from current
 Interface fonts: Inter 4.1 by Rasmus Andersson and Noto Sans SC by the Noto
 project contributors, each under the SIL Open Font License 1.1. The original
 font files and license texts are bundled with the application.
+
+Interface action icons: Material Icons by Google LLC, Apache License 2.0.
+Only the locally packaged vectors keyboard_arrow_down, favorite, check and
+chevron_right are used; no runtime icon SDK or network request is included.
 
 No affiliation or endorsement by the upstream authors or film manufacturers
 is claimed. Full component copyright notices and licenses are preserved in

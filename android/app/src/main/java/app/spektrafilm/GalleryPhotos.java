@@ -89,48 +89,67 @@ final class GalleryPhotos {
     List<Photo> photos = new ArrayList<>();
     if (access(context) == Access.NONE) return photos;
     Uri collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL);
-    String[] projection = {
+    String[] baseProjection = {
       MediaStore.Images.Media._ID,
       MediaStore.Images.Media.DISPLAY_NAME,
+      MediaStore.Images.Media.MIME_TYPE,
       MediaStore.Images.Media.BUCKET_ID,
       MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
       MediaStore.Images.Media.DATE_TAKEN,
       MediaStore.Images.Media.DATE_MODIFIED,
       MediaStore.Images.Media.DATE_ADDED
     };
-    // Exclude pending/deleted media and unsupported animations; RAW remains available via Files.
-    String selection =
-        MediaStore.Images.Media.IS_PENDING
-            + " = 0 AND "
-            + MediaStore.Images.Media.MIME_TYPE
-            + " IN (?,?,?,?,?)";
-    String[] types = {"image/jpeg", "image/png", "image/heic", "image/heif", "image/x-adobe-dng"};
+    // The Images collection already excludes video. Query every still and apply the shared
+    // extension/MIME allow-list below so vendor providers with a generic MIME still expose valid DNG.
+    String selection = MediaStore.Images.Media.IS_PENDING + " = 0";
     Bundle args = new Bundle();
     args.putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection);
-    args.putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, types);
     args.putString(
         ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
         MediaStore.Images.Media.DATE_ADDED + " DESC, " + MediaStore.Images.Media._ID + " DESC");
-    try (Cursor cursor =
-        context.getContentResolver().query(collection, projection, args, cancellation)) {
-      if (cursor != null)
-        while (cursor.moveToNext()) {
-          cancellation.throwIfCanceled();
-          Uri uri = ContentUris.withAppendedId(collection, cursor.getLong(0));
-          String name = cursor.getString(1),
-              album = cursor.getString(2),
-              label = cursor.getString(3);
-          photos.add(
-              new Photo(
-                  uri,
-                  null,
-                  name == null ? "照片" : name,
-                  album == null ? "" : album,
-                  label == null ? "其他照片" : label,
-                  null,
-                  photoTime(cursor.getLong(4), cursor.getLong(5), cursor.getLong(6)),
-                  cursor.getLong(0)));
-        }
+    String[] projection = baseProjection;
+    boolean hasXmp = Build.VERSION.SDK_INT >= 30;
+    if (hasXmp) {
+      projection = Arrays.copyOf(baseProjection, baseProjection.length + 1);
+      projection[baseProjection.length] = MediaStore.MediaColumns.XMP;
+    }
+    Cursor cursor = null;
+    try {
+      cursor = context.getContentResolver().query(collection, projection, args, cancellation);
+    } catch (RuntimeException ignored) {
+      // A vendor MediaProvider can omit XMP. Keep the base query and reject motion media again
+      // while copying the selected files, before anything is saved to the private library.
+    }
+    if (cursor == null && hasXmp) {
+      projection = baseProjection;
+      hasXmp = false;
+      cursor = context.getContentResolver().query(collection, projection, args, cancellation);
+    }
+    try (Cursor rows = cursor) {
+      Cursor cursorRows = rows;
+      if (cursorRows == null) return photos;
+      int xmpColumn = hasXmp ? cursorRows.getColumnIndex(MediaStore.MediaColumns.XMP) : -1;
+      while (cursorRows.moveToNext()) {
+        cancellation.throwIfCanceled();
+        String name = cursorRows.getString(1);
+        String mime = cursorRows.getString(2);
+        String xmp = xmpColumn < 0 ? null : readXmp(cursorRows, xmpColumn);
+        if (!PhotoFormatPolicy.supported(name, mime)
+            || PhotoFormatPolicy.movingPhotoMetadata(xmp)) continue;
+        Uri uri = ContentUris.withAppendedId(collection, cursorRows.getLong(0));
+        String album = cursorRows.getString(3), label = cursorRows.getString(4);
+        photos.add(
+            new Photo(
+                uri,
+                null,
+                name == null ? "照片" : name,
+                album == null ? "" : album,
+                label == null ? "其他照片" : label,
+                null,
+                photoTime(
+                    cursorRows.getLong(5), cursorRows.getLong(6), cursorRows.getLong(7)),
+                cursorRows.getLong(0)));
+      }
     }
     // Vendor providers can ignore the requested sort. Enforce order after normalizing ms/seconds.
     photos.sort(
@@ -138,6 +157,21 @@ final class GalleryPhotos {
             .reversed()
             .thenComparing(Comparator.comparingLong((Photo p) -> p.mediaId).reversed()));
     return photos;
+  }
+
+  private static String readXmp(Cursor cursor, int column) {
+    if (column < 0 || cursor.isNull(column)) return null;
+    try {
+      if (cursor.getType(column) == Cursor.FIELD_TYPE_BLOB) {
+        byte[] bytes = cursor.getBlob(column);
+        return bytes == null
+            ? null
+            : new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+      }
+      return cursor.getString(column);
+    } catch (RuntimeException ignored) {
+      return null;
+    }
   }
 
   static long photoTime(long takenMs, long modifiedSeconds, long addedSeconds) {

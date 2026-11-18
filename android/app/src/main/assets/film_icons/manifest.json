@@ -3,6 +3,41 @@
   "collection": "SpektraLens / Canisters 01",
   "license": "GPL-3.0-or-later",
   "stocks": {
+    "kodak_tri_x_400": {
+      "family": "TRI-X",
+      "mark": "400",
+      "coat": "#D8D5CC",
+      "accent": "#D5AA4C",
+      "series": "monochrome"
+    },
+    "kodak_tmax_100": {
+      "family": "T-MAX",
+      "mark": "100",
+      "coat": "#C9C5D2",
+      "accent": "#6C5A83",
+      "series": "monochrome"
+    },
+    "fujifilm_neopan_acros_100_ii": {
+      "family": "ACROS II",
+      "mark": "100",
+      "coat": "#C3CEC6",
+      "accent": "#477665",
+      "series": "monochrome"
+    },
+    "ilford_hp5_plus_400": {
+      "family": "HP5 PLUS",
+      "mark": "400",
+      "coat": "#D6D6D2",
+      "accent": "#407B52",
+      "series": "monochrome"
+    },
+    "cinestill_800t": {
+      "family": "CINESTILL",
+      "mark": "800T",
+      "coat": "#315E72",
+      "accent": "#E56B55",
+      "series": "cine"
+    },
     "fujifilm_c200": {
       "family": "COLOR",
       "mark": "C200",

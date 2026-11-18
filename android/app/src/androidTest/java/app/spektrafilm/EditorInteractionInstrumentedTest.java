@@ -172,11 +172,203 @@ public final class EditorInteractionInstrumentedTest
     bar.finishPendingTap();
   }
 
+  private void setting(String key, Object value) throws Exception {
+    Method setter = MainActivity.class.getDeclaredMethod("set", String.class, Object.class);
+    setter.setAccessible(true);
+    setter.invoke(activity, key, value);
+  }
+
+  private JSONObject renderParameters() throws Exception {
+    Method parameters = MainActivity.class.getDeclaredMethod("params");
+    parameters.setAccessible(true);
+    return new JSONObject((String) parameters.invoke(activity));
+  }
+
+  private View tagged(String tag) throws Exception {
+    return tagged((View) get("editor"), tag);
+  }
+
+  private View tagged(View view, String tag) {
+    if (tag.equals(view.getTag())) return view;
+    if (!(view instanceof android.view.ViewGroup)) return null;
+    android.view.ViewGroup group = (android.view.ViewGroup) view;
+    for (int i = 0; i < group.getChildCount(); i++) {
+      View found = tagged(group.getChildAt(i), tag);
+      if (found != null) return found;
+    }
+    return null;
+  }
+
+  public void testBlackWhitePaperPairingAndUndoRestoreColorEdits() throws Exception {
+    main(
+        () -> {
+          setting("print_stock", "kodak_2383");
+          setting("m_filter_shift", .12);
+          setting("y_filter_shift", -.08);
+          call("scheduleRender");
+          history("undoStack").clear();
+          history("redoStack").clear();
+          String colorSettings = settings().toString();
+          setting("film_stock", "kodak_tri_x_400");
+          call("scheduleRender");
+          assertEquals(1, history("undoStack").size());
+          assertEquals("黑白", get("filmCategory"));
+          assertEquals(FilmStockPolicy.SILVER_PAPER, settings().getString("print_stock"));
+          JSONObject wire = renderParameters();
+          assertEquals(68, wire.getDouble("y_filter_neutral"), .00001);
+          assertEquals(0, wire.getDouble("m_filter_shift"), .00001);
+          assertEquals(0, wire.getDouble("y_filter_shift"), .00001);
+          assertEquals(.12, settings().getDouble("m_filter_shift"), .00001);
+          assertEquals(-.08, settings().getDouble("y_filter_shift"), .00001);
+          setting("print_stock", "kodak_2393");
+          assertEquals(FilmStockPolicy.SILVER_PAPER, settings().getString("print_stock"));
+          historyStep(false);
+          assertEquals(colorSettings, settings().toString());
+          wire = renderParameters();
+          assertFalse(wire.has("y_filter_neutral"));
+          assertFalse("Color keeps the 0.4.6 grain-layer default", wire.has("grain_sublayers_active"));
+          assertEquals(.12, wire.getDouble("m_filter_shift"), .00001);
+          historyStep(true);
+          assertEquals(FilmStockPolicy.SILVER_PAPER, settings().getString("print_stock"));
+          setting("film_stock", "fujifilm_c200");
+          assertFalse(FilmStockPolicy.SILVER_PAPER.equals(settings().getString("print_stock")));
+          assertFalse(renderParameters().has("y_filter_neutral"));
+        });
+  }
+
+  public void testBlackWhiteGrainResetKeepsStockCalibrationAndColorSettings() throws Exception {
+    main(
+        () -> {
+          setting("film_stock", "kodak_tri_x_400");
+          setting("grain_amount", 2);
+          call("scheduleRender");
+        });
+    page(5, "基础");
+    main(
+        () -> {
+          assertEquals(2, renderParameters().getDouble("grain_amount"), .00001);
+          int undo = history("undoStack").size();
+          doubleTap(bar("grain_amount"), bar("grain_amount").getWidth() / 2f);
+          assertEquals(1, settings().getDouble("grain_amount"), .00001);
+          assertEquals(1.70, renderParameters().getDouble("grain_amount"), .00001);
+          assertEquals(undo + 1, history("undoStack").size());
+          historyStep(false);
+          assertEquals(2, settings().getDouble("grain_amount"), .00001);
+          assertEquals(2, renderParameters().getDouble("grain_amount"), .00001);
+          setting("film_stock", "kodak_tmax_100");
+          assertEquals(2, settings().getDouble("grain_amount"), .00001);
+          assertEquals(1.48, renderParameters().getDouble("grain_amount"), .00001);
+          setting("film_stock", "kodak_portra_400");
+          assertEquals(2, renderParameters().getDouble("grain_amount"), .00001);
+        });
+  }
+
+  public void testBlackWhitePaperPanelAndRawWire() throws Exception {
+    main(() -> setting("film_stock", "ilford_hp5_plus_400"));
+    page(1, "基础");
+    main(
+        () -> {
+          assertTrue(bars().containsKey("print_brightness"));
+          assertFalse(bars().containsKey("m_filter_shift"));
+          assertFalse(bars().containsKey("y_filter_shift"));
+          assertEquals("Multigrade IV RC", ((TextView) get("paperTitle")).getText().toString());
+          boolean previousRaw = (Boolean) get("sourceRaw");
+          try {
+            for (boolean raw : new boolean[] {false, true}) {
+              field("sourceRaw").setBoolean(activity, raw);
+              JSONObject wire = renderParameters();
+              assertEquals(raw ? "ProPhoto RGB" : "sRGB", wire.getString("input_color_space"));
+              assertEquals(!raw, wire.getBoolean("input_cctf_decoding"));
+              assertFalse(wire.getBoolean("extended_dynamic_range"));
+              assertFalse(wire.getBoolean("scan_film"));
+              assertFalse(wire.getBoolean("grain_sublayers_active"));
+              assertEquals(1.49, wire.getDouble("grain_amount"), .00001);
+            }
+          } finally {
+            field("sourceRaw").setBoolean(activity, previousRaw);
+          }
+          setting("film_stock", "fujifilm_c200");
+          call("buildPanel");
+          assertTrue(bars().containsKey("m_filter_shift"));
+          assertTrue(bars().containsKey("y_filter_shift"));
+        });
+  }
+
+  public void testBlackWhiteFilterAndPaperGradeStayInsideTheirWorkflow() throws Exception {
+    page(0, "基础");
+    main(() -> assertNull("Color films do not expose the monochrome filter",
+        tagged("black_white_filter")));
+    main(
+        () -> {
+          setting("film_stock", "kodak_tri_x_400");
+          setting("camera_filter", "w25");
+          setting("paper_grade", "5");
+          call("buildPanel");
+          View filter = tagged("black_white_filter");
+          assertNotNull("Monochrome film exposes its lens filter", filter);
+          assertEquals("红色", ((TextView) ((android.view.ViewGroup) filter).getChildAt(1))
+              .getText().toString());
+          JSONObject wire = renderParameters();
+          assertEquals("w25", wire.getString("camera_filter"));
+          assertEquals(151.7, wire.getDouble("m_filter_neutral"), .00001);
+          assertEquals(0, wire.getDouble("y_filter_neutral"), .00001);
+          assertEquals(1.3507, wire.getDouble("print_exposure"), .00001);
+        });
+    page(1, "基础");
+    main(
+        () -> {
+          assertNotNull("Silver paper exposes contrast grades", tagged("paper_grade_scroll"));
+          assertEquals(
+              "最硬朗，保留黑白摄影的极端风格",
+              ((TextView) tagged("paper_grade_description")).getText().toString());
+          setting("film_stock", "kodak_portra_400");
+          setting("camera_filter", "w25");
+          setting("paper_grade", "5");
+          call("buildPanel");
+          assertNull("Color paper does not expose silver grades", tagged("paper_grade_scroll"));
+          JSONObject wire = renderParameters();
+          assertFalse(wire.has("camera_filter"));
+          assertEquals(1, wire.getDouble("print_exposure"), .00001);
+        });
+  }
+
+  public void testCineStillHeadroomVisibilityDefaultPersistenceAndUndo() throws Exception {
+    main(
+        () -> {
+          setting("film_stock", FilmStockPolicy.CINESTILL_800T);
+          assertEquals("电影胶片", get("filmCategory"));
+        });
+    page(5, "基础");
+    main(
+        () -> {
+          AdjustmentSeekBar headroom = bar("halation_headroom_ev");
+          assertNotNull("CineStill exposes highlight headroom", headroom);
+          assertEquals(40, headroom.getProgress());
+          assertEquals(4, renderParameters().getDouble("halation_headroom_ev"), .00001);
+          setting("halation_headroom_ev", 6.5);
+          call("scheduleRender");
+          assertEquals(6.5, renderParameters().getDouble("halation_headroom_ev"), .00001);
+          history("undoStack").clear();
+          history("redoStack").clear();
+          setting("halation_headroom_ev", 7.5);
+          call("scheduleRender");
+          assertEquals(1, history("undoStack").size());
+          historyStep(false);
+          assertEquals(6.5, settings().getDouble("halation_headroom_ev"), .00001);
+          historyStep(true);
+          assertEquals(7.5, settings().getDouble("halation_headroom_ev"), .00001);
+          setting("film_stock", "kodak_portra_400");
+          call("buildPanel");
+          assertFalse("Headroom is specific to CineStill", bars().containsKey("halation_headroom_ev"));
+          assertFalse(renderParameters().has("halation_headroom_ev"));
+        });
+  }
+
   public void testAllSliderDefaultsAndNoOpReset() throws Exception {
     Set<String> checked = new HashSet<>();
     for (int tool : new int[] {0, 1, 2, 4, 5}) {
       for (String section :
-          tool == 2 ? new String[] {"基础", "色彩平衡", "HSL 分色", "暗角"} : new String[] {"基础"}) {
+          tool == 2 ? new String[] {"基础", "颜色分级", "颜色混合", "暗角"} : new String[] {"基础"}) {
         page(tool, section);
         main(
             () -> {
@@ -346,7 +538,7 @@ public final class EditorInteractionInstrumentedTest
               settings().put(kind + "_" + group + "_saturation", 25);
               settings().put(kind + "_" + group + "_luminance", 17);
             });
-        page(2, kind.equals("hsl") ? "HSL 分色" : "色彩平衡");
+        page(2, kind.equals("hsl") ? "颜色混合" : "颜色分级");
         main(
             () -> {
               String key = kind + "_" + group + "_saturation";
@@ -667,7 +859,7 @@ public final class EditorInteractionInstrumentedTest
   }
 
   public void testPreviewTapTogglesPanelAndRestoresLastPanel() throws Exception {
-    page(2, "HSL 分色");
+    page(2, "颜色混合");
     AtomicReference<View> content = new AtomicReference<>();
     int[] height = new int[1], scrollY = new int[1], revision = new int[1];
     int[] generation = new int[1];
@@ -695,7 +887,7 @@ public final class EditorInteractionInstrumentedTest
           assertEquals(View.GONE, ((View) get("panel")).getVisibility());
           assertTrue(((View) get("photoStage")).getHeight() > height[0]);
           assertEquals(2, (int) (Integer) get("selectedTab"));
-          assertEquals("HSL 分色", get("gradeSection"));
+          assertEquals("颜色混合", get("gradeSection"));
           assertSame(content.get(), get("panelScroll"));
           assertEquals(params[0], settings().toString());
           assertEquals(revision[0], (int) (Integer) get("revision"));
@@ -712,7 +904,7 @@ public final class EditorInteractionInstrumentedTest
           assertEquals(View.VISIBLE, ((View) get("panel")).getVisibility());
           assertEquals(height[0], ((View) get("photoStage")).getHeight());
           assertEquals(2, (int) (Integer) get("selectedTab"));
-          assertEquals("HSL 分色", get("gradeSection"));
+          assertEquals("颜色混合", get("gradeSection"));
           assertSame(content.get(), get("panelScroll"));
           assertEquals(scrollY[0], ((ScrollView) get("panelScroll")).getScrollY());
           assertRestingTransforms();

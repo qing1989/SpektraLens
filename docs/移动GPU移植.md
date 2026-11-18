@@ -23,4 +23,4 @@
 
 ## 对应源码重建
 
-按 README 配置 Android SDK/NDK/JDK 后执行 `python3 scripts/build.py`，脚本会自动生成 overlay 并编译 35 个 SPIR-V。补丁、基线原文件、固定社区源 ZIP 和 CPU 源 ZIP 均在完整源码包，不依赖 `.tooling` 中的开发脚本或 Git 历史。`scripts/prepare_engine.py` 的内容指纹变化会重建生成目录；不要把生成目录里的临时修改当成已保存补丁。
+按 README 配置 Android SDK/NDK/JDK 后执行 `python3 scripts/build.py`，脚本会自动生成 overlay 并编译 36 个 SPIR-V。补丁、基线原文件、固定社区源 ZIP 和 CPU 源 ZIP 均在完整源码包，不依赖 `.tooling` 中的开发脚本或 Git 历史。`scripts/prepare_engine.py` 的内容指纹变化会重建生成目录；不要把生成目录里的临时修改当成已保存补丁。

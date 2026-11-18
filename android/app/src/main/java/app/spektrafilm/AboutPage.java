@@ -5,7 +5,6 @@ package app.spektrafilm;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
-import android.graphics.Paint;
 import android.net.Uri;
 import android.view.Gravity;
 import android.view.View;
@@ -14,7 +13,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 /** Local About and statement pages. External links open only after an explicit tap. */
 @SuppressLint(
@@ -145,13 +143,8 @@ final class AboutPage extends LinearLayout {
     summary.setLineSpacing(dp(6), 1);
     identity.addView(summary, new LayoutParams(-1, -2));
     gap(identity, 22);
-    boolean stackActions =
-        getResources().getConfiguration().fontScale >= 1.7f
-            || getResources().getConfiguration().screenWidthDp < 330;
-    LinearLayout actions = new LinearLayout(activity);
-    actions.setOrientation(stackActions ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
-    actions.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
-    actions.setBaselineAligned(false);
+    AdaptiveActionRow actions = new AdaptiveActionRow(activity, true, 10);
+    actions.setTag("about.actions");
     TextView update =
         action("检查更新", AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
     AppStyle.setTypeface(update, AppStyle.FONT_BOLD);
@@ -165,33 +158,13 @@ final class AboutPage extends LinearLayout {
       sponsorAction.setOnClickListener(v -> sponsor.run());
     }
 
-    int textWidth =
-        (int) Math.ceil(
-            Math.max(
-                update.getPaint().measureText(update.getText().toString()),
-                sponsorAction == null
-                    ? 0
-                    : sponsorAction
-                        .getPaint()
-                        .measureText(sponsorAction.getText().toString())));
-    Paint.FontMetrics metrics = update.getPaint().getFontMetrics();
-    int textHeight = (int) Math.ceil(metrics.descent - metrics.ascent);
-    int actionWidth = Math.max(dp(108), textWidth + dp(32));
-    int actionHeight = Math.max(dp(48), textHeight + dp(20));
     update.setPadding(dp(16), dp(10), dp(16), dp(10));
     updateBadge = new UpdateBadge(update, "可更新", false);
-    FrameLayout.LayoutParams updateActionLayout =
-        (FrameLayout.LayoutParams) update.getLayoutParams();
-    updateActionLayout.width = actionWidth;
-    updateActionLayout.height = actionHeight;
     updateBadge.setTag("about.update");
-    actions.addView(updateBadge, new LayoutParams(actionWidth, -2));
+    actions.addAction(updateBadge, update, 108);
     if (sponsorAction != null) {
       sponsorAction.setPadding(dp(16), dp(10), dp(16), dp(10));
-      LayoutParams supportParams = new LayoutParams(actionWidth, actionHeight);
-      if (stackActions) supportParams.topMargin = dp(8);
-      else supportParams.leftMargin = dp(10);
-      actions.addView(sponsorAction, supportParams);
+      actions.addAction(sponsorAction, sponsorAction, 108);
     }
     identity.addView(actions, new LayoutParams(-1, -2));
     content.addView(identity, new LayoutParams(-1, -2));
@@ -291,11 +264,14 @@ final class AboutPage extends LinearLayout {
         "开源来源与致谢",
         "原始模型与彩色配置：Andrea Volpato / spektrafilm。\n"
             + "原生引擎：Hanze Qiu 与 SpektraLab 贡献者。\n"
+            + "黑白胶片、相纸与 CineStill alias 数据：Hanze Qiu / SpektraLab，根据厂家公开技术资料建立。\n"
             + "移动 GPU 参考：SAINTTaiYi / SpektraLab-Android v1.3.3j。\n"
+            + "界面功能图标：Google Material Icons，Apache-2.0。\n"
             + "Android 客户端与 JNI：本项目移植。\n\n"
-            + "程序使用 GPL-3.0-or-later；胶片、相纸配置使用 CC BY-SA 4.0，数据未经修改。"
-            + "LibRaw、SwiftShader、Vulkan 及其他依赖保留各自许可证和原作者声明。\n\n"
-            + "内置示例：Fronalpstock big.jpg，Hannes Röst，CC BY-SA 3.0。"
+            + "程序使用 GPL-3.0-or-later；原始 spektrafilm 配置与 LUT 使用 CC BY-SA 4.0。"
+            + "黑白产品数据保留 SpektraLab 原始来源说明；所有配置数据均未经修改。"
+            + "LibRaw、SwiftShader、Vulkan、Material Icons 及其他依赖保留各自许可证和原作者声明。\n\n"
+            + "内置示例照片由项目作者提供。"
             + "胶卷图标由 SpektraLens 根据各款型号独立绘制，不包含历史第三方 PNG 图标。"
             + "完整版权、署名与授权文本可在下方「许可全文」中查看。");
     statementSection(
@@ -336,7 +312,7 @@ final class AboutPage extends LinearLayout {
     try {
       activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
     } catch (android.content.ActivityNotFoundException error) {
-      Toast.makeText(activity, "没有可打开此链接的应用", Toast.LENGTH_LONG).show();
+      AppNotice.showLong(activity, "没有可打开此链接的应用");
     }
   }
 
@@ -412,7 +388,7 @@ final class AboutPage extends LinearLayout {
     subtitle.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     copy.addView(subtitle, new LayoutParams(-1, -2));
     ImageView arrow = new ImageView(activity);
-    arrow.setImageResource(R.drawable.about_chevron_right);
+    arrow.setImageResource(R.drawable.ic_material_chevron_right);
     arrow.setImageTintList(android.content.res.ColorStateList.valueOf(AppStyle.MUTED));
     arrow.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     LayoutParams arrowParams = new LayoutParams(dp(20), dp(20));

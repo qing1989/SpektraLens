@@ -119,6 +119,41 @@
       "name": "Kodak Vision3 50D",
       "type": "negative",
       "target_print": "kodak_2383"
+    },
+    {
+      "stock": "cinestill_800t",
+      "name": "CineStill 800T",
+      "type": "negative",
+      "target_print": "kodak_2383",
+      "antihalation": "no"
+    },
+    {
+      "stock": "fujifilm_neopan_acros_100_ii",
+      "name": "Fujifilm Neopan 100 Acros II",
+      "type": "negative",
+      "target_print": "ilford_multigrade_iv_rc",
+      "monochrome": true
+    },
+    {
+      "stock": "ilford_hp5_plus_400",
+      "name": "Ilford HP5 Plus 400",
+      "type": "negative",
+      "target_print": "ilford_multigrade_iv_rc",
+      "monochrome": true
+    },
+    {
+      "stock": "kodak_tmax_100",
+      "name": "Kodak T-Max 100",
+      "type": "negative",
+      "target_print": "ilford_multigrade_iv_rc",
+      "monochrome": true
+    },
+    {
+      "stock": "kodak_tri_x_400",
+      "name": "Kodak Tri-X 400",
+      "type": "negative",
+      "target_print": "ilford_multigrade_iv_rc",
+      "monochrome": true
     }
   ],
   "papers": [
@@ -169,6 +204,13 @@
       "name": "Kodak Professional Ultra Endura",
       "type": "negative",
       "target_print": null
+    },
+    {
+      "stock": "ilford_multigrade_iv_rc",
+      "name": "Ilford Multigrade IV RC",
+      "type": "negative",
+      "target_print": null,
+      "monochrome": true
     }
   ]
 }

@@ -4,6 +4,7 @@ package app.spektrafilm;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.test.InstrumentationTestCase;
 import java.io.*;
@@ -56,7 +57,9 @@ public final class FilmParityInstrumentedTest extends InstrumentationTestCase {
     long engine = NativeEngine.create(resources.getAbsolutePath());
     try {
       JSONArray cases = manifest.getJSONArray("cases");
-      assertEquals(25, cases.length());
+      JSONObject catalog =
+          new JSONObject(new String(read(app.getAssets().open("catalog.json")), "UTF-8"));
+      assertEquals(catalog.getJSONArray("films").length() + 5, cases.length());
       for (int n = 0; n < cases.length(); n++) {
         JSONObject item = cases.getJSONObject(n), params = item.getJSONObject("params");
         String name = item.getString("name");
@@ -86,6 +89,40 @@ public final class FilmParityInstrumentedTest extends InstrumentationTestCase {
         if (exported.exists()) assertTrue("Remove this test's previous output", exported.delete());
         NativeEngine.exportImage(
             engine, params.toString(), "{}", exported.getAbsolutePath(), "png");
+        if (FilmStockPolicy.monochrome(params.getString("film_stock"))) {
+          Bitmap live = NativeEngine.render(engine, params.toString(), false);
+          assertTrue(name + " equal-size live/full parity", actual.sameAs(live));
+          live.recycle();
+          assertExportMatches(actual, exported);
+          JSONObject defaults = new JSONObject(params.toString());
+          for (java.util.Map.Entry<String, Object> override :
+              FilmStockPolicy.renderOverrides(
+                      params.getString("film_stock"), "", FilmStockPolicy.SILVER_PAPER, 1)
+                  .entrySet())
+            defaults.put(override.getKey(), override.getValue());
+          defaults.put("halation_active", true);
+          defaults.put("glare_active", true);
+          Bitmap textured = NativeEngine.render(engine, defaults.toString(), true);
+          try {
+            for (int y = 0; y < textured.getHeight(); y++)
+              for (int x = 0; x < textured.getWidth(); x++) {
+                int pixel = textured.getPixel(x, y);
+                assertTrue(name + " neutral default effects",
+                    Math.abs(Color.red(pixel) - Color.green(pixel)) <= 2
+                        && Math.abs(Color.blue(pixel) - Color.green(pixel)) <= 2);
+              }
+            File texturedExport = new File(output, name + "-default.png");
+            if (texturedExport.exists()) assertTrue(texturedExport.delete());
+            NativeEngine.exportImage(
+                engine, defaults.toString(), "{}", texturedExport.getAbsolutePath(), "png");
+            assertExportMatches(textured, texturedExport);
+          } finally {
+            textured.recycle();
+          }
+          Bitmap restored = NativeEngine.render(engine, params.toString(), true);
+          assertTrue(name + " reset grain restores quiet pixels", actual.sameAs(restored));
+          restored.recycle();
+        }
         results.put(
             new JSONObject()
                 .put("name", name)
@@ -102,5 +139,24 @@ public final class FilmParityInstrumentedTest extends InstrumentationTestCase {
       }
     }
     assertEquals(failed.toString(), 0, failed.length());
+  }
+
+  private void assertExportMatches(Bitmap preview, File file) {
+    Bitmap exported = BitmapFactory.decodeFile(file.getAbsolutePath());
+    assertNotNull("PNG export decodes", exported);
+    try {
+      assertEquals(preview.getWidth(), exported.getWidth());
+      assertEquals(preview.getHeight(), exported.getHeight());
+      for (int y = 0; y < preview.getHeight(); y++)
+        for (int x = 0; x < preview.getWidth(); x++) {
+          int before = preview.getPixel(x, y), after = exported.getPixel(x, y);
+          assertTrue("PNG16 and preview agree after 8-bit decoding",
+              Math.abs(Color.red(before) - Color.red(after)) <= 1
+                  && Math.abs(Color.green(before) - Color.green(after)) <= 1
+                  && Math.abs(Color.blue(before) - Color.blue(after)) <= 1);
+        }
+    } finally {
+      exported.recycle();
+    }
   }
 }

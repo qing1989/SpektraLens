@@ -38,8 +38,23 @@ with zipfile.ZipFile(apk) as z:
     if any(n.startswith('lib/x86_64/') for n in names):
         assert 'lib/x86_64/libspektra.so' in names
         assert 'lib/x86_64/libvk_swiftshader.so' in names
-    assert len([n for n in names if n.startswith('assets/engine/profiles/') and n.endswith('.json')]) == 28
-    assert len([n for n in names if n.startswith('assets/engine/vulkan/') and n.endswith('.spv')]) == 35
+    catalog = json.loads(z.read('assets/catalog.json'))
+    profiles = {
+        'assets/engine/profiles/' + stock['stock'] + '.json'
+        for stock in catalog['films'] + catalog['papers']
+    }
+    assert profiles == {
+        name for name in names if name.startswith('assets/engine/profiles/') and name.endswith('.json')
+    }
+    assert 'assets/licenses/SpektraLab-Product-Data-NOTICE.txt' in names
+    shaders = {
+        'assets/engine/vulkan/' + path.name
+        for path in (ROOT / 'android/app/src/main/assets/engine/vulkan').glob('*.spv')
+    }
+    assert shaders
+    assert shaders == {
+        name for name in names if name.startswith('assets/engine/vulkan/') and name.endswith('.spv')
+    }
 shutil.copy2(apk, OUT / f'SpektraLens-v{version}-debug.apk')
 # The fixed Release resource name is independent of this script's debug delivery name.
 # For a signed release pass --release-apk; never publish a debug checksum for another APK.
@@ -60,8 +75,9 @@ if notes_file.is_file():
 (OUT / 'latest.json').write_text(json.dumps(latest, ensure_ascii=False, indent=2) + '\n')
 
 guide = (ROOT / 'README.md').read_text().replace(f'deliverables/SpektraLens-v{version}-debug.apk',f'SpektraLens-v{version}-debug.apk').replace('(docs/验证记录.md)','(验证记录.md)').replace('(docs/图标映射.md)','(图标映射.md)').replace('(docs/兼容显影实现.md)','(兼容显影实现.md)').replace('(docs/PhotonCam编辑页设计.md)','(编辑页设计与映射.md)').replace('(docs/导出性能排查.md)','(导出性能排查.md)').replace('(docs/界面图标检查.md)','(界面图标检查.md)').replace('(docs/移动GPU移植.md)','(移动GPU移植.md)').replace('(THIRD_PARTY_NOTICES.md)','(来源与许可.md)')
+guide = guide.replace('(docs/黑白胶片.md)', '(黑白胶片.md)')
 guide = guide.replace('(design/app-icon/v1/README.md)', f'(SpektraLens-v{version}-完整源码.zip)')
-current_docs = ('C方案界面.md', '滑杆界面.md', '照片预览与资源校验.md', '胶片显影对照.md', '胶片显影对照.json', '历史胶卷图标来源.json')
+current_docs = ('C方案界面.md', '滑杆界面.md', '照片预览与资源校验.md', '胶片显影对照.md', '胶片显影对照.json', '历史胶卷图标来源.json', '黑白胶片.md')
 for name in current_docs:
     guide = guide.replace(f'(docs/{name})', f'({name})')
 (OUT / '安装与使用说明.md').write_text(guide)

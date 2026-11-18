@@ -77,7 +77,27 @@ public final class GalleryInstrumentedTest extends ActivityInstrumentationTestCa
     return null;
   }
 
-  public void testThreeColumnImportedGridKeepsExactPhotoIdentity() throws Exception {
+  private ListView list(View view) {
+    if (view instanceof ListView) return (ListView) view;
+    if (view instanceof ViewGroup)
+      for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
+        ListView found = list(((ViewGroup) view).getChildAt(i));
+        if (found != null) return found;
+      }
+    return null;
+  }
+
+  private View findByDescription(View view, String description) {
+    if (description.contentEquals(view.getContentDescription())) return view;
+    if (view instanceof ViewGroup)
+      for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
+        View found = findByDescription(((ViewGroup) view).getChildAt(i), description);
+        if (found != null) return found;
+      }
+    return null;
+  }
+
+  public void testThreeColumnGridKeepsExactPhotoIdentityAndConfirmsSelection() throws Exception {
     MainActivity activity = getActivity();
     List<GalleryPhotos.Photo> photos = new ArrayList<>();
     for (int i = 0; i < 3; i++)
@@ -94,19 +114,10 @@ public final class GalleryInstrumentedTest extends ActivityInstrumentationTestCa
               sheet[0] =
                   new GallerySheet(
                       activity,
-                      photos,
-                      "unique-frame-0",
+                      0,
                       new GallerySheet.Listener() {
-                        public void picked(GalleryPhotos.Photo photo) {
-                          selected[0] = photo.frameId;
-                        }
-
-                        public void files() {
-                          fail("Unexpected files action");
-                        }
-
-                        public void systemPicker() {
-                          fail("Unexpected system picker");
+                        public void importPhotos(List<GalleryPhotos.Photo> chosen) {
+                          selected[0] = chosen.get(0).frameId;
                         }
 
                         public void permission() {
@@ -116,7 +127,7 @@ public final class GalleryInstrumentedTest extends ActivityInstrumentationTestCa
                         }
                       });
               sheet[0].show();
-              find(sheet[0].getWindow().getDecorView(), "已导入").performClick();
+              sheet[0].setPhotosForTest(photos);
             });
     try {
       getInstrumentation().waitForIdleSync();
@@ -124,6 +135,14 @@ public final class GalleryInstrumentedTest extends ActivityInstrumentationTestCa
       assertNotNull(grid);
       assertEquals(3, grid.getNumColumns());
       assertEquals(3, grid.getAdapter().getCount());
+      for (String action : new String[] {"取消", "确认导入"}) {
+        TextView button = (TextView) find(sheet[0].getWindow().getDecorView(), action);
+        assertNotNull(action, button);
+        assertEquals(AppStyle.dp(activity, AppStyle.TOUCH_PRIMARY), button.getHeight());
+        assertTrue(action + " has room for its text and vertical padding",
+            button.getHeight() >= button.getLayout().getHeight()
+                + button.getPaddingTop() + button.getPaddingBottom());
+      }
       for (int i = 0; i < 3; i++) {
         View tile = grid.getChildAt(i);
         assertNotNull(tile);
@@ -134,8 +153,156 @@ public final class GalleryInstrumentedTest extends ActivityInstrumentationTestCa
       getInstrumentation()
           .runOnMainSync(
               () -> grid.performItemClick(grid.getChildAt(1), 1, grid.getAdapter().getItemId(1)));
+      getInstrumentation().waitForIdleSync();
+      FrameLayout selectedTile = (FrameLayout) grid.getChildAt(1);
+      View badge = selectedTile.getChildAt(2);
+      assertEquals(View.VISIBLE, badge.getVisibility());
+      assertEquals(AppStyle.dp(activity, AppStyle.SELECTION_BADGE), badge.getWidth());
+      assertEquals(AppStyle.dp(activity, AppStyle.SELECTION_BADGE), badge.getHeight());
+      assertTrue("The photo keeps the full selection target", selectedTile.getWidth() > badge.getWidth());
+      assertTrue(sheet[0].isShowing());
+      getInstrumentation()
+          .runOnMainSync(
+              () ->
+                  findPrefix(
+                          sheet[0].getWindow().getDecorView(), "确认导入")
+                      .performClick());
       assertEquals("unique-frame-1", selected[0]);
       assertFalse(sheet[0].isShowing());
+    } finally {
+      getInstrumentation().runOnMainSync(() -> sheet[0].dismiss());
+    }
+  }
+
+  private View findPrefix(View view, String prefix) {
+    if (view instanceof TextView
+        && ((TextView) view).getText().toString().startsWith(prefix)) return view;
+    if (view instanceof ViewGroup)
+      for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
+        View found = findPrefix(((ViewGroup) view).getChildAt(i), prefix);
+        if (found != null) return found;
+      }
+    return null;
+  }
+
+  public void testSelectionStopsAtTwentyWithoutDiscardingPreviousChoices() throws Exception {
+    MainActivity activity = getActivity();
+    List<GalleryPhotos.Photo> photos = new ArrayList<>();
+    for (int i = 0; i < 21; i++)
+      photos.add(
+          GalleryPhotos.Photo.imported(
+              "limited-frame-" + i,
+              "limited-" + i + ".jpg",
+              new File(activity.getCacheDir(), "demo.jpg")));
+    GallerySheet[] sheet = new GallerySheet[1];
+    getInstrumentation()
+        .runOnMainSync(
+            () -> {
+              sheet[0] =
+                  new GallerySheet(
+                      activity,
+                      20,
+                      new GallerySheet.Listener() {
+                        public void importPhotos(List<GalleryPhotos.Photo> chosen) {}
+
+                        public void permission() {}
+                      });
+              sheet[0].show();
+              sheet[0].setPhotosForTest(photos);
+            });
+    try {
+      getInstrumentation().waitForIdleSync();
+      GridView grid = grid(sheet[0].getWindow().getDecorView());
+      assertNotNull(grid);
+      getInstrumentation()
+          .runOnMainSync(
+              () -> {
+                for (int i = 0; i < 21; i++)
+                  grid.performItemClick(null, i, grid.getAdapter().getItemId(i));
+              });
+      getInstrumentation().waitForIdleSync();
+      View selectedTwenty =
+          find(sheet[0].getWindow().getDecorView(), "已选 20 张");
+      assertNotNull(selectedTwenty);
+      View feedback = sheet[0].getWindow().getDecorView().findViewWithTag(AppNotice.TAG);
+      assertTrue("Selection-limit feedback is text in the gallery's own window", feedback instanceof TextView);
+      assertEquals("最多选择 20 张照片", ((TextView) feedback).getText().toString());
+      for (android.graphics.drawable.Drawable icon : ((TextView) feedback).getCompoundDrawables())
+        assertNull("Selection-limit feedback contains no app icon", icon);
+      TextView confirm =
+          (TextView) findPrefix(sheet[0].getWindow().getDecorView(), "确认导入");
+      assertNotNull(confirm);
+      assertTrue(confirm.isEnabled());
+
+      // At the limit the newest tap is rejected before the existing 20 are preserved.
+      getInstrumentation()
+          .runOnMainSync(
+              () -> grid.performItemClick(null, 0, grid.getAdapter().getItemId(0)));
+      assertNotNull(find(sheet[0].getWindow().getDecorView(), "已选 19 张"));
+      getInstrumentation()
+          .runOnMainSync(
+              () -> grid.performItemClick(null, 20, grid.getAdapter().getItemId(20)));
+      assertNotNull(find(sheet[0].getWindow().getDecorView(), "已选 20 张"));
+    } finally {
+      getInstrumentation().runOnMainSync(() -> sheet[0].dismiss());
+    }
+  }
+
+  public void testAlbumPickerExpandsInsideTheSameGallerySheet() throws Exception {
+    MainActivity activity = getActivity();
+    List<GalleryPhotos.Photo> photos = new ArrayList<>();
+    photos.add(
+        GalleryPhotos.Photo.imported(
+            "album-frame", "album.jpg", new File(activity.getCacheDir(), "demo.jpg")));
+    GallerySheet[] sheet = new GallerySheet[1];
+    getInstrumentation()
+        .runOnMainSync(
+            () -> {
+              sheet[0] =
+                  new GallerySheet(
+                      activity,
+                      0,
+                      new GallerySheet.Listener() {
+                        public void importPhotos(List<GalleryPhotos.Photo> chosen) {}
+
+                        public void permission() {}
+                      });
+              sheet[0].show();
+              sheet[0].setPhotosForTest(photos);
+            });
+    try {
+      getInstrumentation().waitForIdleSync();
+      View selector =
+          findByDescription(
+              sheet[0].getWindow().getDecorView(), "最近照片，点击选择其他相册");
+      assertNotNull(selector);
+      getInstrumentation().runOnMainSync(selector::performClick);
+      getInstrumentation().waitForIdleSync();
+      ListView albums = list(sheet[0].getWindow().getDecorView());
+      assertNotNull(albums);
+      assertTrue(albums.isShown());
+      assertEquals(1, albums.getAdapter().getCount());
+      View gridView =
+          findByDescription(
+              sheet[0].getWindow().getDecorView(), "照片网格，三列，点击选择或取消选择");
+      assertNotNull(gridView);
+      assertEquals("相册列表直接切换网格区域", View.GONE, gridView.getVisibility());
+      View panel = (View) albums.getParent();
+      assertEquals(0f, panel.getElevation(), 0f);
+      FrameLayout.LayoutParams panelParams = (FrameLayout.LayoutParams) panel.getLayoutParams();
+      assertEquals(0, panelParams.leftMargin);
+      assertEquals(0, panelParams.rightMargin);
+      assertEquals(0, panelParams.topMargin);
+      getInstrumentation()
+          .runOnMainSync(
+              () ->
+                  albums.performItemClick(
+                      albums.getChildAt(0), 0, albums.getAdapter().getItemId(0)));
+      Thread.sleep(220);
+      getInstrumentation().waitForIdleSync();
+      assertFalse(albums.isShown());
+      assertEquals(View.VISIBLE, gridView.getVisibility());
+      assertNotNull(find(sheet[0].getWindow().getDecorView(), "已导入"));
     } finally {
       getInstrumentation().runOnMainSync(() -> sheet[0].dismiss());
     }

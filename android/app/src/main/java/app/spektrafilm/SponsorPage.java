@@ -18,7 +18,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -328,13 +327,11 @@ final class SponsorPage extends FrameLayout {
                   saveButton.setEnabled(true);
                 }
                 if (activity.isFinishing() || activity.isDestroyed()) return;
-                Toast.makeText(
-                        activity,
-                        result == null
-                            ? "已保存到 Pictures/SpektraLens"
-                            : "保存失败：" + result.getMessage(),
-                        Toast.LENGTH_LONG)
-                    .show();
+                AppNotice.showLong(
+                    activity,
+                    result == null
+                        ? "已保存到 Pictures/SpektraLens"
+                        : "保存失败：" + result.getMessage());
               });
         });
   }

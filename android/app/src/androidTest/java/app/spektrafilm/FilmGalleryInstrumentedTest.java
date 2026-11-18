@@ -100,10 +100,25 @@ public final class FilmGalleryInstrumentedTest
           return field("activeImport") == null
               && !(Boolean) field("thumbBusy")
               && queued.isEmpty()
+              && ((Map<?, ?>) field("thumbDiskPending")).isEmpty()
+              && ((java.util.concurrent.atomic.AtomicInteger) field("thumbWrites")).get() == 0
+              && galleryDemandComplete()
               && cache().size() >= 3
               && ((TextView) field("exportButton")).getText().toString().equals("导出照片");
         });
     assertTrue("No thumbnail engine errors", read(() -> ((Set<?>) field("thumbFailed")).isEmpty()));
+  }
+
+  private boolean galleryDemandComplete() throws Exception {
+    HorizontalScrollView scroll = (HorizontalScrollView) field("filmScrollRef");
+    List<String> stocks = (List<String>) field("thumbStocksRef");
+    int stride = (Integer) field("thumbStridePx"), size = (Integer) field("thumbSizePx");
+    int margin = Math.round(60 * activity.getResources().getDisplayMetrics().density);
+    int left = scroll.getScrollX() - margin, right = scroll.getScrollX() + scroll.getWidth() + margin;
+    for (int i = 0; i < stocks.size(); i++)
+      if (i * stride + size >= left && i * stride <= right && !cache().containsKey(stocks.get(i)))
+        return false;
+    return true;
   }
 
   private File fixture(boolean alternate) throws Exception {
@@ -151,6 +166,62 @@ public final class FilmGalleryInstrumentedTest
           }
         });
     idleGallery();
+  }
+
+  public void testLosslessDiskCacheReusesNeutralGalleryWithoutRendering() throws Exception {
+    importPhoto(false);
+    ExecutorService disk = (ExecutorService) read(() -> field("thumbnailIo"));
+    disk.submit(() -> {}).get(10, TimeUnit.SECONDS);
+    Map<String, Bitmap> originals = new HashMap<>();
+    main(() -> {
+      try {
+        for (Map.Entry<String, Bitmap> entry : cache().entrySet())
+          originals.put(entry.getKey(), entry.getValue().copy(Bitmap.Config.ARGB_8888, false));
+      } catch (Exception ex) { throw new RuntimeException(ex); }
+    });
+    long renders = read(() -> (Long) field("thumbRenderCount"));
+    long hits = read(() -> (Long) field("thumbDiskHits"));
+    main(() -> {
+      try {
+        field("thumbPrint", "");
+        call("syncThumbCache", new Class<?>[] {});
+        call("refillThumbs", new Class<?>[] {});
+      } catch (Exception ex) { throw new RuntimeException(ex); }
+    });
+    await("Warm gallery filled from disk", () -> cache().keySet().containsAll(originals.keySet())
+        && ((Map<?, ?>) field("thumbDiskPending")).isEmpty());
+    assertEquals("Warm gallery does not reopen or render any stock", renders,
+        (long) read(() -> (Long) field("thumbRenderCount")));
+    assertTrue("Disk hits recorded", read(() -> (Long) field("thumbDiskHits")) >= hits + originals.size());
+    main(() -> {
+      try {
+        for (Map.Entry<String, Bitmap> entry : originals.entrySet()) {
+          assertTrue("PNG retains exact pixels for " + entry.getKey(), entry.getValue().sameAs(cache().get(entry.getKey())));
+          entry.getValue().recycle();
+        }
+      } catch (Exception ex) { throw new RuntimeException(ex); }
+    });
+    File source = read(() -> (File) field("sourceFile"));
+    String prefix = ThumbnailDiskCache.key(source.getAbsolutePath()) + "-";
+    File[] entries = new File(activity.getCacheDir(), "film-thumbs-v1")
+        .listFiles((dir, name) -> name.startsWith(prefix) && name.endsWith(".png"));
+    assertNotNull(entries);
+    assertTrue(entries.length > 0);
+    try (FileOutputStream out = new FileOutputStream(entries[0])) {
+      out.write(new byte[] {1, 2, 3});
+    }
+    main(() -> {
+      try {
+        field("thumbPrint", "");
+        call("syncThumbCache", new Class<?>[] {});
+        call("refillThumbs", new Class<?>[] {});
+      } catch (Exception ex) { throw new RuntimeException(ex); }
+    });
+    await("Corrupt PNG regenerated instead of leaving a blank card", () ->
+        cache().keySet().containsAll(originals.keySet()) && !(Boolean) field("thumbBusy")
+            && ((Map<?, ?>) field("thumbDiskPending")).isEmpty());
+    assertEquals("Only the corrupt entry renders again", renders + 1,
+        (long) read(() -> (Long) field("thumbRenderCount")));
   }
 
   public void testSquareCardsSelectionCurrentPhotoAndLazyScroll() throws Exception {
@@ -219,6 +290,56 @@ public final class FilmGalleryInstrumentedTest
     await(
         "Scrolling lazily loads later stocks",
         () -> cache().size() > initial && !(Boolean) field("thumbBusy"));
+  }
+
+  public void testBlackWhiteGalleryUsesOriginalAndIgnoresSecondEdits() throws Exception {
+    importPhoto(false);
+    main(
+        () -> {
+          try {
+            field("filmCategory", "黑白");
+            field("pendingFilmScrollX", 0);
+            call("buildPanel", new Class<?>[] {});
+          } catch (Exception error) {
+            throw new RuntimeException(error);
+          }
+        });
+    idleGallery();
+    Map<String, Bitmap> before = read(() -> new HashMap<>(cache()));
+    main(
+        () -> {
+          try {
+            LinearLayout cards = (LinearLayout) field("filmCards");
+            assertEquals(4, cards.getChildCount());
+            for (int index = 0; index < cards.getChildCount(); index++) {
+              View card = cards.getChildAt(index);
+              String description = card.getContentDescription().toString();
+              assertTrue(description.contains("Acros") || description.contains("HP5")
+                  || description.contains("T-Max") || description.contains("Tri-X"));
+            }
+            SpectralRenderer renderer = (SpectralRenderer) field("renderer");
+            Field last = SpectralRenderer.class.getDeclaredField("lastOpen");
+            last.setAccessible(true);
+            android.os.Bundle opened = (android.os.Bundle) last.get(renderer);
+            JSONObject recipe = new JSONObject(opened.getString("params"));
+            assertTrue(FilmStockPolicy.monochrome(recipe.getString("film_stock")));
+            assertEquals(FilmStockPolicy.SILVER_PAPER, recipe.getString("print_stock"));
+            assertEquals(68, recipe.getDouble("y_filter_neutral"), .00001);
+            assertEquals(0, recipe.getDouble("exposure_compensation_ev"), .00001);
+            assertFalse(recipe.getBoolean("grain_sublayers_active"));
+            call("set", new Class<?>[] {String.class, Object.class}, "exposure_compensation_ev", 2);
+            call("set", new Class<?>[] {String.class, Object.class}, "grain_amount", 0);
+            call("set", new Class<?>[] {String.class, Object.class}, "grade_contrast", 30);
+            call("scheduleRender", new Class<?>[] {});
+          } catch (Exception error) {
+            throw new RuntimeException(error);
+          }
+        });
+    idleGallery();
+    for (Map.Entry<String, Bitmap> entry : before.entrySet())
+      if (FilmStockPolicy.monochrome(entry.getKey()))
+        assertSame("Second edits leave black-and-white thumbnails intact", entry.getValue(),
+            read(() -> cache().get(entry.getKey())));
   }
 
   public void testEditsKeepGalleryFixedAndNewPhotoInvalidates() throws Exception {
@@ -436,13 +557,23 @@ public final class FilmGalleryInstrumentedTest
     assertEquals("Tapping a card must not shift the row", before, after);
   }
 
-  /** 新照片一律从「全部」的第一张开始，而不是跳到选中胶片所属的分类。 */
-  public void testNewPhotoStartsAtTheFirstCardOfAllFilms() throws Exception {
+  /** 新照片显示「全部」开头，选中 C200，不能跟随排序新增的首款 CineStill。 */
+  public void testNewPhotoStartsWithC200InAllFilms() throws Exception {
     importPhoto(false);
     idleGallery();
     assertEquals("全部", read(() -> (String) field("filmCategory")));
     int scroll = read(() -> galleryScrollX());
     assertEquals("First card, no scroll", 0, scroll);
+    assertEquals("fujifilm_c200", read(() -> ((JSONObject) field("settings")).getString("film_stock")));
+    read(
+        () -> {
+          LinearLayout cards = (LinearLayout) field("filmCards");
+          assertTrue("C200 remains the second card in the current name order", cards.getChildAt(1).isSelected());
+          assertTrue(cards.getChildAt(1).getContentDescription().toString().contains("Fujifilm C200"));
+          HorizontalScrollView gallery = (HorizontalScrollView) field("filmScrollRef");
+          assertTrue("Selected C200 is visible", cards.getChildAt(1).getRight() <= gallery.getWidth());
+          return null;
+        });
   }
 
   /** 点中间那张不动；点右边缘那张、且右边还有胶片时，才滑一格。 */

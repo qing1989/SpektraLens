@@ -7,11 +7,14 @@ import android.graphics.Bitmap;
 import android.os.SystemClock;
 import android.test.ActivityInstrumentationTestCase2;
 import android.util.Log;
+import android.util.TypedValue;
 import android.view.View;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.concurrent.atomic.AtomicReference;
 import android.widget.Button;
+import android.widget.ListView;
+import android.widget.TextView;
 
 /**
  * 弹窗操作按钮的排版守卫。
@@ -159,5 +162,66 @@ public final class DialogActionLayoutInstrumentedTest
         main(() -> dialog[0].dismiss());
       }
     }
+  }
+
+  /**
+   * 弹窗标题和列表项沿用页面字号阶梯：标题 18sp，选项 13sp。
+   *
+   * <p>系统默认是 22 / 16sp，黑白滤镜的六条说明在 16sp 下会被挤成两行。这里只守字号，
+   * 不要求永远单行：320dp 窄屏或系统放大字体时，折行是允许的。
+   */
+  public void testDialogTypographyUsesAppScale() throws Exception {
+    String[] items = {
+      "无滤镜：保持原始明暗关系",
+      "黄色：压暗蓝天，增强云层",
+      "橙色：加强天空反差，增加远景层次",
+      "红色：强烈压暗蓝天，突出暖色主体",
+      "绿色：提亮绿色植被，压暗红橙",
+      "蓝色：压暗暖色，突出雾气与冷调"
+    };
+    AlertDialog[] dialog = new AlertDialog[1];
+    main(
+        () ->
+            dialog[0] =
+                new Haptics.DialogBuilder(activity)
+                    .setTitle("黑白滤镜")
+                    .setSingleChoiceItems(items, 0, null)
+                    .setNegativeButton("取消", null)
+                    .show());
+    try {
+      SystemClock.sleep(400);
+      int titleId = activity.getResources().getIdentifier("alertTitle", "id", "android");
+      TextView title = dialog[0].findViewById(titleId);
+      assertNotNull("弹窗标题使用 AppStyle 字号", title);
+      assertEquals("标题为 TYPE_HEADING", sp(AppStyle.TYPE_HEADING), title.getTextSize(), .5f);
+      ListView list = dialog[0].getListView();
+      assertNotNull("单选弹窗有列表", list);
+      assertTrue("列表至少绑定一行", list.getChildCount() > 0);
+      for (int i = 0; i < list.getChildCount(); i++) {
+        TextView item = (TextView) list.getChildAt(i);
+        assertEquals(
+            "可见选项为 TYPE_BODY：" + item.getText(),
+            sp(AppStyle.TYPE_BODY),
+            item.getTextSize(),
+            .5f);
+      }
+      main(() -> list.setSelection(items.length - 1));
+      SystemClock.sleep(200);
+      for (int i = 0; i < list.getChildCount(); i++) {
+        TextView item = (TextView) list.getChildAt(i);
+        assertEquals(
+            "滚动后选项为 TYPE_BODY：" + item.getText(),
+            sp(AppStyle.TYPE_BODY),
+            item.getTextSize(),
+            .5f);
+      }
+    } finally {
+      main(() -> dialog[0].dismiss());
+    }
+  }
+
+  private float sp(int value) {
+    return TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_SP, value, activity.getResources().getDisplayMetrics());
   }
 }

@@ -8,6 +8,7 @@ import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.app.*;
 import android.content.*;
+import android.content.res.ColorStateList;
 import android.graphics.*;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.GradientDrawable;
@@ -37,14 +38,23 @@ public final class MainActivity extends Activity {
   /** 面板的最大高度（dp）。预览区按这个值预留，所以它也决定照片能有多大。 */
   static final int PANEL_MAX_DP = 320;
   private static final long PANEL_MOTION_MS = 200, TOOL_MOTION_MS = 140;
+  private static final int MAX_BATCH_IMPORT = 20;
   private static final PathInterpolator EDITOR_EASING = new PathInterpolator(.2f, 0f, 0f, 1f);
   private static final int GALLERY_SOURCE_EDGE = 1024;
   private static final long GALLERY_CACHE_BYTES = 16L * 1024 * 1024;
   private UpdateController updates;
   private UpdateBadge homeAbout;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
+  private final ExecutorService thumbnailIo = Executors.newSingleThreadExecutor();
+  private final ThumbnailWorkQueue homeThumbJobs = new ThumbnailWorkQueue();
+  private final PendingBitmaps thumbnailDeliveries = new PendingBitmaps();
+  private volatile boolean homeThumbPaused = true;
+  private volatile int mainPreviewRevision = -1;
+  private String developedPhotoId, developedRecipe;
+  private Bitmap storedHomeLook;
+  private String storedHomeLookId;
   private final ExecutorService importWorker = Executors.newFixedThreadPool(2);
-  private PhotoImportJob activeImport;
+  private volatile PhotoImportJob activeImport;
   private volatile long photoLoadGeneration;
   private final Handler main = new Handler(Looper.getMainLooper());
   private final ArrayList<View> controls = new ArrayList<>();
@@ -89,6 +99,16 @@ public final class MainActivity extends Activity {
   private String thumbPrint = "";
   private volatile int thumbGeneration;
   private boolean thumbBusy;
+  private ThumbnailDiskCache filmDiskCache;
+  private String filmCacheResources = "";
+  private final Set<String> thumbDiskChecked = new HashSet<>();
+  private final Map<String, Integer> thumbDiskPending = new HashMap<>();
+  private final Map<String, String> thumbStockDiskKeys = new HashMap<>();
+  private final Set<String> removedGalleryPhotos = ConcurrentHashMap.newKeySet();
+  private final java.util.concurrent.atomic.AtomicInteger thumbWrites =
+      new java.util.concurrent.atomic.AtomicInteger();
+  private volatile long thumbRenderCount, homeThumbRenderCount;
+  private long thumbDiskHits;
   private final Set<String> thumbFailed = new HashSet<>();
   private int previewWorkTicket = -1;
   // 面板每次重建都会换掉 ImageView，所以渲染完成时不能只认建时的那个引用。
@@ -104,12 +124,14 @@ public final class MainActivity extends Activity {
   private String filmSessionKey = "";
   private final Map<String, Integer> categoryScrollX = new HashMap<>();
   private int pendingFilmScrollX = -1;
+  private int paperGradeScrollX;
   private int engineBootGeneration;
   private long engineBootStarted;
   private boolean engineBootPending;
   private Bitmap openedSource;
-  private boolean ready, exporting, comparing;
-  private String filename = "内置静物色卡";
+  private boolean ready, comparing;
+  private volatile boolean exporting, batchImportRunning;
+  private String filename = "胶片边缘 · 示例照片";
   private Runnable pending;
   private final Map<String, SeekBar> sliders = new HashMap<>();
   private final Map<String, TextView> values = new HashMap<>();
@@ -118,44 +140,117 @@ public final class MainActivity extends Activity {
   private SponsorPage sponsorPage;
   private FlowingBackgroundView flowingBackground;
   private LinearLayout homeScreen, editorScreen, panel, tabRow, filmCards, historyList;
+  private FrameLayout homeStage;
+  private LinearLayout homeContent;
   private ImageView homeHero;
+  private TextView homeImportCancel;
+  private ImportButtonLayout homeImportSlot;
+  private ImportProgressDrawable homeImportProgress;
   private HomePhotoImages homeImages;
-  private TextView photoPickerButton;
+  private TextView homeImportButton, homeImportHint, batchPasteBar, manageDeleteBar, homeManage;
+  private View manageActionRow;
+  private TextView historyTitle, homeSelectAll, homeClearSelection;
+  private LinearLayout manageHeaderActions;
+  private final LinkedHashSet<String> manageSelection = new LinkedHashSet<>();
+  private boolean manageMode;
+  private FrameLayout batchPasteShell;
+  private final Map<String, BatchCardViews> batchCardViews = new HashMap<>();
   private GallerySheet gallerySheet;
+  private LibraryActionSheet frameActions;
   private ExportSheet exportSheet;
-  private String pickerSettings;
   private int selectedTab;
   private boolean panelCollapsed;
   private ValueAnimator panelAnimator;
   private String filmCategory = "全部";
   private final ArrayList<Frame> library = new ArrayList<>();
+  private final LinkedHashSet<String> batchSelection = new LinkedHashSet<>();
   private String activeId = "demo";
+  private String editorPhotoId = "";
   private final ArrayDeque<String> undoStack = new ArrayDeque<>(), redoStack = new ArrayDeque<>();
   private String committed;
   private TextView undoButton, redoButton;
   private TextView recentCount;
   /** 上一次渲染历史列表时的内容指纹，用来跳过无意义的重建。 */
   private String historySignature;
+  private boolean batchPasteMode;
+  private volatile int batchImportGeneration;
+  private boolean editorNeedsSync;
+  private int homeExportGeneration;
 
   private static final class Frame {
     String id, name, path, params;
+    boolean favorite;
+    long sourceTimestamp, importedAt;
+    String sourceMediaId = "";
+    boolean edited;
 
     Frame(String i, String n, String p, String s) {
       id = i;
       name = n;
       path = p;
       params = s;
+      importedAt = System.currentTimeMillis();
+    }
+  }
+
+  private static final class EditClipboard {
+    final String sourceId, sourceName, params;
+
+    EditClipboard(String sourceId, String sourceName, String params) {
+      this.sourceId = sourceId;
+      this.sourceName = sourceName;
+      this.params = params;
+    }
+
+    boolean valid() {
+      return sourceId != null
+          && !sourceId.isBlank()
+          && params != null
+          && !params.isBlank();
+    }
+  }
+
+  private static final class BatchCardViews {
+    final View photoBox, scrim;
+    final ImageView check;
+    final FrameLayout.LayoutParams favoriteParams;
+
+    BatchCardViews(
+        View photoBox,
+        View scrim,
+        FrameLayout.LayoutParams favoriteParams,
+        ImageView check) {
+      this.photoBox = photoBox;
+      this.scrim = scrim;
+      this.favoriteParams = favoriteParams;
+      this.check = check;
+    }
+  }
+
+  private static final class PendingImport {
+    final String id, name, path;
+    final long sourceTimestamp, mediaId;
+
+    PendingImport(String id, String name, String path, long sourceTimestamp, long mediaId) {
+      this.id = id;
+      this.name = name;
+      this.path = path;
+      this.sourceTimestamp = sourceTimestamp;
+      this.mediaId = mediaId;
     }
   }
 
   static final class Stock {
-    String id, name, type, target;
+    String id, name, type, target, antihalation;
+    boolean monochrome;
 
     Stock(JSONObject j) {
       id = j.optString("stock");
       name = j.optString("name");
       type = j.optString("type");
       target = j.optString("target_print");
+      antihalation = j.optString("antihalation");
+      monochrome = j.optBoolean("monochrome");
     }
   }
 
@@ -163,6 +258,9 @@ public final class MainActivity extends Activity {
   public void onCreate(Bundle state) {
     super.onCreate(state);
     Haptics.install(getWindow());
+    filmDiskCache = new ThumbnailDiskCache(new File(getCacheDir(), "film-thumbs-v1"),
+        64L * 1024 * 1024);
+    thumbnailIo.execute(filmDiskCache::sweepPending);
     updates = new UpdateController(this);
     prefs = getSharedPreferences("darkroom", MODE_PRIVATE);
     try {
@@ -206,6 +304,10 @@ public final class MainActivity extends Activity {
           try {
             File resources =
                 EngineResources.prepare(this, new File(getFilesDir(), "engine_267ee243_mobile_v3"));
+            String resourceKey = android.util.Base64.encodeToString(
+                java.nio.file.Files.readAllBytes(new File(resources, ".ready").toPath()),
+                android.util.Base64.NO_WRAP)
+                + ":" + getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime;
             String capabilities =
                 next.start(resources.getAbsolutePath(), prefs.getString("engine_mode", "auto"));
             if (destroyed || boot != engineBootGeneration) {
@@ -246,8 +348,10 @@ public final class MainActivity extends Activity {
                     if (first != null) Bitmaps.release(first.bitmap);
                     return;
                   }
+                  filmCacheResources = resourceKey;
                   ready = true;
                   refillThumbs();
+                  pumpHomeThumbnails();
                   homeImages.setRenderer(next);
                   engineBootPending = false;
                   prefs.edit().remove("last_engine_error").apply();
@@ -260,17 +364,17 @@ public final class MainActivity extends Activity {
                       adopt(first);
                       filename = name;
                       fileLabel.setText(filename);
-                      refreshStrip();
                       photo.images(source, null);
                       // 恢复会话时首页大图也要用显影后的样子（卡片在 refreshHistory 里自带）。
                       syncHeroLook();
                     } else Bitmaps.release(first.bitmap);
                   }
                   if (activeImport == null) {
-                    if (source != null && editorScreen.getVisibility() == View.VISIBLE)
+                    if (source != null && (editorScreen.getVisibility() == View.VISIBLE || mainPreviewPending()))
                       scheduleRender();
                     else setStatus("已准备好 · 选择照片开始显影", false);
                   }
+                  queueMissingHomeThumbnails();
                 });
           } catch (Throwable ex) {
             next.close();
@@ -370,12 +474,9 @@ public final class MainActivity extends Activity {
         .show();
   }
 
-  /**
-   * 默认胶片取目录里的第一张，而不是写死某一卷：导入后画廊停在「全部」第一张，
-   * 选中态也落在同一张卡上，白边和橙字一眼可见。
-   */
+  /** The unedited-photo default is C200 even when new stocks sort ahead of it. */
   private String defaultFilmStock() {
-    return films.isEmpty() ? "fujifilm_c200" : films.get(0).id;
+    return "fujifilm_c200";
   }
 
   private void defaults() {
@@ -385,11 +486,14 @@ public final class MainActivity extends Activity {
     putDefault("print_brightness", 0);
     putDefault("m_filter_shift", 0);
     putDefault("y_filter_shift", 0);
+    putDefault("camera_filter", "");
+    putDefault("paper_grade", FilmStockPolicy.DEFAULT_PAPER_GRADE);
+    putDefault("halation_headroom_ev", 4);
     // 初始化与单项复位共用同一份默认值，非零默认值不能按 0 处理。
     for (String key : new String[] {
       "grain_amount", "halation_amount", "glare_amount", "dir_couplers_amount",
       "halation_scatter_amount", "density_curve_gamma", "grade_vignette_midpoint",
-      "edge_amount", "edge_frame_number", "date_size", "date_intensity"
+      "halation_headroom_ev", "edge_amount", "edge_frame_number", "date_size", "date_intensity"
     }) putDefault(key, sliderDefault(key));
     putDefault("film_format_mm", 36);
     putDefault("product_defaults", true);
@@ -409,6 +513,7 @@ public final class MainActivity extends Activity {
     putDefault("date_text", new SimpleDateFormat("yyyy.MM.dd", Locale.US).format(new Date()));
     putDefault("date_corner", "bottom_right");
     putDefault("date_color", "orange");
+    normalizePaper();
   }
 
   private void putDefault(String k, Object v) {
@@ -419,6 +524,7 @@ public final class MainActivity extends Activity {
     return switch (key) {
       case "grain_amount", "halation_amount", "glare_amount", "dir_couplers_amount",
           "halation_scatter_amount", "density_curve_gamma", "date_size", "date_intensity" -> 1;
+      case "halation_headroom_ev" -> 4;
       case "grade_vignette_midpoint" -> 50;
       case "edge_amount" -> 6;
       case "edge_frame_number" -> 36;
@@ -435,7 +541,10 @@ public final class MainActivity extends Activity {
             && !String.valueOf(v).equals(settings.optString(k))
             && find(papers, stock.target) != null) settings.put("print_stock", stock.target);
       }
+      if (k.equals("print_stock")
+          && !FilmStockPolicy.canPrint(settings.optString("film_stock"), String.valueOf(v))) return;
       settings.put(k, v);
+      if (k.equals("film_stock") || k.equals("print_stock")) normalizePaper();
     } catch (JSONException ex) {
       throw new IllegalStateException(ex);
     }
@@ -444,9 +553,15 @@ public final class MainActivity extends Activity {
   private String category(Stock stock) {
     return stock == null
         ? "全部"
-        : stock.type.equals("positive")
+        : stock.monochrome
+            ? "黑白"
+            : stock.type.equals("positive")
             ? "反转片"
-            : stock.id.contains("vision3") || stock.id.contains("verita") ? "电影胶片" : "彩色负片";
+            : stock.id.contains("vision3")
+                    || stock.id.contains("verita")
+                    || FilmStockPolicy.cinestill800t(stock.id)
+                ? "电影胶片"
+                : "彩色负片";
   }
 
   private int dp(float n) {
@@ -638,13 +753,6 @@ public final class MainActivity extends Activity {
     statusRow.setVisibility(View.GONE);
     LinearLayout meta = horizontal();
     meta.setPadding(dp(12), 0, dp(12), 0);
-    photoPickerButton = button("照片", INK, BG);
-    photoPickerButton.setTextSize(AppStyle.TYPE_LABEL);
-    photoPickerButton.setPadding(0, 0, 0, 0);
-    photoPickerButton.setMinHeight(0);
-    photoPickerButton.setOnClickListener(v -> choosePhoto());
-    add(meta, photoPickerButton, 48, 40);
-    refreshStrip();
     fileLabel = text(filename, AppStyle.TYPE_MICRO, MUTED);
     fileLabel.setSingleLine(true);
     fileLabel.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
@@ -962,11 +1070,14 @@ public final class MainActivity extends Activity {
     if (homeScreen != null) screens.removeView(homeScreen);
     homeScreen = vertical();
     screens.addView(homeScreen, new FrameLayout.LayoutParams(-1, -1));
+    homeStage = new FrameLayout(this);
+    homeScreen.addView(homeStage, new LinearLayout.LayoutParams(-1, 0, 1));
     ScrollView scroll = new ScrollView(this);
-    homeScreen.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
+    homeStage.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
     homeImages = new HomePhotoImages(this, main, scroll, worker);
+    homeImages.setRenderDemandListener(this::pumpHomeThumbnails);
     if (ready) homeImages.setRenderer(renderer);
-    LinearLayout content = vertical();
+    LinearLayout content = homeContent = vertical();
     content.setPadding(dp(20), dp(20), dp(20), dp(28));
     scroll.setVerticalScrollBarEnabled(false);
     scroll.addView(content);
@@ -976,8 +1087,9 @@ public final class MainActivity extends Activity {
     AppStyle.setTypeface(logo, AppStyle.FONT_SEMIBOLD);
     logo.setLetterSpacing(-.035f);
     add(branding, logo, -1, 44);
-    TextView cn = text("随身的胶片实验室", AppStyle.TYPE_LABEL, MUTED);
-    add(branding, cn, -1, 28);
+    TextView cn = text("暗房里没有过去，只有正在发生的影像", AppStyle.TYPE_LABEL, MUTED);
+    cn.setLineSpacing(dp(2), 1);
+    add(branding, cn, -1, -2);
     head.addView(branding, new LinearLayout.LayoutParams(0, -2, 1));
     TextView help = button("关于", MUTED, BG);
     help.setTextSize(AppStyle.TYPE_LABEL);
@@ -985,7 +1097,10 @@ public final class MainActivity extends Activity {
     help.setSingleLine(true);
     help.setMinWidth(dp(42));
     help.setContentDescription("关于、许可与支持范围");
-    help.setOnClickListener(v -> about());
+    help.setOnClickListener(
+        v -> {
+          if (!manageMode) about();
+        });
     homeAbout = new UpdateBadge(help, "new");
     controls.remove(help);
     controls.add(homeAbout);
@@ -1001,42 +1116,133 @@ public final class MainActivity extends Activity {
     homeHero.setScaleType(ImageView.ScaleType.CENTER_CROP);
     homeHero.setAdjustViewBounds(false);
     homeHero.setContentDescription("最近导入的照片预览");
-    if (source != null) homeHero.setImageBitmap(source);
+    if (source != null && library.isEmpty()) homeHero.setImageBitmap(source);
     hero.addView(homeHero, new FrameLayout.LayoutParams(-1, -1));
-    Frame restored = findFrame(activeId);
-    File heroFile = sourceFile;
-    if (heroFile == null) {
-      File candidate =
-          restored == null ? new File(getFilesDir(), "source.img") : new File(restored.path);
-      if (candidate.isFile()) heroFile = candidate;
-    }
-    homeImages.bind(
-        homeHero, heroFile, restored == null ? null : developedLook(restored.id), null, true);
+    bindHomeHeroToRecent();
     add(content, hero, -1, 240);
     gap(content, 16);
-    TextView start =
-        button("导入照片，开始显影", AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
-    start.setTextSize(AppStyle.TYPE_TITLE);
-    AppStyle.setTypeface(start, AppStyle.FONT_BOLD);
-    start.setOnClickListener(v -> importPhoto());
-    add(content, start, -1, 54);
+    homeImportButton = button("开始导入照片", AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
+    homeImportButton.setTextSize(AppStyle.TYPE_TITLE);
+    AppStyle.setTypeface(homeImportButton, AppStyle.FONT_BOLD);
+    homeImportButton.setOnClickListener(v -> importPhoto());
+    homeImportProgress = new ImportProgressDrawable(this);
+    homeImportCancel = button("取消", INK, BG);
+    homeImportCancel.setTextSize(AppStyle.TYPE_MICRO);
+    AppStyle.setTypeface(homeImportCancel, AppStyle.FONT_MEDIUM);
+    homeImportCancel.setPadding(dp(4), 0, dp(4), 0);
+    homeImportCancel.setContentDescription("取消照片导入");
+    homeImportCancel.setOnClickListener(v -> cancelBatchImport());
+    homeImportCancel.setVisibility(View.GONE);
+    homeImportSlot = new ImportButtonLayout(this, homeImportButton, homeImportCancel);
+    add(content, homeImportSlot, -1, -2);
     gap(content, 12);
     TextView privacy =
-        text("RAW / JPEG / PNG / HEIC\n本机处理 · 自动保存调整 · 保留原照片", AppStyle.TYPE_MICRO, MUTED);
+        text("JPG / PNG / HEIC / HEIF / DNG\n本机处理 · 自动保存调整 · 保留原照片", AppStyle.TYPE_MICRO, MUTED);
     privacy.setLineSpacing(dp(4), 1);
     add(content, privacy, -1, 54);
+    homeImportHint = text("", AppStyle.TYPE_MICRO, MUTED);
+    homeImportHint.setLineSpacing(dp(3), 1);
+    homeImportHint.setVisibility(View.GONE);
+    LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(-1, -2);
+    hintParams.topMargin = dp(7);
+    content.addView(homeImportHint, hintParams);
     gap(content, 24);
     LinearLayout historyHead = horizontal();
-    TextView recent = text("最近的底片", AppStyle.TYPE_HEADING, INK);
-    AppStyle.setTypeface(recent, AppStyle.FONT_BOLD);
-    historyHead.addView(recent, new LinearLayout.LayoutParams(0, dp(40), 1));
-    recentCount = text(library.size() + " 张", AppStyle.TYPE_MICRO, MUTED);
-    AppStyle.setNumericTypeface(recentCount);
-    add(historyHead, recentCount, -2, 40);
+    historyTitle = text("最近照片", AppStyle.TYPE_HEADING, INK);
+    AppStyle.setNumericTypeface(historyTitle);
+    AppStyle.setTypeface(historyTitle, AppStyle.FONT_BOLD);
+    historyTitle.setMaxLines(1);
+    historyHead.addView(historyTitle, new LinearLayout.LayoutParams(0, dp(40), 1));
+    homeManage = text("照片管理", AppStyle.TYPE_BODY, GOLD);
+    AppStyle.setTypeface(homeManage, AppStyle.FONT_MEDIUM);
+    homeManage.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+    homeManage.setPadding(dp(14), 0, 0, 0);
+    homeManage.setMinHeight(dp(44));
+    homeManage.setContentDescription("照片管理，选择并删除照片");
+    homeManage.setOnClickListener(v -> enterManageMode());
+    add(historyHead, homeManage, -2, 44);
+    manageHeaderActions = horizontal();
+    manageHeaderActions.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+    homeSelectAll = text("全选", AppStyle.TYPE_BODY, GOLD);
+    AppStyle.setTypeface(homeSelectAll, AppStyle.FONT_MEDIUM);
+    homeSelectAll.setGravity(Gravity.CENTER);
+    homeSelectAll.setPadding(dp(14), 0, 0, 0);
+    homeSelectAll.setMinHeight(dp(44));
+    homeSelectAll.setContentDescription("全选照片");
+    homeSelectAll.setOnClickListener(v -> selectAllPhotos());
+    manageHeaderActions.addView(homeSelectAll, new LinearLayout.LayoutParams(-2, dp(44)));
+    homeClearSelection = text("取消选择", AppStyle.TYPE_BODY, GOLD);
+    AppStyle.setTypeface(homeClearSelection, AppStyle.FONT_MEDIUM);
+    homeClearSelection.setGravity(Gravity.CENTER);
+    homeClearSelection.setPadding(dp(18), 0, 0, 0);
+    homeClearSelection.setMinHeight(dp(44));
+    homeClearSelection.setContentDescription("取消选择全部照片");
+    homeClearSelection.setOnClickListener(v -> clearManageSelection());
+    manageHeaderActions.addView(homeClearSelection, new LinearLayout.LayoutParams(-2, dp(44)));
+    manageHeaderActions.setVisibility(View.GONE);
+    add(historyHead, manageHeaderActions, -2, 44);
     add(content, historyHead, -1, -2);
     gap(content, 9);
     historyList = vertical();
     add(content, historyList, -1, -2);
+    batchPasteBar = button(EditClipboardPolicy.batchButtonLabel(0), AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
+    batchPasteBar.setTextSize(AppStyle.TYPE_BODY);
+    AppStyle.setTypeface(batchPasteBar, AppStyle.FONT_BOLD);
+    batchPasteBar.setEnabled(false);
+    batchPasteBar.setOnClickListener(v -> pasteToBatch());
+    manageDeleteBar = button("删除", AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
+    manageDeleteBar.setTextSize(AppStyle.TYPE_BODY);
+    AppStyle.setTypeface(manageDeleteBar, AppStyle.FONT_BOLD);
+    manageDeleteBar.setEnabled(false);
+    manageDeleteBar.setOnClickListener(v -> confirmManageDelete());
+    batchPasteShell = new FrameLayout(this);
+    AppStyle.surface(
+        batchPasteShell, AppStyle.withAlpha(AppStyle.SURFACE, .96f), AppStyle.R_MEDIUM);
+    FrameLayout barStack = new FrameLayout(this);
+    LinearLayout batchActions = new LinearLayout(this);
+    batchActions.setOrientation(LinearLayout.HORIZONTAL);
+    batchActions.setGravity(Gravity.CENTER_VERTICAL);
+    batchActions.setPadding(dp(14), dp(8), dp(14), dp(14));
+    TextView batchCancel = button("取消", INK, AppStyle.CONTROL);
+    batchCancel.setGravity(Gravity.CENTER);
+    batchCancel.setPadding(dp(12), 0, dp(12), 0);
+    batchCancel.setOnClickListener(v -> exitBatchPaste());
+    batchActions.addView(
+        batchCancel, new LinearLayout.LayoutParams(0, dp(AppStyle.TOUCH_PRIMARY), 1));
+    batchPasteBar.setPadding(dp(12), 0, dp(12), 0);
+    LinearLayout.LayoutParams pasteParams =
+        new LinearLayout.LayoutParams(0, dp(AppStyle.TOUCH_PRIMARY), 1);
+    pasteParams.leftMargin = dp(12);
+    batchActions.addView(batchPasteBar, pasteParams);
+    LinearLayout manageActions = new LinearLayout(this);
+    manageActions.setOrientation(LinearLayout.HORIZONTAL);
+    manageActions.setGravity(Gravity.CENTER_VERTICAL);
+    manageActions.setPadding(dp(14), dp(8), dp(14), dp(14));
+    TextView manageCancel = button("取消", INK, AppStyle.CONTROL);
+    manageCancel.setGravity(Gravity.CENTER);
+    manageCancel.setPadding(dp(12), 0, dp(12), 0);
+    manageCancel.setOnClickListener(v -> exitManageMode());
+    manageActions.addView(
+        manageCancel, new LinearLayout.LayoutParams(0, dp(AppStyle.TOUCH_PRIMARY), 1));
+    manageDeleteBar.setPadding(dp(12), 0, dp(12), 0);
+    LinearLayout.LayoutParams deleteParams =
+        new LinearLayout.LayoutParams(0, dp(AppStyle.TOUCH_PRIMARY), 1);
+    deleteParams.leftMargin = dp(12);
+    manageActions.addView(manageDeleteBar, deleteParams);
+    manageActions.setVisibility(View.GONE);
+    manageActionRow = manageActions;
+    barStack.addView(batchActions, new FrameLayout.LayoutParams(-1, -2));
+    barStack.addView(manageActions, new FrameLayout.LayoutParams(-1, -2));
+    batchPasteShell.addView(barStack, new FrameLayout.LayoutParams(-1, -2));
+    batchPasteShell.addOnLayoutChangeListener(
+        (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+          if (bottom - top != oldBottom - oldTop) updateBatchPasteInsets();
+        });
+    FrameLayout.LayoutParams batchParams =
+        new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+    batchParams.setMargins(dp(10), 0, dp(10), dp(10));
+    homeStage.addView(batchPasteShell, batchParams);
+    updateBatchPasteBar(false);
     refreshHistory();
   }
 
@@ -1046,29 +1252,61 @@ public final class MainActivity extends Activity {
       finishPendingSliderTaps();
       updateEditorLayout();
       flowingBackground.setVisibility(View.VISIBLE);
+      homeThumbPaused = false;
       homeScreen.setVisibility(View.VISIBLE);
       editorScreen.setVisibility(View.GONE);
       saveDevelopedLook();
+      if (!batchImportRunning && !selectionActive()) setHomeImportHint(idleHomeHint());
       refreshHistory();
       homeImages.loadVisible();
+      queueMissingHomeThumbnails();
     }
   }
 
   /**
-   * 编辑器退回首页时，把当前显影效果落成小图（先入 io 队列，后面的卡片加载才能读到新文件），
-   * 并让首页大图改用显影后的样子。示例照片不入库，没有卡片，跳过。
+   * 编辑器退回首页时直接显示显影效果，再后台保存同一结果；未完成的新配方不能复用旧预览。
+   * 示例照片不入库，没有卡片，跳过。
    */
   private void saveDevelopedLook() {
-    if (developed == null || developed.isRecycled()) return;
+    if (developed == null || developed.isRecycled() || mainPreviewPending()) return;
+    if (storedHomeLook == developed && activeId.equals(storedHomeLookId)) return;
     Frame frame = findFrame(activeId);
-    if (frame == null) return;
+    if (frame == null || !frame.id.equals(developedPhotoId)
+        || !frame.params.equals(developedRecipe)) return;
+    homeThumbJobs.invalidate(frame.id);
     homeImages.storeDeveloped(frame.id, developed);
+    storedHomeLook = developed;
+    storedHomeLookId = frame.id;
     syncHeroLook();
   }
 
   private void syncHeroLook() {
-    if (homeHero != null && sourceFile != null)
-      homeImages.bind(homeHero, sourceFile, developedLook(activeId), null, true);
+    bindHomeHeroToRecent();
+  }
+
+  private void bindHomeHeroToRecent() {
+    if (homeHero == null || homeImages == null) return;
+    Frame recent = library.isEmpty() ? null : library.get(0);
+    if (recent == null) {
+      // Everything was deleted: fall back to the bundled demo photo instead of a stale source.
+      homeImages.bind(homeHero, null, null, null, true);
+      homeImages.reload(homeHero);
+      homeImages.loadVisible();
+      homeHero.setClickable(false);
+      homeHero.setFocusable(false);
+      homeHero.setOnClickListener(null);
+      homeHero.setContentDescription("示例照片预览");
+      return;
+    }
+    File heroFile = new File(recent.path);
+    homeImages.bind(homeHero, heroFile, developedLook(recent.id), null, true);
+    homeHero.setClickable(true);
+    homeHero.setFocusable(true);
+    homeHero.setContentDescription("编辑 " + PhotoLabels.title(recent.name));
+    homeHero.setOnClickListener(
+        v -> {
+          if (!manageMode) editFrameFromHome(recent);
+        });
   }
 
   private File developedLook(String id) {
@@ -1077,6 +1315,7 @@ public final class MainActivity extends Activity {
 
   private void showEditor() {
     closeAbout();
+    homeThumbPaused = true;
     flowingBackground.setVisibility(View.GONE);
     homeScreen.setVisibility(View.GONE);
     editorScreen.setVisibility(View.VISIBLE);
@@ -1194,7 +1433,7 @@ public final class MainActivity extends Activity {
     if (panel == null) return;
     // Keep the deferred crop tool's ID reserved without exposing its panel.
     if (selectedTab == 3) selectedTab = 0;
-    // 新照片一律从「全部」的第一张开始；同一张照片再次编辑则沿用上次的分类与位置。
+    // 换照片从「全部」开头展示；未编辑照片默认选 C200（当前第二张），已编辑照片保留参数。
     String sessionKey = sourceFile == null ? "internal" : sourceFile.getAbsolutePath();
     if (!sessionKey.equals(filmSessionKey)) {
       filmSessionKey = sessionKey;
@@ -1269,7 +1508,7 @@ public final class MainActivity extends Activity {
     }
     if (selectedTab == 0) {
       LinearLayout filters = horizontal();
-      String[] categories = {"全部", "彩色负片", "电影胶片", "反转片"};
+      String[] categories = {"全部", "彩色负片", "电影胶片", "反转片", "黑白"};
       for (String category : categories) {
         TextView chip =
             button(
@@ -1278,7 +1517,7 @@ public final class MainActivity extends Activity {
                 category.equals(filmCategory) ? AppStyle.CONTROL : BG);
         chip.setTextSize(AppStyle.TYPE_MICRO);
         chip.setSelected(category.equals(filmCategory));
-        chip.setPadding(dp(9), 0, dp(9), 0);
+        chip.setPadding(dp(10), 0, dp(10), 0);
         chip.setSingleLine(true);
         chip.setHorizontallyScrolling(false);
         chip.setAutoSizeTextTypeUniformWithConfiguration(
@@ -1287,13 +1526,6 @@ public final class MainActivity extends Activity {
         AppStyle.setTypeface(
             chip,
             category.equals(filmCategory) ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
-        // 分类行同时容纳「全部」和四个汉字。按实际字宽加左右各 9dp，避免通用胶囊给短文字
-        // 自动补出过大的留白；70dp 上限保证四个分类在窄屏上仍互不侵入。
-        int chipWidth =
-            Math.max(
-                dp(40),
-                Math.min(
-                    dp(70), Math.round(chip.getPaint().measureText(category) + dp(18))));
         chip.setOnClickListener(
             v -> {
               filmCategory = category;
@@ -1301,10 +1533,9 @@ public final class MainActivity extends Activity {
               pendingFilmScrollX = categoryScrollX.getOrDefault(category, 0);
               buildPanel();
             });
-        FrameLayout slot = new FrameLayout(this);
-        slot.addView(
-            chip, new FrameLayout.LayoutParams(chipWidth, dp(40), Gravity.CENTER));
-        filters.addView(slot, new LinearLayout.LayoutParams(0, dp(40), 1));
+        LinearLayout.LayoutParams chipLayout = new LinearLayout.LayoutParams(0, dp(40), 1);
+        chipLayout.rightMargin = dp(3);
+        filters.addView(chip, chipLayout);
       }
       add(editor, filters, -1, 40);
       gap(editor, 8);
@@ -1434,6 +1665,7 @@ public final class MainActivity extends Activity {
       thumbStridePx = dp(stride);
       thumbSizePx = dp(thumbSize);
       gap(editor, 6);
+      if (monochromeFilm()) blackWhiteFilterChoice();
       slider("exposure_compensation_ev", "胶片曝光", -3, 3, .1, " EV");
 
     } else if (selectedTab == 1) {
@@ -1445,7 +1677,8 @@ public final class MainActivity extends Activity {
       TextView title = text("印相材料", AppStyle.TYPE_BODY, INK);
       AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
       heading.addView(title, new LinearLayout.LayoutParams(0, dp(40), 1));
-      TextView pick = button("全部 8 款", GOLD, AppStyle.CONTROL);
+      int paperCount = availablePapers().size();
+      TextView pick = button("全部 " + paperCount + " 款", GOLD, AppStyle.CONTROL);
       pick.setPadding(dp(16), 0, dp(16), 0);
       pick.setMinHeight(0);
       pick.setTextSize(AppStyle.TYPE_LABEL);
@@ -1453,7 +1686,7 @@ public final class MainActivity extends Activity {
       pick.setSingleLine(true);
       pick.setEllipsize(android.text.TextUtils.TruncateAt.END);
       pick.setOnClickListener(v -> chooseStock(false));
-      add(heading, pick, -2, 32);
+      if (paperCount > 1) add(heading, pick, -2, 32);
       add(editor, heading, -1, 40);
       gap(editor, 6);
       Stock stock = find(papers, settings.optString("print_stock"));
@@ -1470,16 +1703,25 @@ public final class MainActivity extends Activity {
       paperSub.setEllipsize(android.text.TextUtils.TruncateAt.END);
       add(names, paperSub, -1, 24);
       material.addView(names, new LinearLayout.LayoutParams(0, -2, 1));
-      material.setOnClickListener(v -> chooseStock(false));
-      controls.add(material);
+      if (paperCount > 1) {
+        material.setOnClickListener(v -> chooseStock(false));
+        controls.add(material);
+      }
       add(editor, material, -1, 78);
       TextView linkedPaper = text("相纸与已选择的胶片联动，默认无需选择", AppStyle.TYPE_MICRO, MUTED);
       linkedPaper.setMaxLines(2);
       add(editor, linkedPaper, -1, 40);
-      gap(editor, 14);
+      if (FilmStockPolicy.monochrome(settings.optString("film_stock"))) {
+        paperGradeChoice();
+        gap(editor, 7);
+      } else {
+        gap(editor, 14);
+      }
       slider("print_brightness", "印相亮度", -2, 2, .05, " EV");
-      slider("m_filter_shift", "洋红滤色", -.25, .25, .01, "");
-      slider("y_filter_shift", "黄色滤色", -.25, .25, .01, "");
+      if (!monochromeFilm()) {
+        slider("m_filter_shift", "洋红滤色", -.25, .25, .01, "");
+        slider("y_filter_shift", "黄色滤色", -.25, .25, .01, "");
+      }
     } else if (selectedTab == 2) {
       buildGradePanel();
     } else if (selectedTab == 4) {
@@ -1490,11 +1732,13 @@ public final class MainActivity extends Activity {
           "以物理画幅缩放颗粒与光晕，保留各胶片的特性。");
       slider("grain_amount", "银盐颗粒", 0, 2, .05, " ×");
       slider("halation_amount", "高光光晕", 0, 4, .1, " ×");
-      slider("halation_boost_ev", "光晕曝光增益", 0, 8, .1, " EV");
+      if (FilmStockPolicy.cinestill800t(settings.optString("film_stock")))
+        slider("halation_headroom_ev", "高光余量", 0, 8, .1, " EV");
+      slider("halation_boost_ev", "光晕增强", 0, 8, .1, " EV");
       slider("halation_scatter_amount", "乳剂散射", 0, 1, .05, "");
       toggle("antihalation_removed", "移除防光晕层", false);
       slider("dir_couplers_amount", "显影耦合", 0, 4, .1, " ×");
-      slider("density_curve_gamma", "胶片密度曲线", .2, 4, .05, " ×");
+      slider("density_curve_gamma", "胶片反差", .2, 4, .05, " ×");
       slider("lens_blur_um", "镜头柔化", 0, 40, .5, " μm");
       slider("scanner_lens_blur", "扫描柔化", 0, 5, .1, " px");
       if (!positiveFilm()) {
@@ -1503,9 +1747,13 @@ public final class MainActivity extends Activity {
       }
       // 测光：上游把「关闭」也当成一个档位（Custom），所以这里是一排意图而不是开关 + 下拉，
       // 免得开关关着、下面那行还亮着却不起作用。
+      gap(editor, 8);
       TextView meterLabel = text("测光", AppStyle.TYPE_LABEL, MUTED);
+      meterLabel.setTag("editor.meter.label");
       add(editor, meterLabel, -1, 22);
+      gap(editor, 8);
       LinearLayout meters = horizontal();
+      meters.setTag("editor.meter.options");
       String[] meterNames = {"关闭", "均衡", "中央主体", "保护高光", "保护阴影"};
       String[] meterIds = {"custom", "balanced", "center", "protect_highlights", "protect_shadows"};
       String activeMeter = meterState();
@@ -1533,7 +1781,7 @@ public final class MainActivity extends Activity {
         meters.addView(chip, chipLayout);
       }
       add(editor, meters, -1, 38);
-      gap(editor, 9);
+      gap(editor, 14);
       LinearLayout format = horizontal();
       TextView label = text("胶片画幅", AppStyle.TYPE_LABEL, INK);
       format.addView(label, new LinearLayout.LayoutParams(0, dp(40), 1));
@@ -1590,6 +1838,174 @@ public final class MainActivity extends Activity {
     gap(editor, 12);
   }
 
+  private void blackWhiteFilterChoice() {
+    String[] ids = {"", "w8", "w21", "w25", "w58", "w47"};
+    String[] values = {"无", "黄色", "橙色", "红色", "绿色", "蓝色"};
+    String[] names = {
+      "无滤镜：保持原始明暗关系",
+      "黄色：压暗蓝天，增强云层",
+      "橙色：加强天空反差，增加远景层次",
+      "红色：强烈压暗蓝天，突出暖色主体",
+      "绿色：提亮绿色植被，压暗红橙",
+      "蓝色：压暗暖色，突出雾气与冷调"
+    };
+    String current = FilmStockPolicy.cameraFilter(
+        settings.optString("film_stock"), settings.optString("camera_filter"));
+    int selected = Math.max(0, Arrays.asList(ids).indexOf(current));
+
+    LinearLayout row = horizontal();
+    row.setPadding(0, 0, 0, 0);
+    row.setFocusable(true);
+    row.setClickable(true);
+    row.setTag("black_white_filter");
+    row.setContentDescription("黑白滤镜，当前" + values[selected]);
+    TextView label = text("黑白滤镜", AppStyle.TYPE_BODY, INK);
+    AppStyle.setTypeface(label, AppStyle.FONT_MEDIUM);
+    row.addView(label, new LinearLayout.LayoutParams(0, dp(44), 1));
+
+    TextView value = text(values[selected], AppStyle.TYPE_LABEL, GOLD);
+    AppStyle.setTypeface(value, AppStyle.FONT_MEDIUM);
+    value.setGravity(Gravity.CENTER);
+    value.setPadding(dp(13), 0, dp(13), 0);
+    value.setMinWidth(dp(58));
+    GradientDrawable valueShape = AppStyle.pill(this, AppStyle.CONTROL, false);
+    valueShape.setStroke(Math.max(1, dp(.6f)), AppStyle.OUTLINE);
+    value.setBackground(valueShape);
+    row.addView(value, new LinearLayout.LayoutParams(-2, dp(32), 0));
+    controls.add(row);
+    row.setOnClickListener(
+        v ->
+            new Haptics.DialogBuilder(this)
+                .setTitle("黑白滤镜")
+                .setSingleChoiceItems(
+                    names,
+                    selected,
+                    (dialog, which) -> {
+                      set("camera_filter", ids[which]);
+                      scheduleRender();
+                      buildPanel();
+                      dialog.dismiss();
+                    })
+                .setNegativeButton("取消", null)
+                .show());
+    add(editor, row, -1, 44);
+    gap(editor, 4);
+  }
+
+  private void paperGradeChoice() {
+    String[] ids = {"00", "1", "2", "4", "5"};
+    String[] names = {"低反差", "较低", "标准", "较高", "高反差"};
+    String current = FilmStockPolicy.paperGrade(
+        settings.optString("film_stock"), settings.optString("paper_grade"));
+
+    LinearLayout heading = horizontal();
+    TextView label = text("相纸反差", AppStyle.TYPE_BODY, INK);
+    AppStyle.setTypeface(label, AppStyle.FONT_MEDIUM);
+    heading.addView(label, new LinearLayout.LayoutParams(0, dp(36), 1));
+    TextView description =
+        text(
+            paperGradeDescription(current),
+            AppStyle.TYPE_MICRO,
+            GOLD);
+    description.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+    description.setTag("paper_grade_description");
+    description.setMaxLines(2);
+    description.setSingleLine(false);
+    heading.addView(description, new LinearLayout.LayoutParams(-2, dp(36), 0));
+    add(editor, heading, -1, 36);
+    gap(editor, 2);
+
+    HorizontalScrollView gradeScroll = new HorizontalScrollView(this);
+    gradeScroll.setTag("paper_grade_scroll");
+    gradeScroll.setHorizontalScrollBarEnabled(false);
+    gradeScroll.setClipToPadding(false);
+    LinearLayout grades = horizontal();
+    grades.setPadding(0, 0, dp(4), 0);
+    for (int i = 0; i < ids.length; i++) {
+      boolean on = ids[i].equals(current);
+      TextView chip = button(names[i], on ? GOLD : MUTED, AppStyle.CONTROL);
+      chip.setTextSize(AppStyle.TYPE_MICRO);
+      chip.setPadding(0, 0, 0, 0);
+      chip.setMinWidth(0);
+      chip.setMinHeight(0);
+      chip.setSingleLine(true);
+      chip.setSelected(on);
+      AppStyle.setTypeface(chip, on ? AppStyle.FONT_BOLD : AppStyle.FONT_MEDIUM);
+      GradientDrawable shape = AppStyle.pill(this, AppStyle.CONTROL, false);
+      shape.setStroke(dp(on ? 1 : .6f), on ? GOLD : AppStyle.OUTLINE);
+      chip.setBackground(shape);
+      chip.setContentDescription(
+          "相纸反差 " + names[i] + (on ? "，已选，" + paperGradeDescription(ids[i]) : ""));
+      final int index = i;
+      chip.setOnClickListener(
+          v -> {
+            int base = gradeScroll.getScrollX(), target = base;
+            int total = grades.getChildCount(), first = 0, last = total - 1;
+            for (int child = 0; child < total; child++)
+              if (grades.getChildAt(child).getRight() > base + 1) {
+                first = child;
+                break;
+              }
+            int rightEdge = base + gradeScroll.getWidth();
+            for (int child = total - 1; child >= 0; child--)
+              if (grades.getChildAt(child).getLeft() < rightEdge - 1) {
+                last = child;
+                break;
+              }
+            int step = dp(55);
+            if (index == first && index > 0) target = Math.max(0, base - step);
+            else if (index == last && index < total - 1) target = base + step;
+            paperGradeScrollX = target;
+            set("paper_grade", ids[index]);
+            scheduleRender();
+            buildPanel();
+          });
+      LinearLayout.LayoutParams chipLayout = new LinearLayout.LayoutParams(dp(49), dp(36));
+      if (i < ids.length - 1) chipLayout.rightMargin = dp(6);
+      grades.addView(chip, chipLayout);
+    }
+    gradeScroll.addView(grades);
+    gradeScroll
+        .getViewTreeObserver()
+        .addOnGlobalLayoutListener(
+            new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+              public void onGlobalLayout() {
+                if (gradeScroll.getWidth() > 0 && grades.getWidth() > 0) {
+                  restorePaperGradePosition(
+                      gradeScroll, grades, Arrays.asList(ids).indexOf(current));
+                  gradeScroll.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                }
+              }
+            });
+    gradeScroll.setOnScrollChangeListener((v, x, y, oldX, oldY) -> paperGradeScrollX = x);
+    add(editor, gradeScroll, -1, 38);
+  }
+
+  private void restorePaperGradePosition(
+      HorizontalScrollView gradeScroll, LinearLayout grades, int selected) {
+    if (selected < 0 || selected >= grades.getChildCount()) return;
+    int viewport = gradeScroll.getWidth();
+    int maximum = Math.max(0, grades.getWidth() - viewport);
+    int target = Math.max(0, Math.min(paperGradeScrollX, maximum));
+    View chip = grades.getChildAt(selected);
+    // Preserve a manually chosen middle position, but never rebuild the panel with the selected
+    // grade hidden just outside the viewport (for example after restored settings or larger text).
+    if (chip.getLeft() < target) target = chip.getLeft();
+    else if (chip.getRight() > target + viewport) target = chip.getRight() - viewport;
+    paperGradeScrollX = Math.max(0, Math.min(target, maximum));
+    gradeScroll.scrollTo(paperGradeScrollX, 0);
+  }
+
+  private static String paperGradeDescription(String grade) {
+    return switch (grade) {
+      case "00" -> "高光柔和，暗部较松";
+      case "1" -> "轻微柔化";
+      case "4" -> "明显增强层次和力量感";
+      case "5" -> "最硬朗，保留黑白摄影的极端风格";
+      default -> "默认，保持当前黑白效果";
+    };
+  }
+
   private void toggle(String key, String label, boolean fallback) {
     Switch sw = new Switch(this);
     sw.setText(label);
@@ -1634,11 +2050,11 @@ public final class MainActivity extends Activity {
 
   private void buildGradePanel() {
     LinearLayout groups = horizontal();
-    String[] sections = {"基础", "曲线", "色彩平衡", "HSL 分色", "暗角"};
+    String[] sections = {"基础", "曲线", "颜色分级", "颜色混合", "暗角"};
     for (String name : sections) {
       TextView tab =
           button(
-              name.equals("HSL 分色") ? "HSL" : name,
+              name.equals("颜色混合") ? "HSL" : name,
               gradeSection.equals(name) ? GOLD : MUTED,
               gradeSection.equals(name) ? AppStyle.SELECTED : BG);
       tab.setTextSize(AppStyle.TYPE_MICRO);
@@ -1658,15 +2074,15 @@ public final class MainActivity extends Activity {
     gap(editor, 8);
     toggle("grade_enabled", "启用调整", true);
     if (gradeSection.equals("基础")) {
-      slider("grade_temperature", "冷暖", -100, 100, 1, "");
-      slider("grade_tint", "绿 / 洋红", -100, 100, 1, "");
-      slider("grade_exposure", "扫描曝光", -5, 5, .05, " EV");
+      slider("grade_temperature", "色温", -100, 100, 1, "");
+      slider("grade_tint", "色调", -100, 100, 1, "");
+      slider("grade_exposure", "曝光", -5, 5, .05, " EV");
       slider("grade_contrast", "对比度", -50, 50, 1, "");
       slider("grade_brightness", "亮度", -50, 50, 1, "");
       slider("grade_shadows", "阴影", -100, 100, 1, "");
       slider("grade_highlights", "高光", -100, 100, 1, "");
-      slider("grade_black", "黑场截点", 0, 50, 1, " %");
-      slider("grade_white", "白场截点", 0, 50, 1, " %");
+      slider("grade_black", "黑点", 0, 50, 1, " %");
+      slider("grade_white", "白点", 0, 50, 1, " %");
       slider("grade_saturation", "饱和度", -100, 100, 1, "");
     } else if (gradeSection.equals("曲线")) {
       String[] ids = {"rgb", "luma", "r", "g", "b"},
@@ -1730,9 +2146,9 @@ public final class MainActivity extends Activity {
       add(editor, holder[0], -1, curveChartHeight());
       controls.add(holder[0]);
       showCurveHint();
-    } else if (gradeSection.equals("色彩平衡")) {
+    } else if (gradeSection.equals("颜色分级")) {
       String[] ids = {"master", "shadows", "midtones", "highlights"},
-          names = {"整体", "阴影", "中间调", "高光"};
+          names = {"全局", "阴影", "中间调", "高光"};
       TextView zone =
           button(
               "区域   " + names[Math.max(0, Arrays.asList(ids).indexOf(balanceZone))] + "",
@@ -1742,7 +2158,7 @@ public final class MainActivity extends Activity {
       zone.setOnClickListener(
           v ->
               new Haptics.DialogBuilder(this)
-                  .setTitle("色彩平衡区域")
+                  .setTitle("颜色分级区域")
                   .setItems(
                       names,
                       (d, n) -> {
@@ -1753,9 +2169,9 @@ public final class MainActivity extends Activity {
       gap(editor, 12);
       String key = "balance_" + balanceZone;
       slider(key + "_hue", "色相", 0, 360, 1, " °");
-      slider(key + "_saturation", "着色强度", 0, 100, 1, "");
-      slider(key + "_luminance", "区域亮度", -100, 100, 1, "");
-    } else if (gradeSection.equals("HSL 分色")) {
+      slider(key + "_saturation", "饱和度", 0, 100, 1, "");
+      slider(key + "_luminance", "明亮度", -100, 100, 1, "");
+    } else if (gradeSection.equals("颜色混合")) {
       String[] ids = {"red", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta"},
           names = {"红", "橙", "黄", "绿", "青", "蓝", "紫", "洋红"};
       TextView band =
@@ -1767,7 +2183,7 @@ public final class MainActivity extends Activity {
       band.setOnClickListener(
           v ->
               new Haptics.DialogBuilder(this)
-                  .setTitle("HSL 分色")
+                  .setTitle("颜色混合（HSL）")
                   .setItems(
                       names,
                       (d, n) -> {
@@ -1777,11 +2193,11 @@ public final class MainActivity extends Activity {
                   .show());
       gap(editor, 12);
       String key = "hsl_" + hslBand;
-      slider(key + "_hue", "色相偏移", -100, 100, 1, "");
-      slider(key + "_saturation", "分色饱和度", -100, 100, 1, "");
-      slider(key + "_luminance", "分色明度", -100, 100, 1, "");
+      slider(key + "_hue", "色相", -100, 100, 1, "");
+      slider(key + "_saturation", "饱和度", -100, 100, 1, "");
+      slider(key + "_luminance", "明亮度", -100, 100, 1, "");
     } else {
-      slider("grade_vignette", "暗角 / 亮角", -100, 100, 1, "");
+      slider("grade_vignette", "暗角", -100, 100, 1, "");
       slider("grade_vignette_midpoint", "暗角范围", 0, 100, 1, "");
     }
   }
@@ -1980,15 +2396,15 @@ public final class MainActivity extends Activity {
         new String[] {"none", "135_black", "135_warm", "clean_white", "instant"},
         "edge_style");
     if (!settings.optString("edge_style", "none").equals("none")) {
-      slider("edge_amount", "片边宽度", 2, 15, .5, " %");
+      slider("edge_amount", "边框宽度", 2, 15, .5, " %");
       if (settings.optString("edge_style").startsWith("135"))
         slider("edge_frame_number", "底片编号", 1, 99, 1, "");
       if (settings.optString("edge_style").equals("instant")) {
         TextView caption =
-            button("相纸题注  " + settings.optString("edge_caption", "添加英文或数字"), INK, AppStyle.CONTROL);
+            button("相纸文字  " + settings.optString("edge_caption", "添加英文或数字"), INK, AppStyle.CONTROL);
         add(editor, caption, -1, 39);
         caption.setOnClickListener(
-            v -> editTextValue("edge_caption", "相纸题注", 42, "支持英文、数字、空格及 - . /，最多 42 字符"));
+            v -> editTextValue("edge_caption", "相纸文字", 42, "支持英文、数字、空格及 - . /，最多 42 字符"));
       }
     }
     gap(editor, 8);
@@ -2052,8 +2468,20 @@ public final class MainActivity extends Activity {
       aboutPage.navigateBack();
       return;
     }
+    if (batchImportRunning) {
+      cancelBatchImport();
+      return;
+    }
     if (activeImport != null) {
       cancelImport("已取消导入");
+      return;
+    }
+    if (manageMode) {
+      exitManageMode();
+      return;
+    }
+    if (batchPasteMode) {
+      exitBatchPaste();
       return;
     }
     if (homeScreen.getVisibility() != View.VISIBLE) showHome();
@@ -2286,6 +2714,8 @@ public final class MainActivity extends Activity {
   private String shortName(String name) {
     return name.replace("Kodak ", "")
         .replace("Fujifilm ", "")
+        .replace("Ilford ", "")
+        .replace("Neopan 100 Acros II", "Acros II 100")
         .replace("Professional ", "")
         .replace("Crystal Archive Type II", "Crystal Archive")
         // Push 版本的名字带「(Push 1)」，在 71dp 的卡片里必然折行；图标上已经有 +1/+2 角标，
@@ -2294,7 +2724,7 @@ public final class MainActivity extends Activity {
   }
 
   private String maker(Stock s) {
-    return s.name.startsWith("Fujifilm") ? "FUJIFILM" : "KODAK";
+    return s.id.substring(0, s.id.indexOf('_')).toUpperCase(Locale.ROOT);
   }
 
   private void updateStockLabels() {
@@ -2302,7 +2732,7 @@ public final class MainActivity extends Activity {
         p = find(papers, settings.optString("print_stock"));
     if (f != null && filmTitle != null) {
       filmTitle.setText(shortName(f.name));
-      filmSub.setText(maker(f) + ("positive".equals(f.type) ? " · 反转片" : " · 彩色负片"));
+      filmSub.setText(maker(f) + " · " + category(f));
     }
     if (p != null && paperTitle != null) {
       paperTitle.setText(shortName(p.name));
@@ -2314,7 +2744,7 @@ public final class MainActivity extends Activity {
 
   private void chooseStock(boolean isFilm) {
     if (exporting) return;
-    ArrayList<Stock> list = isFilm ? films : papers;
+    ArrayList<Stock> list = isFilm ? films : availablePapers();
     String key = isFilm ? "film_stock" : "print_stock";
     String[] names = new String[list.size()];
     int selected = -1;
@@ -2344,14 +2774,43 @@ public final class MainActivity extends Activity {
     return stock != null && stock.type.equals("positive");
   }
 
+  private boolean monochromeFilm() {
+    return FilmStockPolicy.monochrome(settings.optString("film_stock"));
+  }
+
+  private ArrayList<Stock> availablePapers() {
+    ArrayList<Stock> available = new ArrayList<>();
+    for (Stock paper : papers)
+      if (FilmStockPolicy.canPrint(settings.optString("film_stock"), paper.id))
+        available.add(paper);
+    return available;
+  }
+
+  private void normalizePaper() {
+    Stock film = find(films, settings.optString("film_stock"));
+    if (film == null) return;
+    String paper = settings.optString("print_stock");
+    if (find(papers, paper) == null) paper = "";
+    try {
+      settings.put("print_stock", FilmStockPolicy.paperFor(film.id, film.target, paper));
+    } catch (JSONException ex) {
+      throw new IllegalStateException(ex);
+    }
+  }
+
   private String params() {
-    return params(settings, find(films, settings.optString("film_stock")));
+    return params(settings, find(films, settings.optString("film_stock")), sourceRaw);
   }
 
   private String params(JSONObject recipe, Stock stock) {
+    return params(recipe, stock, sourceRaw);
+  }
+
+  private String params(JSONObject recipe, Stock stock, boolean raw) {
     try {
       JSONObject j = new JSONObject();
       boolean positive = stock != null && stock.type.equals("positive");
+      String filmStock = recipe.optString("film_stock");
       String[] keys = {
         "film_stock",
         "print_stock",
@@ -2374,9 +2833,8 @@ public final class MainActivity extends Activity {
         "preflash_exposure"
       };
       for (String k : keys) if (recipe.has(k)) j.put(k, recipe.get(k));
-      j.put("print_exposure", Math.pow(2, -recipe.optDouble("print_brightness", 0)));
-      j.put("input_color_space", sourceRaw ? "ProPhoto RGB" : "sRGB");
-      j.put("input_cctf_decoding", !sourceRaw);
+      j.put("input_color_space", raw ? "ProPhoto RGB" : "sRGB");
+      j.put("input_cctf_decoding", !raw);
       j.put("output_color_space", "sRGB");
       j.put("output_cctf_encoding", true);
       j.put("preview_long_edge", 1024);
@@ -2389,6 +2847,19 @@ public final class MainActivity extends Activity {
       j.put("contrast_mask_active", false);
       j.put("overscan_active", false);
       j.put("date_imprint_active", false);
+      for (Map.Entry<String, Object> override :
+          FilmStockPolicy.renderOverrides(
+                  filmStock,
+                  stock == null ? "" : stock.target,
+                  recipe.optString("print_stock"),
+                  recipe.optDouble("grain_amount", 1),
+                  recipe.optString("camera_filter"),
+                  recipe.optString("paper_grade", FilmStockPolicy.DEFAULT_PAPER_GRADE),
+                  recipe.optDouble("print_brightness", 0),
+                  recipe.optDouble("halation_headroom_ev", 4))
+              .entrySet()) {
+        j.put(override.getKey(), override.getValue());
+      }
       return j.toString();
     } catch (JSONException ex) {
       throw new IllegalStateException(ex);
@@ -2402,16 +2873,22 @@ public final class MainActivity extends Activity {
   }
 
   private String editParams() {
+    return editParams(settings, sourceMetadata);
+  }
+
+  private String editParams(JSONObject recipe, JSONObject metadata) {
     try {
-      JSONObject j = new JSONObject(settings.toString());
-      j.put("film_label", currentFilmName());
-      j.put("source_make", sourceMetadata.optString("make"));
-      j.put("source_model", sourceMetadata.optString("model"));
-      j.put("source_iso", sourceMetadata.optDouble("iso"));
-      j.put("source_aperture", sourceMetadata.optDouble("aperture"));
-      j.put("source_shutter", sourceMetadata.optDouble("shutter"));
-      j.put("source_focal_mm", sourceMetadata.optDouble("focal_mm"));
-      long date = sourceMetadata.optLong("timestamp");
+      JSONObject j = new JSONObject(recipe.toString());
+      Stock stock = find(films, recipe.optString("film_stock"));
+      j.put("film_label", stock == null ? "" : shortName(stock.name));
+      JSONObject source = metadata == null ? new JSONObject() : metadata;
+      j.put("source_make", source.optString("make"));
+      j.put("source_model", source.optString("model"));
+      j.put("source_iso", source.optDouble("iso"));
+      j.put("source_aperture", source.optDouble("aperture"));
+      j.put("source_shutter", source.optDouble("shutter"));
+      j.put("source_focal_mm", source.optDouble("focal_mm"));
+      long date = source.optLong("timestamp");
       if (date > 0)
         j.put(
             "source_datetime",
@@ -2440,6 +2917,9 @@ public final class MainActivity extends Activity {
     for (Bitmap stale : filmThumbs.values()) Bitmaps.release(stale);
     filmThumbs.clear();
     thumbFailed.clear();
+    thumbDiskChecked.clear();
+    thumbDiskPending.clear();
+    thumbStockDiskKeys.clear();
   }
 
   private void refillThumbs() {
@@ -2457,12 +2937,16 @@ public final class MainActivity extends Activity {
       int sizePx) {
     if (!galleryVisible() || scroll != filmScrollRef || scroll.getWidth() <= 0) return;
     syncThumbCache();
-    int left = scroll.getScrollX() - dp(60);
-    int right = scroll.getScrollX() + scroll.getWidth() + dp(60);
-    for (int i = 0; i < views.size(); i++) {
-      int l = i * stridePx, r = l + sizePx;
-      if (r < left || l > right) continue;
-      requestFilmThumb(stocks.get(i), views.get(i));
+    int left = scroll.getScrollX(), right = left + scroll.getWidth();
+    // Selected visible card first, then actual viewport, then the prefetch margin.
+    for (int pass = 0; pass < 3; pass++) {
+      for (int i = 0; i < views.size(); i++) {
+        int l = i * stridePx, r = l + sizePx;
+        boolean visible = r > left && l < right;
+        int priority = visible ? (stocks.get(i).equals(settings.optString("film_stock")) ? 0 : 1) : 2;
+        if (pass != priority || r < left - dp(60) || l > right + dp(60)) continue;
+        requestFilmThumb(stocks.get(i), views.get(i));
+      }
     }
   }
 
@@ -2473,13 +2957,16 @@ public final class MainActivity extends Activity {
       return;
     }
     // One thumbnail at a time lets a newly requested main preview jump ahead of the rest.
-    if (thumbBusy
-        || thumbFailed.contains(stock)
+    if (thumbFailed.contains(stock)
         || source == null
         || !ready
-        || exporting
-        || activeImport != null
-        || previewWorkTicket == revision) return;
+        || activeImport != null) return;
+    String knownKey = thumbStockDiskKeys.get(stock);
+    if (knownKey != null && thumbDiskPending.containsKey(knownKey)) return;
+    boolean waitForPreview = thumbBusy || exporting || mainPreviewPending()
+        || previewWorkTicket == revision || thumbWrites.get() >= 2;
+    if (waitForPreview && (sourceFile == null
+        || (knownKey != null && thumbDiskChecked.contains(knownKey)))) return;
     final String renderParams, openParams1;
     try {
       Stock choice = find(films, stock);
@@ -2494,8 +2981,11 @@ public final class MainActivity extends Activity {
       recipe.put("print_brightness", 0);
       recipe.put("m_filter_shift", 0);
       recipe.put("y_filter_shift", 0);
+      recipe.put("camera_filter", "");
+      recipe.put("paper_grade", FilmStockPolicy.DEFAULT_PAPER_GRADE);
       recipe.put("grain_amount", 1);
       recipe.put("halation_amount", 1);
+      recipe.put("halation_headroom_ev", 4);
       recipe.put("film_format_mm", 36);
       recipe.put("auto_exposure", sourceRaw);
       recipe.put("auto_exposure_method", "balanced");
@@ -2519,6 +3009,52 @@ public final class MainActivity extends Activity {
     final int generation = thumbGeneration;
     final String fingerprint = thumbPrint;
     final int postLongEdge = galleryThumbEdge();
+    final SpectralRenderer activeRenderer = renderer;
+    final String backendKey = galleryBackendKey();
+    final String photoKey = file == null ? null : ThumbnailDiskCache.key(file.getAbsolutePath());
+    final String diskKey = file == null ? null : photoKey + "-" + ThumbnailDiskCache.key(
+        "neutral-gallery-v1", file.getAbsolutePath(), Long.toString(file.length()),
+        Long.toString(file.lastModified()), backendKey, renderParams, Integer.toString(postLongEdge));
+    if (diskKey != null) thumbStockDiskKeys.put(stock, diskKey);
+    if (diskKey != null && !thumbDiskChecked.contains(diskKey)) {
+      if (!thumbDiskPending.containsKey(diskKey)) {
+        thumbDiskPending.put(diskKey, generation);
+        thumbnailIo.execute(() -> {
+          Bitmap saved = null;
+          File entry = filmDiskCache.get(diskKey);
+          if (entry != null) {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(entry.getAbsolutePath(), bounds);
+            if (bounds.outWidth > 0 && bounds.outHeight > 0
+                && Math.max(bounds.outWidth, bounds.outHeight) <= 512)
+              saved = BitmapFactory.decodeFile(entry.getAbsolutePath());
+            if (saved == null) filmDiskCache.remove(diskKey);
+          }
+          Bitmap hit = saved;
+          thumbnailDeliveries.post(main, hit, () -> {
+            if (Integer.valueOf(generation).equals(thumbDiskPending.get(diskKey)))
+              thumbDiskPending.remove(diskKey);
+            boolean current = !destroyed && generation == thumbGeneration
+                && fingerprint.equals(thumbFingerprint()) && backendKey.equals(galleryBackendKey());
+            if (current) {
+              thumbDiskChecked.add(diskKey);
+              if (hit != null) {
+                ++thumbDiskHits;
+                cacheFilmThumb(stock, hit);
+                ImageView live = thumbTargets.get(stock);
+                if (live != null && stock.equals(live.getTag())) live.setImageBitmap(hit);
+              }
+            } else Bitmaps.release(hit);
+            if (!destroyed) refillThumbs();
+          });
+        });
+      }
+      return;
+    }
+    // Disk hits need no renderer slot; only cache misses wait for the main preview.
+    if (thumbBusy || exporting || mainPreviewPending() || previewWorkTicket == revision
+        || thumbWrites.get() >= 2) return;
     thumbBusy = true;
     thumbQueued.add(stock);
     worker.execute(
@@ -2526,18 +3062,46 @@ public final class MainActivity extends Activity {
           Bitmap made = null;
           boolean failed = false;
           try {
-            if (!destroyed && generation == thumbGeneration) {
+            if (!destroyed && generation == thumbGeneration && activeRenderer == renderer
+                && !mainPreviewPending()) {
               // Each stock must reopen the current photo. Always invalidate main-preview state,
               // including errors, because opening a thumbnail changes the engine's fixed stock.
               try {
                 openedSource = null;
                 long started = SystemClock.elapsedRealtime();
-                if (raw) renderer.openRaw(file.getAbsolutePath(), openParams1, 800);
+                if (raw) activeRenderer.openRaw(file.getAbsolutePath(), openParams1, 800);
                 else if (file != null)
-                  renderer.openFile(file.getAbsolutePath(), openParams1, GALLERY_SOURCE_EDGE);
-                else renderer.open(input, openParams1);
+                  activeRenderer.openFile(file.getAbsolutePath(), openParams1, GALLERY_SOURCE_EDGE);
+                else activeRenderer.open(input, openParams1);
                 long opened = SystemClock.elapsedRealtime();
-                made = renderer.render(renderParams, "{}", false, postLongEdge);
+                made = activeRenderer.render(renderParams, "{}", false, postLongEdge);
+                ++thumbRenderCount;
+                if (!destroyed && diskKey != null && backendKey.equals(galleryBackendKey())
+                    && !removedGalleryPhotos.contains(photoKey) && thumbWrites.get() < 2) {
+                  Bitmap diskCopy = made.copy(Bitmap.Config.ARGB_8888, false);
+                  if (diskCopy != null) {
+                    thumbWrites.incrementAndGet();
+                    try {
+                      thumbnailIo.execute(() -> {
+                      try {
+                        if (!destroyed && !removedGalleryPhotos.contains(photoKey))
+                          filmDiskCache.put(diskKey, output ->
+                              diskCopy.compress(Bitmap.CompressFormat.PNG, 100, output)
+                                  && !removedGalleryPhotos.contains(photoKey));
+                      } catch (IOException ex) {
+                        android.util.Log.w("FilmThumb", "Disk cache unavailable", ex);
+                      } finally {
+                        Bitmaps.release(diskCopy);
+                        thumbWrites.decrementAndGet();
+                        main.post(this::refillThumbs);
+                      }
+                      });
+                    } catch (RejectedExecutionException closed) {
+                      Bitmaps.release(diskCopy);
+                      thumbWrites.decrementAndGet();
+                    }
+                  }
+                }
                 long rendered = SystemClock.elapsedRealtime();
                 android.util.Log.i(
                     "FilmThumb",
@@ -2560,7 +3124,7 @@ public final class MainActivity extends Activity {
           }
           final Bitmap result = made;
           final boolean error = failed;
-          main.post(
+          thumbnailDeliveries.post(main, result,
               () -> {
                 thumbBusy = false;
                 thumbQueued.remove(stock);
@@ -2579,6 +3143,11 @@ public final class MainActivity extends Activity {
         });
   }
 
+  private String galleryBackendKey() {
+    SpectralRenderer current = renderer;
+    return filmCacheResources + ":" + (current == null ? "" : current.backend() + ":" + current.capabilities());
+  }
+
   private int galleryThumbEdge() {
     // 88dp cards stay sharp on 4x-density screens without carrying an 800px bitmap for every
     // stock. The engine still renders at its required 800px minimum.
@@ -2586,7 +3155,12 @@ public final class MainActivity extends Activity {
   }
 
   private void cacheFilmThumb(String stock, Bitmap bitmap) {
-    filmThumbs.put(stock, bitmap);
+    Bitmap previous = filmThumbs.put(stock, bitmap);
+    if (previous != null && previous != bitmap) {
+      ImageView target = thumbTargets.get(stock);
+      if (target != null) target.setImageDrawable(null);
+      Bitmaps.release(previous);
+    }
     trimThumbCache();
   }
 
@@ -2619,13 +3193,24 @@ public final class MainActivity extends Activity {
         + ":"
         + System.identityHashCode(source)
         + ":"
-        + (sourceFile == null ? "" : sourceFile.getAbsolutePath());
+        + (sourceFile == null ? "" : sourceFile.getAbsolutePath())
+        + ":" + galleryBackendKey();
+  }
+
+  private boolean mainPreviewPending() {
+    return mainPreviewRevision == revision;
   }
 
   private void scheduleRender() {
+    scheduleRender(null);
+  }
+
+  private void scheduleRender(Runnable onRendered) {
     if (activeImport != null) return;
     String now = settings.toString();
     if (committed != null && !committed.equals(now)) {
+      Frame active = findFrame(activeId);
+      if (active != null) active.edited = true;
       undoStack.push(committed);
       while (undoStack.size() > 30) undoStack.removeLast();
       redoStack.clear();
@@ -2635,6 +3220,7 @@ public final class MainActivity extends Activity {
     prefs.edit().putString("settings", settings.toString()).apply();
     saveActiveFrame();
     int ticket = ++revision;
+    mainPreviewRevision = ticket;
     if (!ready || source == null || exporting) return;
     previewWorkTicket = ticket;
     exportButton.setEnabled(false);
@@ -2658,6 +3244,7 @@ public final class MainActivity extends Activity {
     pending =
         () -> {
           String p = params();
+          String recipeForResult = settings.toString();
           Bitmap input = source;
           String edits = editParams();
           File original = sourceFile;
@@ -2683,6 +3270,8 @@ public final class MainActivity extends Activity {
                         }
                         Bitmap old = developed, oldBefore = compared;
                         developed = image;
+                        developedPhotoId = activeId;
+                        developedRecipe = recipeForResult;
                         compared = before;
                         photo.images(before, image);
                         if (old != image) Bitmaps.release(old);
@@ -2699,10 +3288,22 @@ public final class MainActivity extends Activity {
                         exportButton.setEnabled(true);
                         exportButton.setOnClickListener(v -> exportOptions());
                         previewWorkTicket = -1;
+                        mainPreviewRevision = -1;
                         refillThumbs();
+                        if (homeScreen != null && homeScreen.getVisibility() == View.VISIBLE)
+                          saveDevelopedLook();
+                        pumpHomeThumbnails();
+                        if (onRendered != null) onRendered.run();
                       });
                 } catch (Throwable ex) {
                   if (ticket == revision) {
+                    main.post(() -> {
+                      if (ticket == revision) {
+                        mainPreviewRevision = -1;
+                        previewWorkTicket = -1;
+                        pumpHomeThumbnails();
+                      }
+                    });
                     SpectralRenderer current = renderer;
                     if (current != null && !current.isAlive())
                       ui(
@@ -2825,37 +3426,7 @@ public final class MainActivity extends Activity {
           Bitmaps.release(out.bitmap);
           out.bitmap = normalised;
         }
-        try {
-          androidx.exifinterface.media.ExifInterface exif =
-              new androidx.exifinterface.media.ExifInterface(file.getAbsolutePath());
-          out.meta.put(
-              "make", exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_MAKE));
-          out.meta.put(
-              "model", exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_MODEL));
-          String date =
-              exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_DATETIME_ORIGINAL);
-          if (date != null)
-            out.meta.put(
-                "timestamp",
-                new SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).parse(date).getTime());
-          out.meta.put(
-              "iso",
-              exif.getAttributeDouble(
-                  androidx.exifinterface.media.ExifInterface.TAG_ISO_SPEED_RATINGS, 0));
-          out.meta.put(
-              "aperture",
-              exif.getAttributeDouble(androidx.exifinterface.media.ExifInterface.TAG_F_NUMBER, 0));
-          out.meta.put(
-              "shutter",
-              exif.getAttributeDouble(
-                  androidx.exifinterface.media.ExifInterface.TAG_EXPOSURE_TIME, 0));
-          out.meta.put(
-              "focal_mm",
-              exif.getAttributeDouble(
-                  androidx.exifinterface.media.ExifInterface.TAG_FOCAL_LENGTH, 0));
-        } catch (Exception ignored) {
-          // 单条 EXIF 缺失不影响导入，按默认值继续
-        }
+        readRasterMetadata(file, out.meta);
       }
       if (out.bitmap == null) throw new IOException("照片解码没有返回图像");
       return out;
@@ -2864,7 +3435,54 @@ public final class MainActivity extends Activity {
     }
   }
 
+  /** Batch rendering needs metadata, not a second decoded source bitmap. */
+  private JSONObject readPhotoMetadata(File file) throws IOException, JSONException {
+    if (!PhotoFormats.isRaster(file))
+      return new JSONObject(NativeEngine.inspectRaw(file.getAbsolutePath()));
+    JSONObject meta = new JSONObject();
+    readRasterMetadata(file, meta);
+    return meta;
+  }
+
+  private void readRasterMetadata(File file, JSONObject meta) {
+    try {
+      androidx.exifinterface.media.ExifInterface exif =
+          new androidx.exifinterface.media.ExifInterface(file.getAbsolutePath());
+      meta.put(
+          "make", exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_MAKE));
+      meta.put(
+          "model", exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_MODEL));
+      String date =
+          exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_DATETIME_ORIGINAL);
+      if (date != null)
+        meta.put(
+            "timestamp",
+            new SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).parse(date).getTime());
+      meta.put(
+          "iso",
+          exif.getAttributeDouble(
+              androidx.exifinterface.media.ExifInterface.TAG_ISO_SPEED_RATINGS, 0));
+      meta.put(
+          "aperture",
+          exif.getAttributeDouble(androidx.exifinterface.media.ExifInterface.TAG_F_NUMBER, 0));
+      meta.put(
+          "shutter",
+          exif.getAttributeDouble(
+              androidx.exifinterface.media.ExifInterface.TAG_EXPOSURE_TIME, 0));
+      meta.put(
+          "focal_mm",
+          exif.getAttributeDouble(
+              androidx.exifinterface.media.ExifInterface.TAG_FOCAL_LENGTH, 0));
+    } catch (Exception ignored) {
+      // 单条 EXIF 缺失不影响导入，按默认值继续
+    }
+  }
+
   private void adopt(LoadedPhoto image) {
+    adopt(image, true);
+  }
+
+  private void adopt(LoadedPhoto image, boolean syncHomeHero) {
     if (photo != null) photo.cancelPendingSingleTap();
     Bitmap previous = source;
     if (developed != null) {
@@ -2876,7 +3494,7 @@ public final class MainActivity extends Activity {
       compared = null;
     }
     source = image.bitmap;
-    if (homeHero != null) {
+    if (syncHomeHero && homeHero != null) {
       boolean changed = homeImages.bind(homeHero, image.file, null, null, true);
       if (changed
           || homeHero.getDrawable() == null
@@ -2917,7 +3535,7 @@ public final class MainActivity extends Activity {
   private String demoName() {
     try {
       getAssets().open("demo.jpg").close();
-      return "阿尔卑斯山 · 示例照片";
+      return "胶片边缘 · 示例照片";
     } catch (IOException ex) {
       return "内置静物色卡 · 合成参考图";
     }
@@ -2928,47 +3546,21 @@ public final class MainActivity extends Activity {
   }
 
   private void importPhoto(String initialSettings) {
-    if (exporting) return;
+    if (exporting || manageMode) return;
     if (gallerySheet != null && gallerySheet.isShowing()) return;
-    ArrayList<GalleryPhotos.Photo> imported = new ArrayList<>();
-    for (Frame frame : library) {
-      File thumbnail = new File(new File(getFilesDir(), "thumbnails"), frame.id + ".jpg");
-      File look = developedLook(frame.id);
-      imported.add(
-          GalleryPhotos.Photo.imported(
-              frame.id,
-              frame.name,
-              look.isFile()
-                  ? look
-                  : thumbnail.isFile() ? thumbnail : new File(frame.path)));
-    }
-    File demo = new File(getCacheDir(), "demo.jpg");
-    if (demo.isFile()) imported.add(GalleryPhotos.Photo.imported("demo", "内置示例照片", demo));
     gallerySheet =
         new GallerySheet(
             this,
-            imported,
-            activeId,
+            initialSettings == null ? MAX_BATCH_IMPORT : 1,
             new GallerySheet.Listener() {
-              public void picked(GalleryPhotos.Photo selected) {
-                if (selected.uri != null) importUri(selected.uri, initialSettings);
-                else if ("demo".equals(selected.frameId)) {
-                  showEditor();
-                  loadDemoAction(initialSettings);
-                } else
-                  for (Frame frame : library)
-                    if (frame.id.equals(selected.frameId)) {
-                      openFrame(frame, initialSettings);
-                      break;
-                    }
-              }
-
-              public void files() {
-                chooseFile(initialSettings);
-              }
-
-              public void systemPicker() {
-                chooseSystemPhoto(initialSettings);
+              public void importPhotos(List<GalleryPhotos.Photo> photos) {
+                if (photos == null || photos.isEmpty()) return;
+                if (initialSettings != null) {
+                  if (photos.size() == 1 && photos.get(0).uri != null)
+                    importUri(photos.get(0).uri, initialSettings);
+                  return;
+                }
+                importPhotosBatch(photos);
               }
 
               public void permission() {
@@ -2980,35 +3572,424 @@ public final class MainActivity extends Activity {
         && !prefs.getBoolean("gallery_permission_requested", false)) requestGalleryPermission();
   }
 
-  private void chooseFile() {
-    chooseFile(null);
+  private void importPhotosBatch(List<GalleryPhotos.Photo> photos) {
+    if (exporting || batchImportRunning || photos == null || photos.isEmpty()) return;
+    if (photos.size() > MAX_BATCH_IMPORT)
+      photos = new ArrayList<>(photos.subList(0, MAX_BATCH_IMPORT));
+    showHome();
+    saveActiveFrame();
+    final int generation = ++batchImportGeneration;
+    final String defaults = pristineParamsJson();
+    final ArrayList<GalleryPhotos.Photo> queue = new ArrayList<>(photos);
+    batchImportRunning = true;
+    batchPasteMode = false;
+    batchSelection.clear();
+    refreshHistory();
+    startHomeImportProgress(queue.size());
+    worker.execute(() -> runBatchImport(queue, generation, defaults));
   }
 
-  private void chooseFile(String initialSettings) {
-    pickerSettings = initialSettings;
-    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-    intent.addCategory(Intent.CATEGORY_OPENABLE);
-    intent.setType("*/*");
-    startActivityForResult(intent, 10);
+  private String pristineParamsJson() {
+    JSONObject previous = settings;
+    String previousCategory = filmCategory;
+    settings = new JSONObject();
+    defaults();
+    String result = settings.toString();
+    settings = previous;
+    filmCategory = previousCategory;
+    return result;
   }
 
-  private void chooseSystemPhoto() {
-    chooseSystemPhoto(null);
-  }
-
-  private void chooseSystemPhoto(String initialSettings) {
-    pickerSettings = initialSettings;
-    Intent intent =
-        new Intent(
-            Build.VERSION.SDK_INT >= 33
-                ? MediaStore.ACTION_PICK_IMAGES
-                : Intent.ACTION_GET_CONTENT);
-    intent.setType("image/*");
-    try {
-      startActivityForResult(intent, 10);
-    } catch (ActivityNotFoundException ex) {
-      chooseFile(initialSettings);
+  private void runBatchImport(
+      List<GalleryPhotos.Photo> photos, int generation, String pristineParams) {
+    ArrayList<PendingImport> imported = new ArrayList<>();
+    int failed = 0;
+    for (int index = 0; index < photos.size(); index++) {
+      if (destroyed || generation != batchImportGeneration) break;
+      GalleryPhotos.Photo selected = photos.get(index);
+      final int position = index;
+      ui(
+          () -> {
+            if (generation == batchImportGeneration)
+              setHomeImportProgress(position, photos.size(), 0);
+          });
+      PhotoImportJob job = null;
+      File stored = null;
+      try {
+        job = new PhotoImportJob(getFilesDir(), pristineParams);
+        activeImport = job;
+        readProviderMetadata(selected, job);
+        job.check();
+        job.stage("打开相册照片");
+        copyProviderPhoto(selected.uri, job, index, photos.size(), generation);
+        if (job.copied == 0) throw new IOException("所选照片没有可读取的内容");
+        job.check();
+        if (PhotoFormats.isMovingPhoto(job.temp))
+          throw new IOException("Live / Motion Photo 暂不支持，已跳过");
+        job.stage("解码照片");
+        LoadedPhoto loaded = readPhoto(job.temp, 1024);
+        try {
+          job.check();
+          job.stage("保存照片与缩略图");
+          File dir = new File(getFilesDir(), "photos");
+          if (!dir.exists() && !dir.mkdirs()) throw new IOException("无法创建图库");
+          String id = UUID.randomUUID().toString();
+          stored = new File(dir, id + ".img");
+          if (!job.temp.renameTo(stored)) throw new IOException("无法保存导入照片");
+          loaded.file = stored;
+          saveThumbnail(id, loaded.bitmap);
+          job.check();
+          imported.add(
+              new PendingImport(
+                  id,
+                  job.name,
+                  stored.getAbsolutePath(),
+                  selected.timestamp,
+                  selected.mediaId));
+          stored = null;
+          writeImportDiagnostic(job, "completed", null);
+        } finally {
+          Bitmaps.release(loaded.bitmap);
+        }
+      } catch (Throwable error) {
+        if (generation == batchImportGeneration && !(error instanceof OperationCanceledException)) {
+          failed++;
+          android.util.Log.w(
+              "SpektraLensAndroid",
+              "Batch import failed for " + (selected == null ? "photo" : selected.name),
+              error);
+        }
+        if (job != null) writeImportDiagnostic(job, "failed", error.toString());
+      } finally {
+        if (stored != null) {
+          stored.delete();
+          String id = stored.getName().replaceFirst("\\.img$", "");
+          new File(new File(getFilesDir(), "thumbnails"), id + ".jpg").delete();
+        }
+        if (job != null) job.temp.delete();
+        if (activeImport == job) activeImport = null;
+      }
+      if (generation == batchImportGeneration)
+        ui(() -> setHomeImportProgress(position, photos.size(), 1));
     }
+    final ArrayList<PendingImport> completed = imported;
+    final int failures = failed;
+    if (destroyed || generation != batchImportGeneration) {
+      deletePendingImports(completed);
+      return;
+    }
+    ui(() -> finishBatchImport(completed, failures, generation));
+  }
+
+  private void deletePendingImports(List<PendingImport> imported) {
+    for (PendingImport item : imported) {
+      new File(item.path).delete();
+      new File(new File(getFilesDir(), "thumbnails"), item.id + ".jpg").delete();
+    }
+  }
+
+  private void readProviderMetadata(GalleryPhotos.Photo selected, PhotoImportJob job) {
+    try (android.database.Cursor cursor =
+        getContentResolver()
+            .query(
+                selected.uri,
+                new String[] {
+                  android.provider.OpenableColumns.DISPLAY_NAME,
+                  android.provider.OpenableColumns.SIZE
+                },
+                null,
+                null,
+                null,
+                job.signal)) {
+      if (cursor != null && cursor.moveToFirst()) {
+        int nameColumn = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+        int sizeColumn = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE);
+        if (nameColumn >= 0 && !cursor.isNull(nameColumn)) job.name = cursor.getString(nameColumn);
+        if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) job.total = cursor.getLong(sizeColumn);
+      }
+    } catch (RuntimeException error) {
+      android.util.Log.w("SpektraLensAndroid", "Provider metadata unavailable", error);
+    }
+  }
+
+  private void copyProviderPhoto(
+      Uri uri, PhotoImportJob job, int index, int total, int generation) throws IOException {
+    try (android.content.res.AssetFileDescriptor descriptor =
+        getContentResolver().openAssetFileDescriptor(uri, "r", job.signal)) {
+      if (descriptor == null) throw new IOException("相册没有返回可读取的照片");
+      if (job.total < 0) job.total = descriptor.getLength();
+      try (InputStream in = descriptor.createInputStream();
+          OutputStream out = new FileOutputStream(job.temp)) {
+        job.input = in;
+        job.check();
+        job.stage("复制原照片");
+        byte[] buffer = new byte[65536];
+        int n;
+        long lastProgressPost = 0;
+        while ((n = in.read(buffer)) != -1) {
+          job.check();
+          out.write(buffer, 0, n);
+          job.copied += n;
+          job.lastProgress = SystemClock.elapsedRealtime();
+          if (job.lastProgress - lastProgressPost >= 100) {
+            lastProgressPost = job.lastProgress;
+            float fraction =
+                job.total > 0
+                    ? Math.min(.92f, job.copied / (float) job.total * .92f)
+                    : .08f;
+            ui(
+                () -> {
+                  if (generation == batchImportGeneration)
+                    setHomeImportProgress(index, total, fraction);
+                });
+          }
+        }
+        job.check();
+      } finally {
+        job.input = null;
+      }
+    }
+  }
+
+  private void finishBatchImport(
+      ArrayList<PendingImport> imported, int failed, int generation) {
+    if (destroyed) return;
+    if (generation != batchImportGeneration) {
+      deletePendingImports(imported);
+      return;
+    }
+    batchImportRunning = false;
+    main.post(this::pumpHomeThumbnails);
+    activeImport = null;
+    ArrayList<Frame> added = new ArrayList<>();
+    for (PendingImport item : imported) {
+      Frame frame =
+          new Frame(item.id, item.name, item.path, pristineParamsJson());
+      frame.sourceTimestamp = item.sourceTimestamp;
+      frame.importedAt = System.currentTimeMillis();
+      frame.sourceMediaId = String.valueOf(item.mediaId);
+      frame.edited = false;
+      library.add(frame);
+      added.add(frame);
+    }
+    sortLibrary();
+    if (!added.isEmpty() && !writeLibrary()) {
+      library.removeAll(added);
+      sortLibrary();
+      deletePendingImports(imported);
+      historySignature = null;
+      refreshHistory();
+      setHomeImportHint("照片导入失败 · 本次导入未保存");
+      resetHomeImportButton();
+      new Haptics.DialogBuilder(this)
+          .setTitle("照片导入失败")
+          .setMessage("无法保存图库记录。本次导入的照片没有加入应用，请检查设备剩余空间后重试。")
+          .setPositiveButton("知道了", null)
+          .show();
+      return;
+    }
+    syncHeroLook();
+    refreshHistory();
+    if (imported.isEmpty()) {
+      setHomeImportHint("没有导入照片 · 可重新选择");
+      resetHomeImportButton();
+      new Haptics.DialogBuilder(this)
+          .setTitle("照片导入未完成")
+          .setMessage(
+              failed > 0
+                  ? failed + " 张照片未能读取。不支持的视频、Live / Motion Photo 或损坏文件会被跳过。"
+                  : "没有可导入的照片。")
+          .setPositiveButton("知道了", null)
+          .show();
+      return;
+    }
+    setHomeImportHint("已导入 " + imported.size() + " 张 · 点击任意照片即可编辑");
+    completeHomeImportProgress(imported.size(), failed);
+    if (failed > 0) {
+      new Haptics.DialogBuilder(this)
+          .setTitle("部分照片已导入")
+          .setMessage(
+              "已导入 "
+                  + imported.size()
+                  + " 张照片，并停留在首页。\n\n另有 "
+                  + failed
+                  + " 张未能导入，已跳过。")
+          .setPositiveButton("知道了", null)
+          .show();
+    }
+  }
+
+  private void cancelBatchImport() {
+    if (!batchImportRunning) return;
+    ++batchImportGeneration;
+    batchImportRunning = false;
+    main.post(this::pumpHomeThumbnails);
+    PhotoImportJob job = activeImport;
+    activeImport = null;
+    if (job != null) job.cancel();
+    resetHomeImportButton();
+    setHomeImportHint(idleHomeHint());
+    showNotice("已取消导入");
+  }
+
+  private void resetHomeImportButton() {
+    if (homeImportButton == null) return;
+    if (homeImportProgress != null) homeImportProgress.setAnimating(false);
+    if (homeImportCancel != null) homeImportCancel.setVisibility(View.GONE);
+    if (homeImportHint != null) homeImportHint.setVisibility(View.VISIBLE);
+    homeImportButton.setEnabled(!exporting);
+    AppStyle.pillAction(homeImportButton, AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
+    AppStyle.setTypeface(homeImportButton, AppStyle.FONT_BOLD);
+    homeImportButton.setTextSize(AppStyle.TYPE_TITLE);
+    homeImportButton.setPadding(dp(14), dp(8), dp(14), dp(8));
+    homeImportButton.setGravity(Gravity.CENTER);
+    homeImportButton.setContentDescription(null);
+    homeImportButton.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_NONE);
+    homeImportSlot.setLabel("开始导入照片", "开始导入照片");
+  }
+
+  private void startHomeImportProgress(int total) {
+    if (homeImportProgress == null || homeImportButton == null) return;
+    homeImportButton.setEnabled(false);
+    homeImportButton.setBackground(homeImportProgress);
+    homeImportButton.setTextColor(INK);
+    homeImportButton.setTextSize(AppStyle.TYPE_BODY);
+    homeImportButton.setGravity(Gravity.CENTER);
+    homeImportButton.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    homeImportCancel.setVisibility(View.VISIBLE);
+    if (homeImportHint != null) homeImportHint.setVisibility(View.GONE);
+    homeImportProgress.setFraction(0);
+    homeImportProgress.setAnimating(true);
+    updateHomeImportLabel(String.format(Locale.CHINA, "正在导入 0 / %d", total));
+  }
+
+  private void updateHomeImportLabel(String label) {
+    String prefix = "正在导入 ";
+    homeImportSlot.setLabel(label, label.startsWith(prefix) ? label.substring(prefix.length()) : label);
+  }
+
+  private void setHomeImportProgress(int index, int total, float currentFraction) {
+    if (homeImportProgress == null || homeImportButton == null) return;
+    float overall =
+        Math.max(0, Math.min(1, (index + Math.max(0, Math.min(1, currentFraction))) / total));
+    String label =
+        String.format(
+            Locale.CHINA,
+            "正在导入 %d / %d",
+            Math.min(total, index + 1),
+            total);
+    homeImportProgress.setFraction(overall);
+    updateHomeImportLabel(label);
+  }
+
+  private void completeHomeImportProgress(int imported, int failed) {
+    if (homeImportProgress == null || homeImportButton == null) return;
+    homeImportProgress.setFraction(1);
+    homeImportProgress.setAnimating(false);
+    homeImportCancel.setVisibility(View.GONE);
+    homeImportButton.setPadding(dp(14), dp(8), dp(14), dp(8));
+    String label =
+        failed > 0
+            ? String.format(Locale.CHINA, "已导入 %d 张 · %d 张跳过", imported, failed)
+            : String.format(Locale.CHINA, "已导入 %d 张", imported);
+    updateHomeImportLabel(label);
+    final int generation = batchImportGeneration;
+    main.postDelayed(
+        () -> {
+          if (!batchImportRunning && generation == batchImportGeneration)
+            resetHomeImportButton();
+        },
+        520);
+  }
+
+  /** Empty-library home keeps the area clear; only import progress or failures use this line. */
+  private String idleHomeHint() {
+    return "";
+  }
+
+  private void setHomeImportHint(String value) {
+    if (homeImportHint == null) return;
+    boolean visible = value != null && !value.isEmpty();
+    homeImportHint.setText(visible ? value : "");
+    homeImportHint.setVisibility(visible ? View.VISIBLE : View.GONE);
+  }
+
+  private void showNotice(String message) {
+    showNotice(message, false);
+  }
+
+  private void showNotice(String message, boolean longer) {
+    AppNotice.show(this, message, noticeBottomDp(), longer);
+  }
+
+  private int batchPasteHeight() {
+    return batchPasteShell != null && batchPasteShell.getHeight() > 0
+        ? batchPasteShell.getHeight() : dp(70);
+  }
+
+  private int noticeBottomDp() {
+    return selectionActive()
+        ? (int) Math.ceil(batchPasteHeight() / getResources().getDisplayMetrics().density) + 34
+        : 44;
+  }
+
+  private void updateBatchPasteInsets() {
+    if (homeContent != null) {
+      int bottom = selectionActive() ? batchPasteHeight() + dp(18) : dp(28);
+      if (homeContent.getPaddingBottom() != bottom)
+        homeContent.setPadding(homeContent.getPaddingLeft(), homeContent.getPaddingTop(),
+            homeContent.getPaddingRight(), bottom);
+    }
+    AppNotice.setBottomMargin(getWindow(), noticeBottomDp());
+  }
+
+  private void updateBatchPasteBar(boolean animate) {
+    if (batchPasteBar == null) return;
+    View shell = batchPasteShell == null ? batchPasteBar : batchPasteShell;
+    updateBatchPasteInsets();
+    shell.animate().cancel();
+    if (selectionActive()) {
+      boolean firstShow = shell.getVisibility() != View.VISIBLE;
+      shell.setVisibility(View.VISIBLE);
+      if (!animate) {
+        shell.setAlpha(1f);
+        shell.setTranslationY(0);
+      } else {
+        if (firstShow) {
+          shell.setAlpha(0f);
+          shell.setTranslationY(dp(12));
+        }
+        shell.animate().alpha(1f).translationY(0).setDuration(180).start();
+      }
+    } else if (shell.getVisibility() == View.VISIBLE) {
+      if (!animate) {
+        shell.setVisibility(View.GONE);
+        shell.setAlpha(1f);
+        shell.setTranslationY(0);
+        resetActionRows();
+      } else
+        shell
+            .animate()
+            .alpha(0f)
+            .translationY(dp(8))
+            .setDuration(140)
+            .withEndAction(
+                () -> {
+                  if (!selectionActive()) {
+                    shell.setVisibility(View.GONE);
+                    shell.setAlpha(1f);
+                    shell.setTranslationY(0);
+                    resetActionRows();
+                  }
+                })
+            .start();
+    }
+  }
+
+  private void resetActionRows() {
+    if (batchPasteBar != null && batchPasteBar.getParent() instanceof View pasteRow)
+      pasteRow.setVisibility(View.VISIBLE);
+    if (manageActionRow != null) manageActionRow.setVisibility(View.GONE);
   }
 
   private void requestGalleryPermission() {
@@ -3043,17 +4024,6 @@ public final class MainActivity extends Activity {
               "gallery_permission_denied", GalleryPhotos.access(this) == GalleryPhotos.Access.NONE)
           .apply();
       if (gallerySheet != null && gallerySheet.isShowing()) gallerySheet.refresh();
-    }
-  }
-
-  @Override
-  protected void onActivityResult(int req, int res, Intent data) {
-    super.onActivityResult(req, res, data);
-    if (req == 10) {
-      String initialSettings = pickerSettings;
-      pickerSettings = null;
-      if (res == RESULT_OK && data != null && data.getData() != null)
-        importUri(data.getData(), initialSettings);
     }
   }
 
@@ -3214,15 +4184,6 @@ public final class MainActivity extends Activity {
               settings = new JSONObject();
             }
             defaults();
-            // RAW 没有「原曝光」可保留：解码把 1.0 钉在传感器饱和点，相机又给高光留了
-            // 0.5~1.5 EV 余量，中间调会落在 0.09~0.18 之间漂，而胶片管线的契约是
-            // kMidgray = 0.184（pipeline.cpp）。JPEG 的白已经是显示白，一起开测光反而
-            // 会把正常照片压暗约 1 档，所以只对 RAW 打开。外部显式给定的参数
-            // （「再编辑一张」带回的配方）优先，不覆盖用户自己拨的档位。
-            if (job.raw
-                && (job.initialSettings == null
-                    || !job.initialSettings.contains("auto_exposure")))
-              set("auto_exposure", true);
             filmCategory = category(find(films, settings.optString("film_stock")));
             if (job.initialSettings == null) {
               selectedTab = 0;
@@ -3236,9 +4197,13 @@ public final class MainActivity extends Activity {
             adopt(loaded);
             filename = job.name;
             activeId = id;
+            Frame importedFrame =
+                new Frame(id, filename, original.getAbsolutePath(), settings.toString());
+            importedFrame.edited = job.initialSettings != null;
+            importedFrame.importedAt = System.currentTimeMillis();
+            library.add(importedFrame);
+            sortLibrary();
             syncHeroLook();
-            library.add(
-                0, new Frame(id, filename, original.getAbsolutePath(), settings.toString()));
             undoStack.clear();
             redoStack.clear();
             committed = settings.toString();
@@ -3251,7 +4216,6 @@ public final class MainActivity extends Activity {
             fileLabel.setText(filename);
             photo.images(source, null);
             photo.resetZoom();
-            refreshStrip();
             saveLibrary();
             buildPanel();
             if (ready) scheduleRender();
@@ -3337,7 +4301,7 @@ public final class MainActivity extends Activity {
   private void writeImportDiagnostic(PhotoImportJob job, String outcome, String error) {
     try {
       JSONObject j = new JSONObject();
-      j.put("app_version", "0.3.6");
+      j.put("app_version", getPackageVersion());
       j.put("device", Build.MANUFACTURER + " " + Build.MODEL);
       j.put("android_api", Build.VERSION.SDK_INT);
       j.put("stage", job.phase);
@@ -3422,7 +4386,7 @@ public final class MainActivity extends Activity {
               ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE))
                   .setPrimaryClip(
                       ClipData.newPlainText(getString(R.string.app_name) + " 诊断", message));
-              Toast.makeText(this, "诊断已复制", Toast.LENGTH_SHORT).show();
+              showNotice("诊断已复制");
             })
         .show();
   }
@@ -3459,7 +4423,9 @@ public final class MainActivity extends Activity {
                     balanceZone = "midtones";
                     hslBand = "red";
                   }
-                  adopt(b);
+                  // The banner follows the newest library photo; only an empty library shows demo.
+                  adopt(b, false);
+                  syncHeroLook();
                   activeId = "demo";
                   prefs.edit().putString("activeId", "demo").apply();
                   developed = null;
@@ -3469,7 +4435,6 @@ public final class MainActivity extends Activity {
                   photo.resetZoom();
                   undoStack.clear();
                   redoStack.clear();
-                  refreshStrip();
                   buildPanel();
                   scheduleRender();
                 });
@@ -3499,14 +4464,23 @@ public final class MainActivity extends Activity {
           JSONObject j = list.getJSONObject(i);
           String id = j.getString("id");
           File original = new File(new File(getFilesDir(), "photos"), id + ".img");
-          if (original.exists())
-            library.add(
+          if (original.exists()) {
+            Frame frame =
                 new Frame(
-                    id, j.getString("name"), original.getAbsolutePath(), j.getString("params")));
+                    id, j.getString("name"), original.getAbsolutePath(), j.getString("params"));
+            frame.favorite = j.optBoolean("favorite", false);
+            frame.sourceTimestamp =
+                j.optLong("sourceTimestamp", Math.max(0, original.lastModified()));
+            frame.importedAt = j.optLong("importedAt", Math.max(0, original.lastModified()));
+            frame.sourceMediaId = j.optString("sourceMediaId", "");
+            frame.edited = j.has("edited") ? j.optBoolean("edited", true) : true;
+            library.add(frame);
+          }
         }
       } catch (Exception ex) {
         android.util.Log.e("SpektraLensAndroid", "Read library", ex);
       }
+    sortLibrary();
     Frame frame = findFrame(activeId);
     if (frame != null)
       try {
@@ -3523,15 +4497,35 @@ public final class MainActivity extends Activity {
     return null;
   }
 
+  private void sortLibrary() {
+    // 最近照片按“最近导入”优先；同一批导入再按拍摄时间新到旧排列。
+    library.sort(
+        Comparator.comparingLong((Frame frame) -> frame.importedAt)
+            .thenComparingLong(frame -> frame.sourceTimestamp)
+            .reversed());
+  }
+
   private void saveActiveFrame() {
     Frame frame = findFrame(activeId);
     if (frame != null) {
-      frame.params = settings.toString();
+      String params = settings.toString();
+      if (!params.equals(frame.params)) {
+        homeThumbJobs.invalidate(frame.id);
+        homeImages.removeDeveloped(frame.id);
+        File look = developedLook(frame.id);
+        if (look != null) look.delete();
+      }
+      frame.params = params;
       saveLibrary();
     }
   }
 
   private void saveLibrary() {
+    if (!writeLibrary())
+      showNotice("编辑记录保存失败，请检查剩余空间", true);
+  }
+
+  private boolean writeLibrary() {
     try {
       JSONArray list = new JSONArray();
       for (Frame frame : library) {
@@ -3539,6 +4533,11 @@ public final class MainActivity extends Activity {
         j.put("id", frame.id);
         j.put("name", frame.name);
         j.put("params", frame.params);
+        j.put("favorite", frame.favorite);
+        j.put("sourceTimestamp", frame.sourceTimestamp);
+        j.put("importedAt", frame.importedAt);
+        j.put("sourceMediaId", frame.sourceMediaId);
+        j.put("edited", frame.edited);
         list.put(j);
       }
       File temp = new File(getFilesDir(), "library.pending");
@@ -3548,9 +4547,11 @@ public final class MainActivity extends Activity {
       }
       if (!temp.renameTo(new File(getFilesDir(), "library.json")))
         throw new IOException("Cannot write library");
+      return true;
     } catch (Exception ex) {
       android.util.Log.e("SpektraLensAndroid", "Save library", ex);
-      Toast.makeText(this, "编辑记录保存失败，请检查剩余空间", Toast.LENGTH_LONG).show();
+      new File(getFilesDir(), "library.pending").delete();
+      return false;
     }
   }
 
@@ -3571,40 +4572,41 @@ public final class MainActivity extends Activity {
     }
   }
 
-  private void refreshStrip() {
-    if (photoPickerButton != null) {
-      photoPickerButton.setContentDescription("选择手机相册或已导入的照片");
-      photoPickerButton.setTooltipText(filename);
-    }
-  }
-
-  private void choosePhoto() {
-    importPhoto();
-  }
-
   private void refreshHistory() {
     if (historyList == null) return;
-    if (recentCount != null)
-      recentCount.setText(library.size() + " 张 · 长按可删除");
+    EditClipboard clipboard = loadEditClipboard();
+    batchSelection.removeIf(id -> findFrame(id) == null);
+    manageSelection.removeIf(id -> findFrame(id) == null);
+    updateHistoryHeader();
+    updateBatchControls(clipboard);
     // Rebuilding every card also rebuilds every ImageView, so returning from the editor used to
     // re-decode the whole strip and visibly reshuffle it. Only rebuild when something changed.
     StringBuilder signature = new StringBuilder();
     for (Frame frame : library)
       signature.append(frame.id).append(':').append(frame.path).append(':')
-          .append(frame.params).append(';');
+          .append(frame.params).append(':').append(frame.favorite).append(':')
+          .append(frame.edited).append(';');
+    signature
+        .append("clip=")
+        .append(clipboard == null ? "" : clipboard.sourceId)
+        .append(";batch=")
+        .append(batchPasteMode)
+        .append(";manage=")
+        .append(manageMode);
     String current = signature.toString();
     if (current.equals(historySignature) && historyList.getChildCount() > 0) return;
     historySignature = current;
     controls.removeIf(v -> descendant(v, historyList));
     homeImages.clearCards();
     historyList.removeAllViews();
+    batchCardViews.clear();
     if (library.isEmpty()) {
       LinearLayout empty = vertical();
       empty.setPadding(dp(16), dp(15), dp(16), dp(15));
       AppStyle.surface(empty, AppStyle.SURFACE, AppStyle.R_MEDIUM);
-      TextView title = text("你的第一张底片，还在等光。", AppStyle.TYPE_BODY, INK);
+      TextView title = text("你的第一张照片，还在等光。", AppStyle.TYPE_BODY, INK);
       add(empty, title, -1, 26);
-      TextView detail = text("导入照片后，可在这里继续上次的编辑。", AppStyle.TYPE_MICRO, MUTED);
+      TextView detail = text("导入照片后，点击任意照片即可开始编辑。", AppStyle.TYPE_MICRO, MUTED);
       add(empty, detail, -1, 24);
       add(historyList, empty, -1, 88);
       return;
@@ -3617,15 +4619,64 @@ public final class MainActivity extends Activity {
         LinearLayout card = vertical();
         AppStyle.surface(card, AppStyle.SURFACE, AppStyle.R_MEDIUM);
         card.setClipToOutline(true);
+        FrameLayout photoBox = new FrameLayout(this);
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        add(card, image, -1, 125);
+        photoBox.addView(image, new FrameLayout.LayoutParams(-1, -1));
         homeImages.bind(
             image,
             new File(frame.path),
             developedLook(frame.id),
             new File(new File(getFilesDir(), "thumbnails"), frame.id + ".jpg"),
             false);
+        boolean selectedForBatch = selectionContains(frame);
+        View scrim = new View(this);
+        scrim.setBackgroundColor(0x66000000);
+        scrim.setVisibility(selectedForBatch ? View.VISIBLE : View.GONE);
+        photoBox.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
+        ImageView favorite = null;
+        FrameLayout.LayoutParams favoriteParams = null;
+        if (frame.favorite) {
+          favorite = new ImageView(this);
+          favorite.setImageResource(R.drawable.ic_material_favorite);
+          favorite.setPadding(0, 0, 0, 0);
+          favorite.setBackground(null);
+          favorite.setContentDescription("已收藏");
+          favorite.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+          favoriteParams =
+              new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP | Gravity.END);
+          favoriteParams.topMargin = dp(9);
+          favoriteParams.rightMargin = dp(selectionActive() ? 16 + AppStyle.SELECTION_BADGE : 8);
+          photoBox.addView(favorite, favoriteParams);
+        }
+        if (clipboard != null
+            && clipboard.valid()
+            && clipboard.sourceId.equals(frame.id)) {
+          TextView copied = text("已复制", AppStyle.TYPE_MICRO, GOLD);
+          copied.setGravity(Gravity.CENTER);
+          AppStyle.setTypeface(copied, AppStyle.FONT_BOLD);
+          copied.setPadding(dp(10), 0, dp(10), 0);
+          copied.setBackground(AppStyle.pill(this, 0xcc16141a, false));
+          FrameLayout.LayoutParams copiedParams =
+              new FrameLayout.LayoutParams(-2, dp(28), Gravity.TOP | Gravity.START);
+          copiedParams.topMargin = dp(8);
+          copiedParams.leftMargin = dp(8);
+          photoBox.addView(copied, copiedParams);
+        }
+        ImageView checked = new ImageView(this);
+        checked.setImageResource(R.drawable.ic_material_check);
+        checked.setContentDescription("已选择");
+        checked.setVisibility(selectionActive() ? View.VISIBLE : View.GONE);
+        FrameLayout.LayoutParams checkedParams =
+            new FrameLayout.LayoutParams(
+                dp(AppStyle.SELECTION_BADGE), dp(AppStyle.SELECTION_BADGE), Gravity.TOP | Gravity.END);
+        checkedParams.topMargin = dp(8);
+        checkedParams.rightMargin = dp(8);
+        photoBox.addView(checked, checkedParams);
+        styleBatchCheck(checked, selectedForBatch);
+        batchCardViews.put(
+            frame.id, new BatchCardViews(photoBox, scrim, favoriteParams, checked));
+        add(card, photoBox, -1, 125);
         LinearLayout names = vertical();
         names.setPadding(dp(12), dp(10), dp(12), dp(12));
         TextView name = text(PhotoLabels.title(frame.name), AppStyle.TYPE_BODY, INK);
@@ -3638,27 +4689,47 @@ public final class MainActivity extends Activity {
                 PhotoLabels.format(original, frame.name)
                     + " · "
                     + android.text.format.Formatter.formatShortFileSize(this, original.length()),
-                10,
+                AppStyle.TYPE_MICRO,
                 MUTED);
         AppStyle.setNumericTypeface(details);
         add(names, details, -1, 22);
-        String stock = "已保存调整";
-        try {
-          Stock s = find(films, new JSONObject(frame.params).optString("film_stock"));
-          if (s != null) stock = shortName(s.name);
-        } catch (Exception ignored) {
-          // 历史记录引用的胶片已不存在，保留原来的标签
-        }
-        TextView look = text(stock, AppStyle.TYPE_MICRO, GOLD);
+        String stock = frame.edited ? "已保存调整" : "暂未编辑";
+        if (frame.edited)
+          try {
+            Stock s = find(films, new JSONObject(frame.params).optString("film_stock"));
+            if (s != null) stock = shortName(s.name);
+          } catch (Exception ignored) {
+            // 历史记录引用的胶片已不存在，保留原来的标签
+          }
+        TextView look = text(stock, AppStyle.TYPE_MICRO, frame.edited ? GOLD : MUTED);
         look.setSingleLine(true);
         look.setEllipsize(android.text.TextUtils.TruncateAt.END);
         add(names, look, -1, 24);
         add(card, names, -1, -2);
-        card.setOnClickListener(v -> openFrame(frame));
+        photoBox.setClickable(true);
+        photoBox.setFocusable(true);
+        photoBox.setContentDescription(
+            selectionActive()
+                ? (selectedForBatch ? "取消选择 " : "选择 ") + PhotoLabels.title(frame.name)
+                : "编辑 " + PhotoLabels.title(frame.name));
+        photoBox.setOnClickListener(
+            v -> {
+              if (manageMode) toggleManageSelection(frame);
+              else if (batchPasteMode) toggleBatchSelection(frame);
+              else editFrameFromHome(frame);
+            });
+        photoBox.setOnLongClickListener(
+            v -> {
+              if (selectionActive()) return true;
+              v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+              showFrameActions(frame);
+              return true;
+            });
         card.setOnLongClickListener(
             v -> {
+              if (selectionActive()) return true;
               v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-              confirmRemove(frame);
+              showFrameActions(frame);
               return true;
             });
         controls.add(card);
@@ -3673,26 +4744,805 @@ public final class MainActivity extends Activity {
     }
   }
 
+  private boolean selectionActive() {
+    return manageMode || batchPasteMode;
+  }
+
+  private boolean selectionContains(Frame frame) {
+    return manageMode
+        ? manageSelection.contains(frame.id)
+        : batchPasteMode && batchSelection.contains(frame.id);
+  }
+
+  private void updateHistoryHeader() {
+    if (historyTitle == null) return;
+    String suffix = " · " + library.size() + " 张";
+    android.text.SpannableStringBuilder label =
+        new android.text.SpannableStringBuilder("最近照片").append(suffix);
+    int start = label.length() - suffix.length();
+    label.setSpan(
+        new android.text.style.RelativeSizeSpan(
+            AppStyle.TYPE_MICRO / (float) AppStyle.TYPE_HEADING),
+        start,
+        label.length(),
+        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    label.setSpan(
+        new android.text.style.ForegroundColorSpan(MUTED),
+        start,
+        label.length(),
+        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    label.setSpan(
+        new android.text.style.StyleSpan(android.graphics.Typeface.NORMAL),
+        start,
+        label.length(),
+        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    historyTitle.setText(label);
+    historyTitle.setContentDescription("最近照片，共 " + library.size() + " 张");
+    if (homeManage != null)
+      homeManage.setVisibility(
+          library.isEmpty() || selectionActive() ? View.GONE : View.VISIBLE);
+    if (manageHeaderActions != null)
+      manageHeaderActions.setVisibility(manageMode ? View.VISIBLE : View.GONE);
+    if (homeClearSelection != null) {
+      boolean canClear = manageMode && !manageSelection.isEmpty();
+      homeClearSelection.setEnabled(canClear);
+      homeClearSelection.setTextColor(canClear ? GOLD : AppStyle.DISABLED);
+    }
+  }
+
+  private void enterManageMode() {
+    if (exporting || batchImportRunning || activeImport != null || library.isEmpty()) return;
+    if (batchPasteMode) exitBatchPaste();
+    manageMode = true;
+    manageSelection.clear();
+    historySignature = null;
+    refreshHistory();
+    updateBatchPasteBar(true);
+  }
+
+  private void exitManageMode() {
+    if (!manageMode) return;
+    manageMode = false;
+    manageSelection.clear();
+    historySignature = null;
+    refreshHistory();
+    updateBatchPasteBar(true);
+  }
+
+  private void toggleManageSelection(Frame frame) {
+    if (!manageSelection.remove(frame.id)) manageSelection.add(frame.id);
+    updateBatchSelectionVisual(frame, true);
+    updateBatchControls(loadEditClipboard());
+    updateHistoryHeader();
+  }
+
+  private void selectAllPhotos() {
+    if (!manageMode || library.isEmpty()) return;
+    boolean changed = false;
+    for (Frame frame : library) changed |= manageSelection.add(frame.id);
+    if (changed) refreshManageSelectionVisuals(false);
+    updateBatchControls(loadEditClipboard());
+    updateHistoryHeader();
+  }
+
+  private void clearManageSelection() {
+    if (!manageMode || manageSelection.isEmpty()) return;
+    manageSelection.clear();
+    refreshManageSelectionVisuals(false);
+    updateBatchControls(loadEditClipboard());
+    updateHistoryHeader();
+  }
+
+  private void refreshManageSelectionVisuals(boolean animate) {
+    for (Frame frame : library) updateBatchSelectionVisual(frame, animate);
+  }
+
+  private void confirmManageDelete() {
+    if (exporting || !manageMode || manageSelection.isEmpty()) return;
+    new Haptics.DialogBuilder(this)
+        .setTitle("删除所选照片？")
+        .setMessage("删除应用内的照片副本与编辑记录。手机相册中的原照片不受影响。")
+        .setPositiveButton("删除", (d, n) -> removeSelectedPhotos())
+        .setNegativeButton("取消", null)
+        .show();
+  }
+
+  private void removeSelectedPhotos() {
+    if (exporting) return;
+    ArrayList<Frame> targets = new ArrayList<>();
+    for (String id : new ArrayList<>(manageSelection)) {
+      Frame frame = findFrame(id);
+      if (frame != null) targets.add(frame);
+    }
+    if (targets.isEmpty()) {
+      exitManageMode();
+      return;
+    }
+    ArrayList<Frame> previous = new ArrayList<>(targets);
+    library.removeAll(targets);
+    if (!writeLibrary()) {
+      library.addAll(previous);
+      sortLibrary();
+      historySignature = null;
+      refreshHistory();
+      showNotice("删除失败，照片仍保留在应用中");
+      return;
+    }
+    EditClipboard clipboard = loadEditClipboard();
+    boolean clearClipboard = clipboard != null;
+    boolean activeDeleted = false;
+    for (Frame frame : targets) {
+      if (clearClipboard && clipboard != null && frame.id.equals(clipboard.sourceId)) {
+        prefs.edit().remove("edit_clipboard").apply();
+        clearClipboard = false;
+      }
+      if (activeId.equals(frame.id)) activeDeleted = true;
+      removeFrameArtifacts(frame);
+    }
+    manageSelection.clear();
+    manageMode = false;
+    historySignature = null;
+    if (library.isEmpty()) {
+      new File(getFilesDir(), "source.img").delete();
+      loadDemoAction();
+    } else if (activeDeleted) {
+      loadDemoAction();
+    }
+    refreshHistory();
+    syncHeroLook();
+    updateBatchPasteBar(true);
+    showHome();
+  }
+
+  /** Removes one photo's private copy and every derived preview. Library records stay untouched. */
+  private void removeFrameArtifacts(Frame frame) {
+    batchSelection.remove(frame.id);
+    manageSelection.remove(frame.id);
+    homeThumbJobs.invalidate(frame.id);
+    String photoKey = ThumbnailDiskCache.key(new File(frame.path).getAbsolutePath());
+    removedGalleryPhotos.add(photoKey);
+    thumbnailIo.execute(() -> filmDiskCache.removePhoto(photoKey));
+    homeImages.removeDeveloped(frame.id);
+    new File(frame.path).delete();
+    new File(new File(getFilesDir(), "thumbnails"), frame.id + ".jpg").delete();
+    new File(new File(getFilesDir(), "developed"), frame.id + ".jpg").delete();
+    homeImages.remove(new File(frame.path));
+  }
+
+  private void updateBatchControls(EditClipboard clipboard) {
+    if (batchPasteBar != null) {
+      batchPasteBar.setText(EditClipboardPolicy.batchButtonLabel(batchSelection.size()));
+      batchPasteBar.setEnabled(
+          EditClipboardPolicy.canBatchPaste(
+              clipboard != null && clipboard.valid(), batchSelection.size()));
+      if (batchPasteBar.getParent() instanceof View pasteRow) {
+        if (manageMode) pasteRow.setVisibility(View.GONE);
+        else if (batchPasteMode) pasteRow.setVisibility(View.VISIBLE);
+      }
+    }
+    if (manageActionRow != null) {
+      if (manageMode) manageActionRow.setVisibility(View.VISIBLE);
+      else if (batchPasteMode) manageActionRow.setVisibility(View.GONE);
+    }
+    if (manageDeleteBar != null) {
+      manageDeleteBar.setText(
+          String.format(Locale.CHINA, "删除 · %d 张", manageSelection.size()));
+      manageDeleteBar.setEnabled(manageMode && !manageSelection.isEmpty() && !exporting);
+    }
+    updateBatchPasteBar(true);
+    if (selectionActive()) setHomeImportHint("");
+    else if (!batchImportRunning) setHomeImportHint(idleHomeHint());
+  }
+
+  private EditClipboard loadEditClipboard() {
+    String raw = prefs.getString("edit_clipboard", "");
+    if (raw == null || raw.isBlank()) return null;
+    try {
+      JSONObject value = new JSONObject(raw);
+      EditClipboard clipboard =
+          new EditClipboard(
+              value.optString("source_id"),
+              value.optString("source_name"),
+              value.optString("params"));
+      return clipboard.valid() ? clipboard : null;
+    } catch (JSONException ignored) {
+      return null;
+    }
+  }
+
+  private boolean saveEditClipboard(Frame frame) {
+    try {
+      JSONObject value = new JSONObject();
+      value.put("source_id", frame.id);
+      value.put("source_name", frame.name);
+      value.put("params", frame.params);
+      boolean saved = prefs.edit().putString("edit_clipboard", value.toString()).commit();
+      if (!saved) showNotice("无法保存编辑参数副本");
+      return saved;
+    } catch (JSONException error) {
+      showNotice("无法复制编辑参数");
+      return false;
+    }
+  }
+
+  private void clearEditClipboard() {
+    if (!prefs.edit().remove("edit_clipboard").commit()) {
+      showNotice("无法清除编辑参数副本");
+      return;
+    }
+    historySignature = null;
+    refreshHistory();
+  }
+
+  private void showFrameActions(Frame frame) {
+    if (batchImportRunning || exporting) return;
+    saveActiveFrame();
+    EditClipboard clipboard = loadEditClipboard();
+    boolean canPaste = clipboard != null && clipboard.valid();
+    boolean isSource = canPaste && frame.id.equals(clipboard.sourceId);
+    ArrayList<LibraryActionSheet.ActionItem> items = new ArrayList<>();
+    items.add(
+        new LibraryActionSheet.ActionItem(
+            LibraryActionSheet.EDIT,
+            EditClipboardPolicy.editMenuLabel(frame.edited),
+            "",
+            "",
+            true,
+            false));
+    items.add(
+        new LibraryActionSheet.ActionItem(
+            LibraryActionSheet.COPY,
+            isSource ? "清除已复制编辑参数" : "复制编辑参数",
+            isSource ? "移除当前复制的编辑参数" : "保存这张照片的全部调整",
+            isSource ? "当前来源" : "",
+            true,
+            false));
+    items.add(
+        new LibraryActionSheet.ActionItem(
+            LibraryActionSheet.PASTE,
+            "粘贴编辑参数",
+            "应用到当前照片",
+            canPaste ? "可粘贴" : "未复制",
+            canPaste,
+            false));
+    items.add(
+        new LibraryActionSheet.ActionItem(
+            LibraryActionSheet.BATCH_PASTE,
+            "批量粘贴编辑参数",
+            "一次最多选择 20 张照片",
+            canPaste ? "可多选" : "未复制",
+            canPaste,
+            false));
+    items.add(
+        new LibraryActionSheet.ActionItem(
+            LibraryActionSheet.FAVORITE,
+            frame.favorite ? "取消收藏" : "添加收藏",
+            "",
+            "",
+            true,
+            false));
+    items.add(
+        new LibraryActionSheet.ActionItem(
+            LibraryActionSheet.EXPORT, "导出照片", "", "", true, false));
+    items.add(
+        new LibraryActionSheet.ActionItem(
+            LibraryActionSheet.DELETE, "删除照片", "", "", true, true));
+    if (frameActions != null && frameActions.isShowing()) frameActions.dismiss();
+    LibraryActionSheet sheet =
+        new LibraryActionSheet(
+            this, items,
+            action -> {
+              switch (action) {
+                case LibraryActionSheet.EDIT -> editFrameFromHome(frame);
+                case LibraryActionSheet.COPY -> {
+                  if (isSource) clearEditClipboard();
+                  else if (saveEditClipboard(frame)) {
+                    historySignature = null;
+                    refreshHistory();
+                    showNotice("编辑参数已复制");
+                  }
+                }
+                case LibraryActionSheet.PASTE -> {
+                  if (canPaste) pasteToFrame(frame);
+                }
+                case LibraryActionSheet.BATCH_PASTE -> {
+                  if (canPaste) beginBatchPaste();
+                }
+                case LibraryActionSheet.FAVORITE -> toggleFavorite(frame);
+                case LibraryActionSheet.EXPORT -> exportFrame(frame);
+                case LibraryActionSheet.DELETE -> confirmRemove(frame);
+                default -> {
+                  // Every visible row maps to one declared library action.
+                }
+              }
+            });
+    sheet.setOnDismissListener(
+        dialog -> {
+          if (frameActions == sheet) frameActions = null;
+        });
+    frameActions = sheet;
+    sheet.show();
+  }
+
+  private void toggleFavorite(Frame frame) {
+    frame.favorite = !frame.favorite;
+    if (!writeLibrary()) {
+      frame.favorite = !frame.favorite;
+      showNotice("收藏状态保存失败");
+      return;
+    }
+    historySignature = null;
+    refreshHistory();
+  }
+
+  private void pasteToFrame(Frame frame) {
+    EditClipboard clipboard = loadEditClipboard();
+    if (clipboard == null || !clipboard.valid()) {
+      showNotice("还没有复制编辑参数");
+      return;
+    }
+    try {
+      new JSONObject(clipboard.params);
+    } catch (JSONException error) {
+      showNotice("复制参数已损坏，请重新复制");
+      clearEditClipboard();
+      return;
+    }
+    saveActiveFrame();
+    String previous = frame.params;
+    boolean previousEdited = frame.edited;
+    applyPastedParams(frame, clipboard.params);
+    if (!writeLibrary()) {
+      applyPastedParams(frame, previous);
+      frame.edited = previousEdited;
+      refreshPastedThumbnails(Collections.singletonList(frame));
+      showNotice("粘贴失败，未修改照片");
+      return;
+    }
+    historySignature = null;
+    refreshHistory();
+    refreshPastedThumbnails(Collections.singletonList(frame));
+    showNotice("已粘贴编辑参数");
+  }
+
+  private void applyPastedParams(Frame frame, String params) {
+    boolean unchanged = params.equals(frame.params);
+    frame.edited = true;
+    File look = developedLook(frame.id);
+    if (unchanged && ((look != null && look.isFile()) || homeImages.isWriting(frame.id)
+        || homeThumbJobs.contains(frame.id, params)
+        || (frame.id.equals(activeId) && mainPreviewPending()))) return;
+    homeThumbJobs.invalidate(frame.id);
+    frame.params = params;
+    homeImages.removeDeveloped(frame.id);
+    new File(new File(getFilesDir(), "developed"), frame.id + ".jpg").delete();
+    if (frame.id.equals(activeId)) {
+      try {
+        settings = new JSONObject(params);
+        defaults();
+        committed = settings.toString();
+        filmCategory = category(find(films, settings.optString("film_stock")));
+        undoStack.clear();
+        redoStack.clear();
+        prefs.edit().putString("settings", settings.toString()).apply();
+        if (editorScreen != null && editorScreen.getVisibility() == View.VISIBLE) {
+          buildPanel();
+        } else {
+          editorNeedsSync = true;
+        }
+        scheduleRender();
+      } catch (JSONException ignored) {
+        // The clipboard is validated before this method is called.
+      }
+    }
+  }
+
+  /** Enqueue latest recipes only; each completion returns control to the main-preview queue. */
+  private void refreshPastedThumbnails(List<Frame> candidates) {
+    if (candidates == null) return;
+    for (Frame frame : candidates) {
+      if (frame == null || frame.id.equals(activeId) || frame.params == null) continue;
+      File look = developedLook(frame.id);
+      if ((look != null && look.isFile()) || homeImages.isWriting(frame.id)) continue;
+      homeThumbJobs.offer(frame.id, frame.params);
+    }
+    pumpHomeThumbnails();
+  }
+
+  /** A killed process may have saved recipes before their derived JPEGs finished writing. */
+  private void queueMissingHomeThumbnails() {
+    if (homeImages == null || destroyed) return;
+    ArrayList<Frame> missing = new ArrayList<>();
+    for (Frame frame : library) {
+      File look = developedLook(frame.id);
+      if (!frame.edited || (look != null && look.isFile()) || homeImages.isWriting(frame.id)) continue;
+      if (!frame.id.equals(activeId)) missing.add(frame);
+      else if (!homeThumbPaused && ready && source != null && !mainPreviewPending()) {
+        boolean valid = developed != null && frame.id.equals(developedPhotoId)
+            && frame.params.equals(developedRecipe);
+        if (!valid) scheduleRender();
+      }
+    }
+    refreshPastedThumbnails(missing);
+  }
+
+  private void pumpHomeThumbnails() {
+    if (destroyed || homeThumbPaused || !ready || renderer == null || homeImages == null
+        || exporting || activeImport != null || batchImportRunning || mainPreviewPending()
+        || homeImages.pendingWrites() >= 2) return;
+    ThumbnailWorkQueue.Job job = homeThumbJobs.poll(homeImages::visibilityRank);
+    if (job == null) return;
+    Frame frame = findFrame(job.id);
+    if (frame == null || !job.params.equals(frame.params) || frame.id.equals(activeId)) {
+      homeThumbJobs.invalidate(job.id);
+      homeThumbJobs.finish(job);
+      main.post(this::pumpHomeThumbnails);
+      return;
+    }
+    final String path = frame.path;
+    final SpectralRenderer activeRenderer = renderer;
+    final int rendererGeneration = engineBootGeneration;
+    worker.execute(() -> {
+      Bitmap made = null;
+      boolean retry = false;
+      try {
+        if (!destroyed && homeThumbJobs.isCurrent(job)) {
+          retry = homeThumbPaused || mainPreviewPending() || exporting || batchImportRunning
+              || activeImport != null || activeRenderer != renderer
+              || rendererGeneration != engineBootGeneration;
+          if (!retry) {
+            JSONObject metadata = readPhotoMetadata(new File(path));
+            boolean raw = metadata.optBoolean("raw");
+            JSONObject recipe = new JSONObject(job.params);
+            Stock stock = find(films, recipe.optString("film_stock"));
+            JSONObject engineRecipe = new JSONObject(params(recipe, stock, raw));
+            engineRecipe.put("preview_long_edge", 1024);
+            String engineParams = engineRecipe.toString();
+            openedSource = null;
+            try {
+              if (raw) activeRenderer.openRaw(path, openParams(engineParams), 1024);
+              else activeRenderer.openFile(path, openParams(engineParams), 1024);
+              made = activeRenderer.render(engineParams, editParams(recipe, metadata), false, 1024);
+              ++homeThumbRenderCount;
+            } finally {
+              openedSource = null;
+            }
+          }
+        }
+      } catch (Throwable ex) {
+        android.util.Log.w("SpektraLensAndroid", "Refresh pasted home thumbnail for " + job.id, ex);
+      }
+      final Bitmap result = made;
+      final boolean again = retry;
+      thumbnailDeliveries.post(main, result, () -> {
+        boolean sameEngine = activeRenderer == renderer && rendererGeneration == engineBootGeneration;
+        if ((again || !sameEngine) && !destroyed) homeThumbJobs.retry(job);
+        else homeThumbJobs.finish(job);
+        Frame current = findFrame(job.id);
+        if (!destroyed && sameEngine && homeThumbJobs.isCurrent(job) && current != null
+            && job.params.equals(current.params) && result != null) {
+          homeImages.storeDevelopedOwned(job.id, result, () -> homeThumbJobs.isCurrent(job));
+        } else Bitmaps.release(result);
+        pumpHomeThumbnails();
+      });
+    });
+  }
+
+  private void beginBatchPaste() {
+    EditClipboard clipboard = loadEditClipboard();
+    if (clipboard == null || !clipboard.valid()) {
+      showNotice("还没有复制编辑参数");
+      return;
+    }
+    if (manageMode) exitManageMode();
+    batchPasteMode = true;
+    batchSelection.clear();
+    historySignature = null;
+    refreshHistory();
+    showNotice("点击缩略图勾选照片，最多选择 20 张");
+  }
+
+  private void exitBatchPaste() {
+    if (!batchPasteMode) return;
+    batchPasteMode = false;
+    batchSelection.clear();
+    historySignature = null;
+    refreshHistory();
+    showNotice("已退出批量选择");
+  }
+
+  private void toggleBatchSelection(Frame frame) {
+    if (batchSelection.remove(frame.id)) {
+      updateBatchSelectionVisual(frame, true);
+      updateBatchControls(loadEditClipboard());
+      return;
+    }
+    if (!EditClipboardPolicy.acceptsAnotherSelection(batchSelection.size())) {
+      showNotice("已超过最大选择数量");
+      return;
+    }
+    batchSelection.add(frame.id);
+    updateBatchSelectionVisual(frame, true);
+    updateBatchControls(loadEditClipboard());
+  }
+
+  private void updateBatchSelectionVisual(Frame frame, boolean animate) {
+    BatchCardViews views = batchCardViews.get(frame.id);
+    if (views == null) return;
+    boolean selected = selectionContains(frame);
+    views.photoBox.setContentDescription(
+        (selected ? "取消选择 " : "选择 ") + PhotoLabels.title(frame.name));
+    if (views.favoriteParams != null) {
+      int margin = dp(selectionActive() ? 16 + AppStyle.SELECTION_BADGE : 8);
+      if (views.favoriteParams.rightMargin != margin) {
+        views.favoriteParams.rightMargin = margin;
+        views.photoBox.requestLayout();
+      }
+    }
+    views.scrim.animate().cancel();
+    views.check.animate().cancel();
+    styleBatchCheck(views.check, selected);
+    if (!selectionActive()) {
+      views.scrim.setVisibility(View.GONE);
+      views.check.setVisibility(View.GONE);
+      views.scrim.setAlpha(1f);
+      views.check.setAlpha(1f);
+      views.check.setScaleX(1f);
+      views.check.setScaleY(1f);
+      return;
+    }
+    views.check.setVisibility(View.VISIBLE);
+    if (selected) {
+      views.scrim.setVisibility(View.VISIBLE);
+      if (!animate) {
+        views.scrim.setAlpha(1f);
+        views.check.setAlpha(1f);
+        views.check.setScaleX(1f);
+        views.check.setScaleY(1f);
+      } else {
+        views.scrim.setAlpha(0f);
+        views.check.setAlpha(0f);
+        views.check.setScaleX(.82f);
+        views.check.setScaleY(.82f);
+        views.scrim.animate().alpha(1f).setDuration(TOOL_MOTION_MS).start();
+        views.check
+            .animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(TOOL_MOTION_MS)
+            .start();
+      }
+    } else if (!animate) {
+      views.scrim.setVisibility(View.GONE);
+      views.scrim.setAlpha(1f);
+      views.check.setAlpha(1f);
+      views.check.setScaleX(1f);
+      views.check.setScaleY(1f);
+    } else {
+      views.scrim.animate().alpha(0f).setDuration(TOOL_MOTION_MS).start();
+      views.check
+          .animate()
+          .alpha(1f)
+          .scaleX(1f)
+          .scaleY(1f)
+          .setDuration(TOOL_MOTION_MS)
+          .withEndAction(
+              () -> {
+                if (!selectionActive()) {
+                  views.scrim.setVisibility(View.GONE);
+                  views.check.setVisibility(View.GONE);
+                } else if (!selectionContains(frame)) {
+                  views.scrim.setVisibility(View.GONE);
+                }
+                views.scrim.setAlpha(1f);
+                views.check.setAlpha(1f);
+                views.check.setScaleX(1f);
+                views.check.setScaleY(1f);
+              })
+          .start();
+    }
+  }
+
+  private void styleBatchCheck(ImageView check, boolean selected) {
+    GradientDrawable circle = new GradientDrawable();
+    circle.setShape(GradientDrawable.OVAL);
+    circle.setColor(selected ? GOLD : 0x66000000);
+    circle.setStroke(Math.max(1, dp(selected ? 0 : 1)), Color.WHITE);
+    check.setBackground(circle);
+    check.setImageResource(R.drawable.ic_material_check);
+    check.setImageTintList(ColorStateList.valueOf(AppStyle.ON_PRIMARY));
+    check.setImageAlpha(selected ? 255 : 0);
+    check.setPadding(dp(4), dp(4), dp(4), dp(4));
+    check.setContentDescription(selected ? "已选择" : "未选择");
+  }
+
+  private void pasteToBatch() {
+    EditClipboard clipboard = loadEditClipboard();
+    if (clipboard == null || !clipboard.valid()) {
+      showNotice("还没有复制编辑参数");
+      return;
+    }
+    saveActiveFrame();
+    ArrayList<Frame> targets = new ArrayList<>();
+    ArrayList<String> ids = new ArrayList<>();
+    for (String id : batchSelection) {
+      Frame frame = findFrame(id);
+      if (frame != null) {
+        targets.add(frame);
+        ids.add(id);
+      }
+    }
+    if (!EditClipboardPolicy.validBatch(clipboard.params, targets, ids, clipboard.sourceId)) {
+      showNotice("请选择 1 至 20 张照片");
+      return;
+    }
+    try {
+      new JSONObject(clipboard.params);
+    } catch (JSONException error) {
+      showNotice("复制参数已损坏，请重新复制");
+      return;
+    }
+    LinkedHashMap<String, String> previous = new LinkedHashMap<>();
+    LinkedHashMap<String, Boolean> previousEdited = new LinkedHashMap<>();
+    for (Frame frame : targets) {
+      previous.put(frame.id, frame.params);
+      previousEdited.put(frame.id, frame.edited);
+    }
+    int count = targets.size();
+    for (Frame frame : targets) applyPastedParams(frame, clipboard.params);
+    if (!writeLibrary()) {
+      for (Frame frame : targets) {
+        String old = previous.get(frame.id);
+        if (old != null) {
+          applyPastedParams(frame, old);
+          frame.edited = Boolean.TRUE.equals(previousEdited.get(frame.id));
+        }
+      }
+      refreshPastedThumbnails(targets);
+      showNotice("批量粘贴失败，照片未修改");
+      return;
+    }
+    batchPasteMode = false;
+    batchSelection.clear();
+    historySignature = null;
+    refreshHistory();
+    refreshPastedThumbnails(targets);
+    showNotice("已粘贴到 " + count + " 张照片");
+  }
+
+  private void exportFrame(Frame frame) {
+    if (destroyed || exporting || !ready || frame == null) {
+      showNotice("显影引擎暂不可用，请稍后重试");
+      return;
+    }
+    saveActiveFrame();
+    if (frame.id.equals(activeId) && developed != null && !developed.isRecycled()) {
+      exportOptions();
+      return;
+    }
+    final int generation = ++homeExportGeneration;
+    int ticket = ++revision;
+    showNotice("正在准备导出…");
+    worker.execute(
+        () -> {
+          try {
+            LoadedPhoto loaded = readPhoto(new File(frame.path), 1024);
+            try {
+              saveThumbnail(frame.id, loaded.bitmap);
+            } catch (IOException thumbError) {
+              android.util.Log.w("SpektraLensExport", "Refresh export thumbnail", thumbError);
+            }
+            ui(
+                () -> {
+                  if (destroyed || ticket != revision || generation != homeExportGeneration) {
+                    Bitmaps.release(loaded.bitmap);
+                    return;
+                  }
+                  adopt(loaded, false);
+                  developed = null;
+                  activeId = frame.id;
+                  filename = frame.name;
+                  try {
+                    settings = new JSONObject(frame.params);
+                  } catch (JSONException ignored) {
+                    settings = new JSONObject();
+                  }
+                  defaults();
+                  filmCategory = category(find(films, settings.optString("film_stock")));
+                  committed = settings.toString();
+                  undoStack.clear();
+                  redoStack.clear();
+                  editorNeedsSync = true;
+                  prefs
+                      .edit()
+                      .putString("activeId", activeId)
+                      .putString("filename", filename)
+                      .apply();
+                  fileLabel.setText(filename);
+                  photo.images(source, null);
+                  photo.resetZoom();
+                  scheduleRender(
+                      () -> {
+                        if (!destroyed
+                            && generation == homeExportGeneration
+                            && frame.id.equals(activeId)) {
+                          homeExportGeneration++;
+                          exportOptions();
+                        }
+                      });
+                });
+          } catch (Throwable ex) {
+            android.util.Log.e("SpektraLensExport", "Prepare home export", ex);
+            ui(
+                () -> {
+                  if (generation == homeExportGeneration)
+                    showNotice("照片准备失败，请重试");
+                });
+          }
+        });
+  }
+
   private void confirmRemove(Frame frame) {
     new Haptics.DialogBuilder(this)
-        .setTitle("移除这张照片？")
+        .setTitle("删除这张照片？")
         .setMessage("删除应用内的照片副本与编辑记录。手机相册中的原照片不受影响。")
         .setPositiveButton(
-            "移除",
+            "删除",
             (d, n) -> {
               if (exporting) return;
-              library.remove(frame);
-              new File(frame.path).delete();
-              new File(new File(getFilesDir(), "developed"), frame.id + ".jpg").delete();
-              saveLibrary();
+              int index = library.indexOf(frame);
+              if (index < 0) return;
+              library.remove(index);
+              if (!writeLibrary()) {
+                library.add(Math.min(index, library.size()), frame);
+                sortLibrary();
+                showNotice("删除失败，照片仍保留在应用中");
+                return;
+              }
+              EditClipboard clipboard = loadEditClipboard();
+              if (clipboard != null && frame.id.equals(clipboard.sourceId))
+                prefs.edit().remove("edit_clipboard").apply();
+              removeFrameArtifacts(frame);
+              if (batchPasteMode && batchSelection.isEmpty()) batchPasteMode = false;
+              historySignature = null;
+              if (library.isEmpty()) {
+                new File(getFilesDir(), "source.img").delete();
+                loadDemoAction();
+              } else if (activeId.equals(frame.id)) {
+                loadDemoAction();
+              }
               refreshHistory();
-              homeImages.remove(new File(frame.path));
-              homeImages.removeDeveloped(frame.id);
-              refreshStrip();
-              if (activeId.equals(frame.id)) loadDemoAction();
+              syncHeroLook();
+              showHome();
             })
         .setNegativeButton("取消", null)
         .show();
+  }
+
+  /** Apply the unedited-photo entry state without recording it as a user adjustment. */
+  private boolean prepareUneditedPhoto(Frame frame, String initialSettings) {
+    boolean firstEntry = !frame.id.equals(editorPhotoId);
+    editorPhotoId = frame.id;
+    if (!firstEntry || frame.edited || initialSettings != null) return false;
+    String previous = settings.toString();
+    set("film_stock", defaultFilmStock());
+    selectedTab = 0;
+    filmCategory = "全部";
+    panelCollapsed = false;
+    categoryScrollX.clear();
+    pendingFilmScrollX = 0;
+    committed = settings.toString();
+    return !previous.equals(committed);
+  }
+
+  /** Every Home editing entry opens the film tool, keeping the saved recipe. */
+  private void editFrameFromHome(Frame frame) {
+    if (exporting || !ready) return;
+    selectedTab = 0;
+    panelCollapsed = false;
+    editorNeedsSync = true;
+    openFrame(frame);
   }
 
   private void openFrame(Frame frame) {
@@ -3702,6 +5552,14 @@ public final class MainActivity extends Activity {
   private void openFrame(Frame frame, String initialSettings) {
     if (exporting || !ready) return;
     if (frame.id.equals(activeId)) {
+      boolean unedited =
+          !frame.id.equals(editorPhotoId) && !frame.edited && initialSettings == null;
+      boolean defaultChanged = prepareUneditedPhoto(frame, initialSettings);
+      if (editorNeedsSync || unedited) {
+        updateStockLabels();
+        buildPanel();
+        editorNeedsSync = false;
+      }
       showEditor();
       if (initialSettings != null) {
         try {
@@ -3713,7 +5571,7 @@ public final class MainActivity extends Activity {
         filmCategory = category(find(films, settings.optString("film_stock")));
         buildPanel();
         scheduleRender();
-      } else if (developed == null) {
+      } else if (defaultChanged || developed == null) {
         // Startup restores the source on Home and defers developing until this photo is opened.
         scheduleRender();
       }
@@ -3722,7 +5580,7 @@ public final class MainActivity extends Activity {
     saveActiveFrame();
     int ticket = ++revision;
     showEditor();
-    setStatus("读取底片与编辑记录…", true);
+    setStatus("读取照片与编辑记录…", true);
     exportButton.setEnabled(false);
     worker.execute(
         () -> {
@@ -3748,6 +5606,7 @@ public final class MainActivity extends Activity {
                   }
                   defaults();
                   filmCategory = category(find(films, settings.optString("film_stock")));
+                  prepareUneditedPhoto(frame, initialSettings);
                   committed = settings.toString();
                   undoStack.clear();
                   redoStack.clear();
@@ -3761,8 +5620,8 @@ public final class MainActivity extends Activity {
                   fileLabel.setText(filename);
                   photo.images(source, null);
                   photo.resetZoom();
-                  refreshStrip();
                   buildPanel();
+                  editorNeedsSync = false;
                   scheduleRender();
                 });
           } catch (Throwable ex) {
@@ -3792,6 +5651,7 @@ public final class MainActivity extends Activity {
     } catch (JSONException ex) {
       return;
     }
+    normalizePaper();
     committed = settings.toString();
     filmCategory = category(find(films, settings.optString("film_stock")));
     buildPanel();
@@ -3820,7 +5680,7 @@ public final class MainActivity extends Activity {
             this, dimensions, outputWidth, outputHeight, developed,
             options -> {
               if (sourceFile != selectedSource || revision != selectedRevision) {
-                Toast.makeText(this, "照片已更新，请重新打开导出面板", Toast.LENGTH_SHORT).show();
+                showNotice("照片已更新，请重新打开导出面板");
                 return;
               }
               export(options);
@@ -3843,6 +5703,7 @@ public final class MainActivity extends Activity {
 
   private void lock(boolean value) {
     exporting = value;
+    if (!value) main.post(this::pumpHomeThumbnails);
     for (View v : controls) v.setEnabled(!value);
     exportButton.setEnabled(!value && developed != null);
     updateHistoryButtons();
@@ -4016,7 +5877,8 @@ public final class MainActivity extends Activity {
                   exportButton.setText("导出照片");
                   if (mode == 3) {
                     Uri shared =
-                        Uri.parse("content://app.spektrafilm.files/" + sharedFile.getName());
+                        Uri.parse(
+                            "content://" + getPackageName() + ".files/" + sharedFile.getName());
                     Intent share = new Intent(Intent.ACTION_SEND);
                     share.setType(mime);
                     share.putExtra(Intent.EXTRA_STREAM, shared);
@@ -4154,13 +6016,13 @@ public final class MainActivity extends Activity {
                       .setPositiveButton("关闭", null)
                       .show();
                 } catch (IOException e) {
-                  Toast.makeText(this, e.toString(), Toast.LENGTH_LONG).show();
+                  showNotice(e.toString(), true);
                 }
               })
           .setPositiveButton("关闭", null)
           .show();
     } catch (IOException ex) {
-      Toast.makeText(this, ex.toString(), Toast.LENGTH_LONG).show();
+      showNotice(ex.toString(), true);
     }
   }
 
@@ -4176,6 +6038,7 @@ public final class MainActivity extends Activity {
     if (updates != null) updates.resume();
     if (flowingBackground != null) flowingBackground.setHostResumed(true);
     if (gallerySheet != null && gallerySheet.isShowing()) gallerySheet.refresh();
+    if (batchImportRunning && homeImportProgress != null) homeImportProgress.setAnimating(true);
   }
 
   @Override
@@ -4184,12 +6047,15 @@ public final class MainActivity extends Activity {
     finishPendingSliderTaps();
     updateEditorLayout();
     if (flowingBackground != null) flowingBackground.setHostResumed(false);
+    AppNotice.clear(getWindow());
+    if (homeImportProgress != null) homeImportProgress.setAnimating(false);
     super.onPause();
   }
 
   @Override
   protected void onDestroy() {
     if (photo != null) photo.cancelPendingSingleTap();
+    if (batchImportRunning) cancelBatchImport();
     cancelPanelAnimation();
     finishToolAnimations();
     if (flowingBackground != null) flowingBackground.setHostResumed(false);
@@ -4207,6 +6073,8 @@ public final class MainActivity extends Activity {
     }
     if (updates != null) updates.close();
     destroyed = true;
+    homeThumbJobs.clear();
+    thumbnailDeliveries.close();
     ++thumbGeneration;
     for (ImageView view : thumbTargets.values()) view.setImageDrawable(null);
     for (Bitmap cached : filmThumbs.values()) Bitmaps.release(cached);
@@ -4226,6 +6094,7 @@ public final class MainActivity extends Activity {
     if (current != null) current.close();
     engine = 0;
     worker.shutdown();
+    thumbnailIo.shutdown();
     super.onDestroy();
   }
 }

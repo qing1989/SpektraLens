@@ -40,7 +40,8 @@ public final class FilmArtworkInstrumentedTest extends InstrumentationTestCase {
     }
     File dir = new File(context.getFilesDir(), "film-canisters-01");
     assertTrue(dir.isDirectory() || dir.mkdirs());
-    Bitmap sheet = Bitmap.createBitmap(1200, 1160, Bitmap.Config.ARGB_8888);
+    Bitmap sheet = Bitmap.createBitmap(
+        1200, 168 + ((films.length() + 4) / 5) * 248, Bitmap.Config.ARGB_8888);
     Canvas c = new Canvas(sheet);
     c.drawColor(0xff191a1b);
     Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
@@ -50,7 +51,7 @@ public final class FilmArtworkInstrumentedTest extends InstrumentationTestCase {
     c.drawText("SpektraLens", 46, 67, p);
     p.setColor(0xffb8b7b2);
     p.setTextSize(20);
-    c.drawText("胶卷图标  /  20 款", 47, 105, p);
+    c.drawText("胶卷图标  /  " + films.length() + " 款", 47, 105, p);
     p.setColor(0xff414242);
     c.drawRect(44, 127, 1156, 128, p);
     ArrayList<Bitmap> seen = new ArrayList<>();
@@ -70,13 +71,14 @@ public final class FilmArtworkInstrumentedTest extends InstrumentationTestCase {
       p.setColor(0xffeceae5);
       p.setTextSize(20);
       String title =
-          name.replaceFirst("^(Kodak|Fujifilm) ", "").replace(" (Push ", "  +").replace(")", "");
+          name.replaceFirst("^(Kodak|Fujifilm|Ilford) ", "").replace(" (Push ", "  +").replace(")", "");
       c.drawText(title, x + 112, y + 200, p);
       p.setTextSize(13);
       p.setColor(0xff9c9d9d);
-      c.drawText(name.startsWith("Kodak") ? "KODAK" : "FUJIFILM", x + 112, y + 222, p);
+      c.drawText(id.substring(0, id.indexOf('_')).toUpperCase(java.util.Locale.ROOT),
+          x + 112, y + 222, p);
     }
-    assertEquals(20, seen.size());
+    assertEquals(films.length(), seen.size());
     png(sheet, new File(dir, "overview.png"));
     seen.forEach(Bitmap::recycle);
     sheet.recycle();

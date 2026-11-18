@@ -18,6 +18,8 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.function.BooleanSupplier;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -42,7 +44,45 @@ final class HomePhotoImages implements AutoCloseable {
   private final ViewTreeObserver.OnGlobalLayoutListener layoutListener = this::loadVisible;
   private SpectralRenderer renderer;
   private Request running;
-  private boolean closed;
+  private volatile boolean closed;
+  private Runnable renderDemandListener;
+  private final ThumbnailWriteGate writes = new ThumbnailWriteGate();
+  private final PendingBitmaps deliveries = new PendingBitmaps();
+  private final java.util.concurrent.atomic.AtomicInteger pendingWrites =
+      new java.util.concurrent.atomic.AtomicInteger();
+
+  int pendingWrites() { return pendingWrites.get(); }
+
+  void setRenderDemandListener(Runnable listener) {
+    renderDemandListener = listener;
+  }
+
+  int visibilityRank(String id) {
+    int rank = 2;
+    for (Item item : items.values()) {
+      if (matches(item, id) && item.view.isShown() && item.view.getLocalVisibleRect(visibleRect))
+        rank = Math.min(rank, item.hero ? 0 : 1);
+    }
+    return rank;
+  }
+
+  private static boolean matches(Item item, String id) {
+    return item.developed != null && (id + ".jpg").equals(item.developed.getName());
+  }
+
+  void invalidateDeveloped(String id) {
+    writes.invalidate(id);
+    for (Item item : items.values()) {
+      if (!matches(item, id)) continue;
+      ++item.imageVersion;
+      if (running != null && running.item == item) running.current = false;
+      item.requestedWidth = item.requestedHeight = 0;
+    }
+  }
+
+  boolean isWriting(String id) {
+    return writes.isWriting(id);
+  }
 
   private static final class Item {
     final ImageView view;
@@ -51,6 +91,7 @@ final class HomePhotoImages implements AutoCloseable {
     // 编辑器退出时存下的显影效果小图；没编辑过的底片没有这个文件，显示原片。
     File developed;
     int requestedWidth, requestedHeight;
+    long imageVersion;
     int failures;
     boolean waitingForRaw;
 
@@ -66,12 +107,15 @@ final class HomePhotoImages implements AutoCloseable {
   private static final class Request {
     final Item item;
     final int width, height;
+    final long imageVersion;
+    boolean delivered;
     final SpectralRenderer renderer;
     volatile boolean current = true;
     boolean waitingForRaw;
 
     Request(Item item, int width, int height, SpectralRenderer renderer) {
       this.item = item;
+      this.imageVersion = item.imageVersion;
       this.width = width;
       this.height = height;
       this.renderer = renderer;
@@ -84,10 +128,9 @@ final class HomePhotoImages implements AutoCloseable {
     this.scroll = scroll;
     this.rawWorker = rawWorker;
     this.maxEdge = HomeImageDecoder.maxEdge(context);
-    // v2: v1 was written while the area resize dropped whole columns, so those PNGs have vertical
-    // hairlines baked in. The file name only carries size and mtime, so bumping the directory is
-    // the only way to make already-cached previews regenerate.
-    cache = new File(context.getCacheDir(), "home-images-v2");
+    // v3: the bundled demo photo changed, and the demo cache key ("demo") has no mtime. Bumping
+    // the directory also discards v1, whose area resize left vertical hairlines in the PNGs.
+    cache = new File(context.getCacheDir(), "home-images-v3");
     // A previous run killed mid-write leaves image-*.pending behind; the size cap below only
     // covered the finished PNGs, so those temp files used to pile up forever.
     io.execute(this::sweepPending);
@@ -97,6 +140,7 @@ final class HomePhotoImages implements AutoCloseable {
 
   private void sweepPending() {
     deleteTree(new File(context.getCacheDir(), "home-images-v1"));
+    deleteTree(new File(context.getCacheDir(), "home-images-v2"));
     File[] files = cache.listFiles();
     if (files == null) return;
     for (File file : files) if (file.getName().endsWith(".pending")) file.delete();
@@ -130,12 +174,24 @@ final class HomePhotoImages implements AutoCloseable {
       if (Objects.equals(existing.developed, developed)) return false;
       // 照片没换、显影效果换了（编辑后回首页）：只换来源并强制下次加载。
       existing.developed = developed;
+      ++existing.imageVersion;
       existing.requestedWidth = existing.requestedHeight = 0;
       return false;
     }
     if (running != null && running.item.view == view) running.current = false;
     items.put(view, new Item(view, original, developed, legacy, hero));
     return true;
+  }
+
+  /** Forces a visible tile to decode again, e.g. when the banner falls back to the demo asset. */
+  void reload(ImageView view) {
+    Item item = items.get(view);
+    if (item == null) return;
+    if (running != null && running.item == item) running.current = false;
+    ++item.imageVersion;
+    item.requestedWidth = item.requestedHeight = 0;
+    item.failures = 0;
+    loadVisible();
   }
 
   void clearCards() {
@@ -154,6 +210,7 @@ final class HomePhotoImages implements AutoCloseable {
 
   /** 底片从历史里移除时，把它名下的显影小图缓存一并清掉。 */
   void removeDeveloped(String id) {
+    invalidateDeveloped(id);
     io.execute(
         () -> {
           File[] files = cache.listFiles((dir, name) -> name.startsWith("developed-" + id + ".jpg"));
@@ -161,48 +218,107 @@ final class HomePhotoImages implements AutoCloseable {
         });
   }
 
-  /**
-   * 编辑器退回首页时存一张显影效果小图（最长边 1024，覆盖首页大图与卡片的真实显示尺寸），
-   * 首页从此不碰渲染引擎也能显示编辑后的样子。原片位图随时可能被编辑器回收，所以先在
-   * 主线程降采样出一份副本再交给 io 线程；本方法要在首页卡片加载之前调用，io 单线程
-   * 先写后读，卡片读到的才是新文件。
-   */
+  /** Main-preview bitmaps remain owned by the editor, so take one bounded copy. */
   void storeDeveloped(String id, Bitmap image) {
     if (closed || id == null || image == null || image.isRecycled()) return;
     float scale = Math.min(1, 1024f / Math.max(image.getWidth(), image.getHeight()));
-    int w = Math.max(1, Math.round(image.getWidth() * scale));
-    int h = Math.max(1, Math.round(image.getHeight() * scale));
-    Bitmap scaled = Bitmap.createScaledBitmap(image, w, h, true);
-    if (scaled == image) scaled = image.copy(Bitmap.Config.ARGB_8888, false);
-    if (scaled == null) return;
-    final Bitmap small = scaled;
-    io.execute(
-        () -> {
-          writeDeveloped(id, small);
-          Bitmaps.release(small);
-          main.post(() -> { if (!closed) loadVisible(); });
-        });
+    Bitmap small = Bitmap.createScaledBitmap(image,
+        Math.max(1, Math.round(image.getWidth() * scale)),
+        Math.max(1, Math.round(image.getHeight() * scale)), true);
+    if (small == image) small = image.copy(Bitmap.Config.ARGB_8888, false);
+    if (small != null) storeDevelopedOwned(id, small, () -> true);
   }
 
-  private void writeDeveloped(String id, Bitmap small) {
-    try {
-      File dir = new File(context.getFilesDir(), "developed");
-      if (!dir.isDirectory() && !dir.mkdirs()) return;
-      File temp = File.createTempFile("look-", ".pending", dir);
-      try (FileOutputStream out = new FileOutputStream(temp)) {
-        if (!small.compress(Bitmap.CompressFormat.JPEG, 88, out)) {
-          temp.delete();
-          return;
+  /** Takes ownership. Visible crops are posted before JPEG persistence; no JPEG/PNG roundtrip. */
+  void storeDevelopedOwned(String id, Bitmap small, BooleanSupplier current) {
+    if (closed || !current.getAsBoolean()) {
+      Bitmaps.release(small);
+      return;
+    }
+    final long version = writes.begin(id);
+    pendingWrites.incrementAndGet();
+    ArrayList<Request> visible = new ArrayList<>();
+    for (Item item : items.values()) {
+      if (!matches(item, id)) continue;
+      ++item.imageVersion;
+      if (running != null && running.item == item) running.current = false;
+      item.requestedWidth = item.requestedHeight = 0;
+      item.failures = 0;
+      ImageView view = item.view;
+      if (!view.isShown() || !view.getLocalVisibleRect(visibleRect)
+          || view.getWidth() <= 0 || view.getHeight() <= 0) continue;
+      double scale = Math.min(1, maxEdge / (double) Math.max(view.getWidth(), view.getHeight()));
+      int width = Math.max(1, (int) Math.round(view.getWidth() * scale));
+      int height = Math.max(1, (int) Math.round(view.getHeight() * scale));
+      item.requestedWidth = width;
+      item.requestedHeight = height;
+      visible.add(new Request(item, width, height, renderer));
+    }
+    io.execute(() -> {
+      try {
+        for (Request request : visible) {
+          if (!writeCurrent(id, version, current)) break;
+          Bitmap copy = small.copy(Bitmap.Config.ARGB_8888, false);
+          if (copy == null) continue;
+          Bitmap crop = HomeImageDecoder.crop(copy, request.width, request.height);
+          deliveries.post(main, crop, () -> {
+            Item item = request.item;
+            if (writeCurrent(id, version, current) && items.get(item.view) == item
+                && item.imageVersion == request.imageVersion
+                && item.requestedWidth == request.width && item.requestedHeight == request.height
+                && item.view.isShown()) {
+              item.view.setImageBitmap(crop);
+              request.delivered = true;
+            } else Bitmaps.release(crop);
+          });
         }
+        writeDeveloped(id, small, version, current);
+      } catch (Exception ex) {
+        Log.w("SpektraLensAndroid", "Developed thumbnail unavailable", ex);
+      } finally {
+        Bitmaps.release(small);
+        writes.finish(id, version);
+        pendingWrites.decrementAndGet();
+        main.post(() -> {
+          if (closed) return;
+          for (Request request : visible) {
+            Item item = request.item;
+            if (!request.delivered && items.get(item.view) == item
+                && item.imageVersion == request.imageVersion)
+              item.requestedWidth = item.requestedHeight = 0;
+          }
+          loadVisible();
+        });
       }
-      if (!temp.renameTo(new File(dir, id + ".jpg"))) temp.delete();
-    } catch (IOException ex) {
-      Log.w("SpektraLensAndroid", "Developed thumbnail unavailable", ex);
+    });
+  }
+
+  private boolean writeCurrent(String id, long version, BooleanSupplier current) {
+    return !closed && writes.isCurrent(id, version) && current.getAsBoolean();
+  }
+
+  private void writeDeveloped(String id, Bitmap small, long version, BooleanSupplier current)
+      throws IOException {
+    if (!writeCurrent(id, version, current)) return;
+    File dir = new File(context.getFilesDir(), "developed");
+    if (!dir.isDirectory() && !dir.mkdirs()) return;
+    File temp = File.createTempFile("look-", ".pending", dir);
+    try {
+      try (FileOutputStream out = new FileOutputStream(temp)) {
+        if (!small.compress(Bitmap.CompressFormat.JPEG, 88, out)) return;
+      }
+      // Invalidation and commit share a lock: an old result cannot republish a deleted look.
+      File target = new File(dir, id + ".jpg");
+      temp.setLastModified(Math.max(System.currentTimeMillis(), target.lastModified() + 1));
+      writes.commit(id, version, current, () -> temp.renameTo(target));
+    } finally {
+      temp.delete();
     }
   }
 
   void loadVisible() {
     if (closed) return;
+    if (renderDemandListener != null) renderDemandListener.run();
     Request next = null;
     for (Item item : items.values()) {
       ImageView view = item.view;
@@ -226,6 +342,7 @@ final class HomePhotoImages implements AutoCloseable {
       if (running == null
           && next == null
           && item.failures < MAX_FAILURES
+          && (item.developed == null || !isWriting(item.developed.getName().replaceFirst("\\.jpg$", "")))
           && (width != item.requestedWidth || height != item.requestedHeight)) {
         next = new Request(item, width, height, renderer);
       }
@@ -244,7 +361,7 @@ final class HomePhotoImages implements AutoCloseable {
             if (request.current) Log.w("SpektraLensAndroid", "Home image unavailable", ex);
           } finally {
             Bitmap result = image;
-            main.post(() -> finish(request, result));
+            deliveries.post(main, result, () -> finish(request, result));
           }
         });
   }
@@ -252,7 +369,8 @@ final class HomePhotoImages implements AutoCloseable {
   private void finish(Request request, Bitmap bitmap) {
     running = null;
     Item item = request.item;
-    if (!closed && request.current && items.get(item.view) == item) {
+    if (!closed && request.current && item.imageVersion == request.imageVersion
+        && items.get(item.view) == item) {
       if (bitmap != null) item.view.setImageBitmap(bitmap);
       item.waitingForRaw = request.waitingForRaw;
       if (item.waitingForRaw && renderer != null) {
@@ -261,7 +379,7 @@ final class HomePhotoImages implements AutoCloseable {
       }
     } else {
       Bitmaps.release(bitmap);
-      if (items.get(item.view) == item) {
+      if (items.get(item.view) == item && item.imageVersion == request.imageVersion) {
         // Reset both so the next layout pass retries. Leaving them set made a failed decode look
         // like a finished one: the cell stayed blank until it scrolled out and back in.
         if (bitmap == null && request.current) item.failures++;
@@ -313,7 +431,7 @@ final class HomePhotoImages implements AutoCloseable {
     Bitmap fallback =
         item.developed == null || !item.developed.isFile() ? read(item.legacy) : null;
     if (fallback != null) {
-      main.post(
+      deliveries.post(main, fallback,
           () -> {
             if (!closed
                 && request.current
@@ -401,10 +519,14 @@ final class HomePhotoImages implements AutoCloseable {
   @Override
   public void close() {
     closed = true;
+    writes.close();
+    deliveries.close();
     if (running != null) running.current = false;
     scroll.getViewTreeObserver().removeOnGlobalLayoutListener(layoutListener);
     scroll.setOnScrollChangeListener(null);
     items.clear();
-    io.shutdownNow();
+    renderDemandListener = null;
+    // Drain transferred bitmaps so every queued owner gets its finally/recycle path.
+    io.shutdown();
   }
 }

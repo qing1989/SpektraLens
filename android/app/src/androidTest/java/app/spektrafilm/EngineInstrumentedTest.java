@@ -171,22 +171,36 @@ public final class EngineInstrumentedTest extends InstrumentationTestCase {
       text = out.toString("UTF-8");
     }
     JSONObject catalog = new JSONObject(text);
-    assertEquals(20, catalog.getJSONArray("films").length());
-    assertEquals(8, catalog.getJSONArray("papers").length());
+    assertEquals(25, catalog.getJSONArray("films").length());
+    assertEquals(9, catalog.getJSONArray("papers").length());
     Bitmap input = chart();
     NativeEngine.open(engine, input, params("{}"));
-    for (int i = 0; i < 20; i++) {
-      String id = catalog.getJSONArray("films").getJSONObject(i).getString("stock");
-      Bitmap b = NativeEngine.render(engine, params("{\"film_stock\":\"" + id + "\"}"), true);
+    for (int i = 0; i < catalog.getJSONArray("films").length(); i++) {
+      JSONObject film = catalog.getJSONArray("films").getJSONObject(i);
+      String id = film.getString("stock");
+      Bitmap b = NativeEngine.render(
+          engine, stockParams(id, film.optString("target_print"),
+              "positive".equals(film.getString("type"))), true);
       assertTrue(id + " has nonempty output", brightness(b) > 1 && brightness(b) < 254);
       b.recycle();
     }
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < catalog.getJSONArray("papers").length(); i++) {
       String id = catalog.getJSONArray("papers").getJSONObject(i).getString("stock");
-      Bitmap b = NativeEngine.render(engine, params("{\"print_stock\":\"" + id + "\"}"), true);
+      String film = FilmStockPolicy.SILVER_PAPER.equals(id) ? "kodak_tri_x_400" : "kodak_portra_400";
+      Bitmap b = NativeEngine.render(engine, stockParams(film, id, false), true);
       assertTrue(id + " has nonempty output", brightness(b) > 1 && brightness(b) < 254);
       b.recycle();
     }
     input.recycle();
+  }
+
+  private String stockParams(String film, String paper, boolean positive) throws Exception {
+    JSONObject wire = new JSONObject(params("{}"));
+    wire.put("film_stock", film);
+    wire.put("scan_film", positive);
+    for (java.util.Map.Entry<String, Object> entry :
+        FilmStockPolicy.renderOverrides(film, paper, paper, 0).entrySet())
+      wire.put(entry.getKey(), entry.getValue());
+    return wire.toString();
   }
 }

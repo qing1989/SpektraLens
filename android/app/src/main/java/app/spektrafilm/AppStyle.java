@@ -31,6 +31,7 @@ final class AppStyle {
       PRIMARY = 0xfff7f3ea,
       ON_PRIMARY = 0xff16141a,
       GOLD = 0xffe0b47a,
+      DANGER = 0xffe2a092,
       SWITCH_TRACK_ON = 0xff8f6a3e,
       SWITCH_TRACK_OFF = 0xff4a4a4e,
       SWITCH_THUMB_OFF = 0xffd0d0d2,
@@ -62,6 +63,9 @@ final class AppStyle {
 
   // 触控基准：主操作 48、常规 44。低于 44 的只留给纯展示元素。
   static final int TOUCH_PRIMARY = 48, TOUCH_MIN = 44;
+
+  // Thumbnail selection is decorative; the whole photo remains the selection touch target.
+  static final int SELECTION_BADGE = 22;
 
   static final int FONT_REGULAR = 400, FONT_MEDIUM = 500, FONT_SEMIBOLD = 600,
       FONT_BOLD = 700;
@@ -297,12 +301,27 @@ final class AppStyle {
                         dialog.getContext().getResources().getDisplayMetrics().widthPixels
                             - dp(dialog.getContext(), 32));
                 window.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT);
-                styleDialogTree(
-                    decor,
+                final int titleId =
                     dialog
                         .getContext()
                         .getResources()
-                        .getIdentifier("alertTitle", "id", "android"));
+                        .getIdentifier("alertTitle", "id", "android");
+                styleDialogTree(decor, titleId);
+                // 列表只保留可见行；新绑定或复用的行在加入 ViewGroup 时重新套用字号，
+                // 不监听全局布局，避免 setTextSize / setLineSpacing 反过来触发布局循环。
+                ListView list = dialog.getListView();
+                if (list != null) {
+                  list.setOnHierarchyChangeListener(
+                      new ViewGroup.OnHierarchyChangeListener() {
+                        public void onChildViewAdded(View parent, View child) {
+                          styleDialogTree(child, titleId);
+                        }
+
+                        public void onChildViewRemoved(View parent, View child) {
+                          // Nothing to release. Keeping the callback only styles newly bound rows.
+                        }
+                      });
+                }
                 TextView message = dialog.findViewById(android.R.id.message);
                 if (message != null) {
                   message.setTextColor(INK);
@@ -345,7 +364,17 @@ final class AppStyle {
 
   private static void styleDialogTree(View view, int titleId) {
     if (view instanceof TextView) {
-      setTypeface((TextView) view, view.getId() == titleId ? FONT_BOLD : FONT_REGULAR);
+      TextView text = (TextView) view;
+      boolean title = text.getId() == titleId;
+      setTypeface(text, title ? FONT_SEMIBOLD : FONT_REGULAR);
+      // 沿用页面字号阶梯，而不是系统默认的 22 / 16sp：标题 18，选项 13。
+      // 选项缩到正文档后长说明能保持单行；窄屏折行时补 2dp 行距，不再挤在一起。
+      if (title) {
+        text.setTextSize(TYPE_HEADING);
+      } else if (text.getId() == android.R.id.text1 && !(text instanceof Button)) {
+        text.setTextSize(TYPE_BODY);
+        text.setLineSpacing(dp(text.getContext(), 2), 1);
+      }
     }
     if (view instanceof ViewGroup) {
       ViewGroup group = (ViewGroup) view;

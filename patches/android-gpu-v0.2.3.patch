@@ -3908,3 +3908,48 @@ diff --git a/engine/src/shaders/vulkan/spk_zoom_bilinear_mirror.comp b/engine/sr
      uint ya, yb, xa, xb; float ty, tx;
      sample_axis(oy, SH, OH, ya, yb, ty);
      sample_axis(ox, SW, OW, xa, xb, tx);
+diff --git a/engine/src/shaders/vulkan/spk_highlight_headroom.comp b/engine/src/shaders/vulkan/spk_highlight_headroom.comp
+new file mode 100644
+--- /dev/null
++++ b/engine/src/shaders/vulkan/spk_highlight_headroom.comp
+@@ -0,0 +1,40 @@
++#version 450
++
++// Give highlight information back before the missing rem-jet layer halates it.
++layout(local_size_x = 256) in;
++layout(set = 0, binding = 0, std430) readonly buffer Input { float value[]; } input_data;
++layout(set = 0, binding = 1, std430) readonly buffer Parameters { float value[]; } parameters;
++layout(set = 0, binding = 2, std430) readonly buffer Count { uint value[]; } count_data;
++layout(set = 0, binding = 3, std430) writeonly buffer Output { float value[]; } output_data;
++
++// Pointwise launches are banded, so the dispatch base must be part of the index.
++layout(push_constant) uniform SpkDispatch { uint base; uint origin; uint read_bias; uint count; } spk_pc;
++
++uint spk_global_index() {
++    return spk_pc.base + gl_GlobalInvocationID.y * (gl_NumWorkGroups.x * gl_WorkGroupSize.x) + gl_GlobalInvocationID.x;
++}
++
++float smoothstep01(float t) {
++    t = clamp(t, 0.0, 1.0);
++    return t * t * (3.0 - 2.0 * t);
++}
++
++void main() {
++    uint lane = gl_GlobalInvocationID.y * (gl_NumWorkGroups.x * gl_WorkGroupSize.x) + gl_GlobalInvocationID.x;
++    if (lane >= spk_pc.count) return;
++    uint i = spk_global_index();
++    if (i >= count_data.value[0]) return;
++    uint base = 3u * i;
++    vec3 v = vec3(input_data.value[base], input_data.value[base + 1u], input_data.value[base + 2u]);
++    float m = max(v.x, max(v.y, v.z));
++    float gain = 1.0;
++    if (m > 0.0) {
++        float lm = log2(m);
++        float near_clip = smoothstep01((lm + log2(parameters.value[0]) - parameters.value[1]) * parameters.value[2]);
++        float over_floor = smoothstep01((lm + log2(parameters.value[4]) - parameters.value[5]) * parameters.value[6]);
++        gain = exp2(parameters.value[3] * near_clip * over_floor);
++    }
++    output_data.value[base] = v.x * gain;
++    output_data.value[base + 1u] = v.y * gain;
++    output_data.value[base + 2u] = v.z * gain;
++}

@@ -27,6 +27,9 @@ catalog=json.loads((ROOT/'android/app/src/main/assets/catalog.json').read_text()
 cases=[]
 for stock in catalog:
  params=dict(film_stock=stock['stock'],print_stock=stock['target_print'] or 'kodak_portra_endura',scan_film=stock['type']=='positive',input_color_space='sRGB',input_cctf_decoding=True,output_color_space='sRGB',output_cctf_encoding=True,auto_exposure=False,grain_active=False,glare_active=False,halation_active=False,scene_latitude_active=False,contrast_mask_active=False,overscan_active=False,date_imprint_active=False,exposure_compensation_ev=0,print_exposure=1,preview_long_edge=1024,film_format_mm=36)
+ if stock.get('monochrome'):
+  params.update(grain_sublayers_active=False,extended_dynamic_range=False,
+                c_filter_neutral=0,m_filter_neutral=0,y_filter_neutral=68)
  cases.append(dict(name=stock['stock'],params=params))
 extra=[('portra_exposure_up',{'exposure_compensation_ev':1.5}),('portra_exposure_down',{'exposure_compensation_ev':-2}),('portra_gamma',{'density_curve_gamma':1.4}),('portra_halation',{'halation_active':True}),('portra_auto_center',{'auto_exposure':True,'auto_exposure_method':'center_weighted'})]
 base=next(c['params'] for c in cases if c['name']=='kodak_portra_400')

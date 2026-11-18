@@ -1,11 +1,8 @@
-Bundled demo image: Fronalpstock big.jpg
-Author: Hannes Röst
-Source: https://commons.wikimedia.org/wiki/File:Fronalpstock_big.jpg
-License selected: Creative Commons Attribution-ShareAlike 3.0 Unported
-https://creativecommons.org/licenses/by-sa/3.0/
+Bundled demo image: film-edge macro ("胶片边缘"), 1600x900 JPEG (quality 90).
+Provided by the project author on 2026-11-18 for the in-app demo preview and
+for demo exports. No third-party attribution is asserted for this image.
 
-The bundled file is the 1280px Wikimedia thumbnail, without further image changes.
-The app's live simulated previews and exported versions are modified versions
-of this image. When redistributing those demo outputs, retain the attribution
-and apply CC BY-SA 3.0 (or a compatible license). This applies to the demo
-photograph and its adaptations, not to the user's own photographs.
+The previous bundled demo, Fronalpstock big.jpg by Hannes Roest (CC BY-SA 3.0),
+is no longer distributed with the application. Simulated outputs produced from
+that earlier image before this change remain adaptations under CC BY-SA 3.0.
+This notice does not relicense users' own photographs.

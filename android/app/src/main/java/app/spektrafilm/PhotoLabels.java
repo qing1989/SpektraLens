@@ -21,7 +21,7 @@ final class PhotoLabels {
     try (InputStream in = new FileInputStream(file)) {
       byte[] b = new byte[64];
       int n = in.read(b);
-      if (n >= 2 && (b[0] & 255) == 255 && (b[1] & 255) == 216) return "JPEG";
+      if (n >= 2 && (b[0] & 255) == 255 && (b[1] & 255) == 216) return "JPG";
       if (n >= 4 && b[0] == (byte) 137 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G') return "PNG";
       String header = new String(b, 0, Math.max(0, n), StandardCharsets.ISO_8859_1);
       if (header.startsWith("GIF8")) return "GIF";
@@ -45,6 +45,6 @@ final class PhotoLabels {
     Matcher extension = EXT.matcher(name);
     if (!extension.find()) return "RAW / 图片";
     String format = extension.group(1).toUpperCase(Locale.ROOT);
-    return format.equals("JPG") ? "JPEG" : format.equals("TIF") ? "TIFF" : format;
+    return format;
   }
 }

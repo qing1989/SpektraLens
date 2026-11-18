@@ -2,8 +2,8 @@
 
 **把一间光谱胶片实验室装进口袋。**
 
-[![版本](https://img.shields.io/badge/version-0.4.6-e0b47a?style=flat-square)](CHANGELOG.md)
-[![下载](https://img.shields.io/badge/download-APK%20v0.4.6-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
+[![版本](https://img.shields.io/badge/version-0.5.0-e0b47a?style=flat-square)](CHANGELOG.md)
+[![下载](https://img.shields.io/badge/download-APK%20v0.5.0-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
 [![平台](https://img.shields.io/badge/Android-10%2B-3ddc84?style=flat-square&logo=android&logoColor=white)](#兼容性)
 [![渲染](https://img.shields.io/badge/Vulkan-GPU%20%2B%20CPU%20%E5%9B%9E%E9%80%80-4a90d9?style=flat-square)](#工作原理)
 [![离线](https://img.shields.io/badge/100%25-%E6%9C%AC%E5%9C%B0%E6%98%BE%E5%BD%B1-8a8a8a?style=flat-square)](#为什么不是滤镜)
@@ -15,7 +15,7 @@ SpektraLens 是一个**跑在手机上的光谱胶片模拟器**。它不做 3×
 RAW 解码、光谱显影、相纸印相、调色、颗粒与光晕合成、编码写盘全部在设备端完成。**没有服务器、没有账号、不上传照片**；只有检查更新和下载新版本时会联网。
 
 <p align="center">
-  <b>20</b> 款胶片 &nbsp;·&nbsp; <b>8</b> 款相纸 &nbsp;·&nbsp; <b>81</b> 个波长 &nbsp;·&nbsp; <b>0</b> 次上传
+  <b>25</b> 款胶片 &nbsp;·&nbsp; <b>9</b> 款相纸 &nbsp;·&nbsp; <b>81</b> 个波长 &nbsp;·&nbsp; <b>0</b> 次上传
 </p>
 
 <p align="center">
@@ -43,7 +43,7 @@ RAW 解码、光谱显影、相纸印相、调色、颗粒与光晕合成、编�
   <img src="docs/images/03-paper.jpg" width="23%" alt="相纸与印相" />
 </p>
 <p align="center">
-  <sub><b>首页</b> 导入或继续最近的底片，卡片上标着已套用的胶卷 &nbsp;·&nbsp; <b>胶片</b> 20 款，按负片 / 电影 / 反转分类，一格一个效果 &nbsp;·&nbsp; <b>相纸</b> 8 款印相材料与印相亮度</sub>
+  <sub><b>首页</b> 导入或继续最近的底片，卡片上标着已套用的胶卷 &nbsp;·&nbsp; <b>胶片</b> 当前 25 款，按负片 / 电影 / 反转 / 黑白分类，一格一个效果 &nbsp;·&nbsp; <b>相纸</b> 当前 9 款印相材料与印相亮度</sub>
 </p>
 
 <p align="center">
@@ -63,7 +63,7 @@ RAW 解码、光谱显影、相纸印相、调色、颗粒与光晕合成、编�
   <sub><b>导出</b> JPEG 8 位 / PNG 16 位 / TIFF 16 位，JPEG 画质三档，先给体积再保存 &nbsp;·&nbsp; <b>关于</b> 版本、检查更新、上游与许可</sub>
 </p>
 
-> 截图取自 v0.4.3 实机运行。
+> 截图取自 v0.4.3 实机运行；当时为 20 款彩色胶片和 8 款彩色相纸，当前源码已增至 25 款胶片和 9 款相纸。
 
 ## 功能
 
@@ -71,13 +71,14 @@ RAW 解码、光谱显影、相纸印相、调色、颗粒与光晕合成、编�
 
 - 20 款彩色胶片：Kodak Portra 160 / 400 / 800（含 800 Push 1、Push 2）、Ektar 100、Gold 200、Ultramax 400、Ektachrome 100、Kodachrome 64、Vision3 50D / 200T / 250D / 500T、Verita 200D；Fujifilm C200、Pro 400H、X-Tra 400、Provia 100F、Velvia 100
 - 8 款相纸与拷贝片：Kodak Professional Endura Premier / Supra Endura / Ultra Endura / Portra Endura、Ektacolor Edge、Vision 2383 / Premier 2393、Fujifilm Crystal Archive Type II
+- 当前开发源码另加入 4 款黑白胶片：Kodak Tri-X 400、T-Max 100、Fujifilm Neopan 100 Acros II、Ilford HP5 Plus 400，以及自动配对的 Ilford Multigrade IV RC 黑白相纸；同时接入带无防光晕层高光余量的 CineStill 800T。合计 25 款胶片、9 款印相材料，尚未随版本发布。接入规则及验证范围见[黑白胶片](docs/黑白胶片.md)。
 - 负片走完整印相链路（亮度 + 洋红 / 黄色滤色），反转片直接扫描；切换胶片时相纸与分类自动联动
 - 每张照片的胶片画廊缩略图都按当前照片现场显影，看到的就是这张图的实际效果，不是样片
 
 <p align="center">
-  <img src="docs/images/film-canisters.png" width="70%" alt="20 款胶片图标" />
+  <img src="docs/images/film-canisters.png" width="70%" alt="旧版 20 款彩色胶片图标" />
   <br/>
-  <sub>20 款胶卷图标全部由 Canvas 代码绘制，仓库内无位图素材</sub>
+  <sub>图示为此前的 20 款彩色胶卷；当前源码新增的 4 款黑白胶片与 CineStill 标签同样由 Canvas 代码绘制，不使用第三方胶卷位图</sub>
 </p>
 
 **显影与调色**
@@ -134,7 +135,7 @@ flowchart LR
 | 层 | 实现 |
 |---|---|
 | 应用 | Java，Android 10+（API 29+），64 位 |
-| 引擎 | C++ / Vulkan compute，float32，35 个 GLSL compute shader |
+| 引擎 | C++ / Vulkan compute，float32，36 个 GLSL compute shader |
 | 光谱模型 | 380–780 nm，5 nm 步进，81 波长 |
 | RAW | LibRaw 0.22.2（固定源码随仓库） |
 | CPU 回退 | SwiftShader（双 ABI 预编译 + 完整源码 ZIP） |
@@ -179,7 +180,7 @@ python3 scripts/build.py -PpublicBuild=true :app:assembleDebug
 | GPU | Vulkan 1.1+；不可用时自动回退 CPU 渲染 |
 | 预览 | 最长边 1024 |
 | 导出 | 受可用内存与 Vulkan 缓冲上限约束，导出前按源像素估算，不足时提示重试而不静默缩图 |
-| 暂未开放 | 裁切 / 旋转 / 拉直 / 翻转、局部蒙版、批量处理、黑白与 CineStill 配置、半格拼接 |
+| 暂未开放 | 裁切 / 旋转 / 拉直 / 翻转、局部蒙版、批量处理、CineStill 配置、半格拼接 |
 
 已知问题与逐版修正记录见 [CHANGELOG.md](CHANGELOG.md)；能力边界与实现细节见 [docs/](docs/)。
 
@@ -201,7 +202,7 @@ design/           启动图标与视觉设计稿
 - [胶片画廊与缩略图](docs/胶片画廊与缩略图.md) — 有界解码、缓存与失效规则
 - [兼容显影实现](docs/兼容显影实现.md) — SwiftShader CPU 后端
 - [移动 GPU 移植](docs/移动GPU移植.md) — 社区 GPU 代码的适配范围与差异
-- [胶卷图标说明](docs/图标映射.md) — 20 款图标的绘制规则与清单
+- [胶卷图标说明](docs/图标映射.md) — 25 款图标的绘制规则与清单
 - [C 方案界面](docs/C方案界面.md) · [滑杆界面](docs/滑杆界面.md) — 视觉与交互规范
 - [照片预览与资源校验](docs/照片预览与资源校验.md) — 手势、缩放与启动时资源校验
 - [导出性能排查](docs/导出性能排查.md) — 逐阶段耗时与优化记录

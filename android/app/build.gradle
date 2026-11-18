@@ -23,17 +23,26 @@ if (sponsorQrWasProvided) {
 }
 def sponsorQrEnabled = !publicBuild && sponsorQrSource.isFile()
 def sponsorResDir = layout.buildDirectory.dir('generated/sponsor-res')
+// Opt-in side-by-side package for local UI comparison. The production package and version stay
+// unchanged unless the caller explicitly requests this build.
+def sideBySideTest = (findProperty('sideBySideTest') ?: 'false').toString().toBoolean()
 
 android {
     namespace 'app.spektrafilm'
     compileSdk 35
     ndkVersion '27.2.12479018'
     defaultConfig {
-        applicationId 'app.spektrafilm'
+        applicationId sideBySideTest ? 'app.spektrafilm.uitest' : 'app.spektrafilm'
         minSdk 29
         targetSdk 35
-        versionCode 25
-        versionName '0.4.6'
+        // Keep the production identity untouched. Give side-by-side builds their own increasing
+        // code so OEM installers actually replace an older UI Test APK instead of treating it as
+        // the same version.
+        versionCode sideBySideTest ? 2502 : 26
+        versionName sideBySideTest ? '0.4.6-uitest3' : '0.5.0'
+        manifestPlaceholders = [
+            appLabel: sideBySideTest ? 'SpektraLens UI Test' : '@string/app_name'
+        ]
         // Default ships arm64 only: the x86_64 SwiftShader ICD alone is 22 MB and phones never use
         // it. Emulator builds pass -Pabis=arm64-v8a,x86_64.
         def abiList = (findProperty('abis') ?: 'arm64-v8a').toString().split(',') as List
@@ -138,6 +147,62 @@ tasks.register('testUpdatePolicy', JavaExec) {
     mainClass = 'app.spektrafilm.UpdateManifestTest'
 }
 tasks.named('check').configure { dependsOn 'testUpdatePolicy' }
+
+def filmStockTestClasses = layout.buildDirectory.dir('film-stock-policy-tests')
+tasks.register('compileFilmStockPolicyTests', JavaCompile) {
+    source 'src/main/java/app/spektrafilm/FilmStockPolicy.java',
+            'src/test/java/app/spektrafilm/FilmStockPolicyTest.java'
+    classpath = files()
+    destinationDirectory = filmStockTestClasses
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+    options.encoding = 'UTF-8'
+}
+tasks.register('testFilmStockPolicy', JavaExec) {
+    dependsOn 'compileFilmStockPolicyTests'
+    classpath = files(filmStockTestClasses)
+    mainClass = 'app.spektrafilm.FilmStockPolicyTest'
+}
+tasks.named('check').configure { dependsOn 'testFilmStockPolicy' }
+
+def libraryPolicyTestClasses = layout.buildDirectory.dir('library-policy-tests')
+tasks.register('compileLibraryPolicyTests', JavaCompile) {
+    source 'src/main/java/app/spektrafilm/EditClipboardPolicy.java',
+            'src/main/java/app/spektrafilm/PhotoFormatPolicy.java',
+            'src/test/java/app/spektrafilm/EditClipboardPolicyTest.java',
+            'src/test/java/app/spektrafilm/PhotoFormatPolicyTest.java',
+            'src/test/java/app/spektrafilm/LibraryPolicyTest.java'
+    classpath = files()
+    destinationDirectory = libraryPolicyTestClasses
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+    options.encoding = 'UTF-8'
+}
+tasks.register('testLibraryPolicy', JavaExec) {
+    dependsOn 'compileLibraryPolicyTests'
+    classpath = files(libraryPolicyTestClasses)
+    mainClass = 'app.spektrafilm.LibraryPolicyTest'
+}
+tasks.named('check').configure { dependsOn 'testLibraryPolicy' }
+
+def thumbnailTestClasses = layout.buildDirectory.dir('thumbnail-policy-tests')
+tasks.register('compileThumbnailPolicyTests', JavaCompile) {
+    source 'src/main/java/app/spektrafilm/ThumbnailWorkQueue.java',
+            'src/main/java/app/spektrafilm/ThumbnailWriteGate.java',
+            'src/main/java/app/spektrafilm/ThumbnailDiskCache.java',
+            'src/test/java/app/spektrafilm/ThumbnailPerformanceTest.java'
+    classpath = files()
+    destinationDirectory = thumbnailTestClasses
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+    options.encoding = 'UTF-8'
+}
+tasks.register('testThumbnailPolicy', JavaExec) {
+    dependsOn 'compileThumbnailPolicyTests'
+    classpath = files(thumbnailTestClasses)
+    mainClass = 'app.spektrafilm.ThumbnailPerformanceTest'
+}
+tasks.named('check').configure { dependsOn 'testThumbnailPolicy' }
 
 gradle.taskGraph.whenReady { graph ->
     if (graph.allTasks.any { it.name.toLowerCase().contains('release') }
