@@ -14,13 +14,37 @@ import java.util.*;
 
 /**
  * Image-only metadata. Access is checked afresh; Android partial grants are never treated as full.
+ *
+ * <p>The picker never reads the XMP blob column while listing: on libraries with tens of thousands
+ * of photos that single column turns a fast index scan into minutes of CursorWindow refills.
+ * Motion / Live detection moved to {@link #moving}, which reads one row when the user picks it, and
+ * to the byte scan performed while importing.
  */
 final class GalleryPhotos {
+  /** Rows per metadata query; keeps the first screen cheap on very large libraries. */
+  static final int PAGE_SIZE = 400;
+
   enum Access {
     NONE,
     PARTIAL,
     FULL
   }
+
+  private static final String[] PROJECTION = {
+    MediaStore.Images.Media._ID,
+    MediaStore.Images.Media.DISPLAY_NAME,
+    MediaStore.Images.Media.MIME_TYPE,
+    MediaStore.Images.Media.BUCKET_ID,
+    MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
+    MediaStore.Images.Media.DATE_TAKEN,
+    MediaStore.Images.Media.DATE_MODIFIED,
+    MediaStore.Images.Media.DATE_ADDED
+  };
+
+  static final Comparator<Photo> NEWEST_FIRST =
+      Comparator.comparingLong((Photo p) -> p.timestamp)
+          .reversed()
+          .thenComparing(Comparator.comparingLong((Photo p) -> p.mediaId).reversed());
 
   static Access access(Context context) {
     String permission =
@@ -85,59 +109,59 @@ final class GalleryPhotos {
     }
   }
 
-  static List<Photo> query(Context context, CancellationSignal cancellation) {
+  /** One metadata page: parsed photos, raw provider rows and whether the library was exhausted. */
+  static final class Page {
+    final List<Photo> photos;
+    final int rows;
+    final boolean complete;
+
+    Page(List<Photo> photos, int rows, boolean complete) {
+      this.photos = photos;
+      this.rows = rows;
+      this.complete = complete;
+    }
+  }
+
+  /** Reads at most {@code limit} rows starting at {@code offset}; {@code limit} 0 reads them all. */
+  static Page page(Context context, CancellationSignal cancellation, int offset, int limit) {
     List<Photo> photos = new ArrayList<>();
-    if (access(context) == Access.NONE) return photos;
+    if (access(context) == Access.NONE) return new Page(photos, 0, true);
     Uri collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL);
-    String[] baseProjection = {
-      MediaStore.Images.Media._ID,
-      MediaStore.Images.Media.DISPLAY_NAME,
-      MediaStore.Images.Media.MIME_TYPE,
-      MediaStore.Images.Media.BUCKET_ID,
-      MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
-      MediaStore.Images.Media.DATE_TAKEN,
-      MediaStore.Images.Media.DATE_MODIFIED,
-      MediaStore.Images.Media.DATE_ADDED
-    };
+    Bundle args = new Bundle();
     // The Images collection already excludes video. Query every still and apply the shared
     // extension/MIME allow-list below so vendor providers with a generic MIME still expose valid DNG.
-    String selection = MediaStore.Images.Media.IS_PENDING + " = 0";
-    Bundle args = new Bundle();
-    args.putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection);
+    args.putString(
+        ContentResolver.QUERY_ARG_SQL_SELECTION, MediaStore.Images.Media.IS_PENDING + " = 0");
     args.putString(
         ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
         MediaStore.Images.Media.DATE_ADDED + " DESC, " + MediaStore.Images.Media._ID + " DESC");
-    String[] projection = baseProjection;
-    boolean hasXmp = Build.VERSION.SDK_INT >= 30;
-    if (hasXmp) {
-      projection = Arrays.copyOf(baseProjection, baseProjection.length + 1);
-      projection[baseProjection.length] = MediaStore.MediaColumns.XMP;
+    boolean windowed = limit > 0 && Build.VERSION.SDK_INT >= 30;
+    if (windowed) {
+      args.putInt(ContentResolver.QUERY_ARG_LIMIT, limit);
+      args.putInt(ContentResolver.QUERY_ARG_OFFSET, Math.max(0, offset));
     }
     Cursor cursor = null;
     try {
-      cursor = context.getContentResolver().query(collection, projection, args, cancellation);
-    } catch (RuntimeException ignored) {
-      // A vendor MediaProvider can omit XMP. Keep the base query and reject motion media again
-      // while copying the selected files, before anything is saved to the private library.
+      cursor = context.getContentResolver().query(collection, PROJECTION, args, cancellation);
+    } catch (RuntimeException error) {
+      // A provider that rejects the paging arguments still gets one unpaged attempt.
+      if (!windowed) throw error;
+      args.remove(ContentResolver.QUERY_ARG_LIMIT);
+      args.remove(ContentResolver.QUERY_ARG_OFFSET);
+      windowed = false;
+      cursor = context.getContentResolver().query(collection, PROJECTION, args, cancellation);
     }
-    if (cursor == null && hasXmp) {
-      projection = baseProjection;
-      hasXmp = false;
-      cursor = context.getContentResolver().query(collection, projection, args, cancellation);
-    }
-    try (Cursor rows = cursor) {
-      Cursor cursorRows = rows;
-      if (cursorRows == null) return photos;
-      int xmpColumn = hasXmp ? cursorRows.getColumnIndex(MediaStore.MediaColumns.XMP) : -1;
-      while (cursorRows.moveToNext()) {
+    int rows = 0;
+    try (Cursor read = cursor) {
+      if (read == null) return new Page(photos, 0, true);
+      while (read.moveToNext()) {
         cancellation.throwIfCanceled();
-        String name = cursorRows.getString(1);
-        String mime = cursorRows.getString(2);
-        String xmp = xmpColumn < 0 ? null : readXmp(cursorRows, xmpColumn);
-        if (!PhotoFormatPolicy.supported(name, mime)
-            || PhotoFormatPolicy.movingPhotoMetadata(xmp)) continue;
-        Uri uri = ContentUris.withAppendedId(collection, cursorRows.getLong(0));
-        String album = cursorRows.getString(3), label = cursorRows.getString(4);
+        rows++;
+        String name = read.getString(1);
+        String mime = read.getString(2);
+        if (!PhotoFormatPolicy.supported(name, mime)) continue;
+        Uri uri = ContentUris.withAppendedId(collection, read.getLong(0));
+        String album = read.getString(3), label = read.getString(4);
         photos.add(
             new Photo(
                 uri,
@@ -146,17 +170,40 @@ final class GalleryPhotos {
                 album == null ? "" : album,
                 label == null ? "其他照片" : label,
                 null,
-                photoTime(
-                    cursorRows.getLong(5), cursorRows.getLong(6), cursorRows.getLong(7)),
-                cursorRows.getLong(0)));
+                photoTime(read.getLong(5), read.getLong(6), read.getLong(7)),
+                read.getLong(0)));
       }
     }
     // Vendor providers can ignore the requested sort. Enforce order after normalizing ms/seconds.
-    photos.sort(
-        Comparator.comparingLong((Photo p) -> p.timestamp)
-            .reversed()
-            .thenComparing(Comparator.comparingLong((Photo p) -> p.mediaId).reversed()));
-    return photos;
+    photos.sort(NEWEST_FIRST);
+    return new Page(photos, rows, !windowed || rows < limit);
+  }
+
+  /** Whole-library read; used by tests and by the paging fallback. */
+  static List<Photo> query(Context context, CancellationSignal cancellation) {
+    return page(context, cancellation, 0, 0).photos;
+  }
+
+  /**
+   * One-row XMP probe for the photo the user is about to include. Returns false when the provider
+   * has no XMP column; the byte scan in {@link PhotoFormats#isMovingPhoto} still rejects moving
+   * photos before they are saved.
+   */
+  static boolean moving(Context context, Photo photo, CancellationSignal cancellation) {
+    if (photo == null || photo.uri == null || photo.mediaId <= 0) return false;
+    Uri collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL);
+    String[] projection = {MediaStore.MediaColumns.XMP};
+    String selection = MediaStore.Images.Media._ID + " = ?";
+    String[] arguments = {Long.toString(photo.mediaId)};
+    try (Cursor cursor =
+        context
+            .getContentResolver()
+            .query(collection, projection, selection, arguments, null, cancellation)) {
+      if (cursor == null || !cursor.moveToFirst()) return false;
+      return PhotoFormatPolicy.movingPhotoMetadata(readXmp(cursor, 0));
+    } catch (RuntimeException ignored) {
+      return false;
+    }
   }
 
   private static String readXmp(Cursor cursor, int column) {

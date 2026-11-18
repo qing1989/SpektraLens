@@ -31,7 +31,8 @@ final class GallerySheet extends Dialog {
   private List<GalleryPhotos.Photo> phone = new ArrayList<>(), visible = new ArrayList<>();
   private final LinkedHashMap<String, GalleryPhotos.Photo> selected = new LinkedHashMap<>();
   private final ExecutorService metadata = Executors.newSingleThreadExecutor(),
-      thumbnails = Executors.newFixedThreadPool(3);
+      thumbnails = Executors.newFixedThreadPool(3),
+      checks = Executors.newSingleThreadExecutor();
   private final Handler main = new Handler(Looper.getMainLooper());
   private final LruCache<String, Bitmap> cache =
       new LruCache<String, Bitmap>(12 * 1024 * 1024) {
@@ -39,9 +40,14 @@ final class GallerySheet extends Dialog {
           return bitmap.getAllocationByteCount();
         }
       };
-  private final ArrayList<CancellationSignal> thumbnailSignals = new ArrayList<>();
+  private final ArrayList<CancellationSignal> thumbnailSignals = new ArrayList<>(),
+      motionSignals = new ArrayList<>();
+  private final LinkedHashSet<String> seenKeys = new LinkedHashSet<>(),
+      movingKeys = new LinkedHashSet<>(),
+      motionChecked = new LinkedHashSet<>();
   private CancellationSignal querySignal;
-  private boolean closed, loading, albumPanelOpen;
+  private GalleryPaging paging;
+  private boolean closed, loading, albumPanelOpen, fullScan;
   private String albumId = "", loadError = "";
   private GridView grid;
   private ListView albumList;
@@ -256,10 +262,15 @@ final class GallerySheet extends Dialog {
           GalleryPhotos.Photo photo = visible.get(position);
           String key = photo.key();
           if (selected.containsKey(key)) selected.remove(key);
-          else {
+          else if (movingKeys.contains(key)) {
+            AppNotice.show(this, "实况 / 动态照片暂不支持导入");
+          } else {
             if (maxSelection > 0 && selected.size() >= maxSelection) {
               AppNotice.show(this, "最多选择 " + maxSelection + " 张照片");
-            } else selected.put(key, photo);
+            } else {
+              selected.put(key, photo);
+              watchMotion(photo);
+            }
           }
           updateSelectionUi();
           adapter.notifyDataSetChanged();
@@ -347,34 +358,102 @@ final class GallerySheet extends Dialog {
   void refresh() {
     if (closed) return;
     if (querySignal != null) querySignal.cancel();
-    CancellationSignal signal = querySignal = new CancellationSignal();
+    querySignal = new CancellationSignal();
     loading = GalleryPhotos.access(activity) != GalleryPhotos.Access.NONE;
     loadError = "";
     phone = new ArrayList<>();
+    seenKeys.clear();
+    paging = new GalleryPaging(GalleryPhotos.PAGE_SIZE);
+    fullScan = false;
     filter(false);
     if (!loading) return;
+    loadPage();
+  }
+
+  /**
+   * Reads one metadata page and publishes it as soon as it lands, so a phone with tens of
+   * thousands of photos shows its first screen immediately instead of a spinner until the whole
+   * library has been walked.
+   */
+  private void loadPage() {
+    final CancellationSignal signal = querySignal;
+    final GalleryPaging cursor = paging;
+    if (closed || signal == null || cursor == null) return;
+    final int offset = cursor.offset();
+    final int limit = fullScan ? 0 : cursor.pageSize();
     metadata.execute(
         () -> {
           try {
-            List<GalleryPhotos.Photo> result = GalleryPhotos.query(activity, signal);
-            main.post(
-                () -> {
-                  if (closed || signal.isCanceled() || querySignal != signal) return;
-                  phone = result;
-                  loading = false;
-                  filter(false);
-                });
+            GalleryPhotos.Page result = GalleryPhotos.page(activity, signal, offset, limit);
+            main.post(() -> acceptPage(signal, result));
           } catch (OperationCanceledException ignored) {
-            // User dismissed or changed albums; this query is intentionally stale.
-          } catch (Exception error) {
-            main.post(
-                () -> {
-                  if (closed || signal.isCanceled() || querySignal != signal) return;
-                  loading = false;
-                  loadError = "相册暂时无法读取";
-                  filter(false);
-                });
+            // User dismissed or restarted the query; this page is intentionally stale.
+          } catch (Throwable error) {
+            main.post(() -> failQuery(signal));
           }
+        });
+  }
+
+  private void acceptPage(CancellationSignal signal, GalleryPhotos.Page result) {
+    if (closed || signal.isCanceled() || querySignal != signal || paging == null) return;
+    ArrayList<GalleryPhotos.Photo> merged = new ArrayList<>(phone);
+    int added = 0;
+    for (GalleryPhotos.Photo photo : result.photos)
+      if (seenKeys.add(photo.key())) {
+        merged.add(photo);
+        added++;
+      }
+    merged.sort(GalleryPhotos.NEWEST_FIRST);
+    phone = merged;
+    loading = false;
+    filter(false);
+    int next =
+        result.complete
+            ? GalleryPaging.DONE
+            : paging.accept(result.rows, result.photos.size(), added);
+    if (fullScan) return; // The whole library was read in one pass; nothing follows.
+    if (next == GalleryPaging.MORE) loadPage();
+    else if (next == GalleryPaging.FULL_SCAN) {
+      // Some vendors ignore QUERY_ARG_OFFSET; re-read the library in one pass instead of stopping
+      // after the first page.
+      seenKeys.clear();
+      phone = new ArrayList<>();
+      fullScan = true;
+      filter(false);
+      loadPage();
+    }
+  }
+
+  private void failQuery(CancellationSignal signal) {
+    if (closed || signal.isCanceled() || querySignal != signal) return;
+    loading = false;
+    if (phone.isEmpty()) loadError = "相册暂时无法读取";
+    filter(false);
+  }
+
+  /** Reads this photo's XMP once, so Live / Motion photos are rejected on tap, not at import. */
+  private void watchMotion(GalleryPhotos.Photo photo) {
+    String key = photo.key();
+    if (photo.uri == null || !motionChecked.add(key)) return;
+    CancellationSignal signal = new CancellationSignal();
+    motionSignals.add(signal);
+    checks.execute(
+        () -> {
+          boolean moving;
+          try {
+            moving = GalleryPhotos.moving(activity, photo, signal);
+          } catch (Exception ignored) {
+            return;
+          }
+          main.post(
+              () -> {
+                motionSignals.remove(signal);
+                if (closed || !moving) return;
+                movingKeys.add(key);
+                if (selected.remove(key) != null) updateSelectionUi();
+                adapter.notifyDataSetChanged();
+                AppNotice.show(this, "实况 / 动态照片暂不支持导入");
+              });
         });
   }
 
@@ -677,11 +756,14 @@ final class GallerySheet extends Dialog {
     if (querySignal != null) querySignal.cancel();
     for (CancellationSignal signal : thumbnailSignals) signal.cancel();
     thumbnailSignals.clear();
+    for (CancellationSignal signal : motionSignals) signal.cancel();
+    motionSignals.clear();
     albumPanel.animate().cancel();
     albumArrow.animate().cancel();
     activity.getWindow().getDecorView().removeOnLayoutChangeListener(windowSizeChanged);
     metadata.shutdownNow();
     thumbnails.shutdownNow();
+    checks.shutdownNow();
     grid.setAdapter(null);
     phone.clear();
     visible.clear();

@@ -38,8 +38,8 @@ android {
         // Keep the production identity untouched. Give side-by-side builds their own increasing
         // code so OEM installers actually replace an older UI Test APK instead of treating it as
         // the same version.
-        versionCode sideBySideTest ? 2502 : 26
-        versionName sideBySideTest ? '0.4.6-uitest3' : '0.5.0'
+        versionCode sideBySideTest ? 2502 : 27
+        versionName sideBySideTest ? '0.4.6-uitest3' : '0.5.1'
         manifestPlaceholders = [
             appLabel: sideBySideTest ? 'SpektraLens UI Test' : '@string/app_name'
         ]
@@ -184,6 +184,23 @@ tasks.register('testLibraryPolicy', JavaExec) {
     mainClass = 'app.spektrafilm.LibraryPolicyTest'
 }
 tasks.named('check').configure { dependsOn 'testLibraryPolicy' }
+
+def galleryPagingTestClasses = layout.buildDirectory.dir('gallery-paging-tests')
+tasks.register('compileGalleryPagingTests', JavaCompile) {
+    source 'src/main/java/app/spektrafilm/GalleryPaging.java',
+            'src/test/java/app/spektrafilm/GalleryPagingTest.java'
+    classpath = files()
+    destinationDirectory = galleryPagingTestClasses
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+    options.encoding = 'UTF-8'
+}
+tasks.register('testGalleryPaging', JavaExec) {
+    dependsOn 'compileGalleryPagingTests'
+    classpath = files(galleryPagingTestClasses)
+    mainClass = 'app.spektrafilm.GalleryPagingTest'
+}
+tasks.named('check').configure { dependsOn 'testGalleryPaging' }
 
 def thumbnailTestClasses = layout.buildDirectory.dir('thumbnail-policy-tests')
 tasks.register('compileThumbnailPolicyTests', JavaCompile) {
