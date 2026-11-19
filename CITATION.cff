@@ -4,5 +4,5 @@ message: "Credit the original model and native engine authors as well as this An
 type: software
 authors:
   - name: "SpektraLens contributors"
-version: 0.3.5
+version: 0.5.2
 license: GPL-3.0-or-later

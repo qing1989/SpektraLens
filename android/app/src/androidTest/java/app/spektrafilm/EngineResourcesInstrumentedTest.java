@@ -59,7 +59,7 @@ public final class EngineResourcesInstrumentedTest extends InstrumentationTestCa
     assertApkFile(SHADER);
     assertApkFile("profiles/kodak_portra_400.json");
     assertFalse("Obsolete files are removed", retired.exists());
-    assertEquals(32, new File(directory, ".ready").length());
+    assertTrue(new File(directory, ".ready").length() > 0);
   }
 
   public void testUnchangedBundleIsReusedAndDamagedCacheIsRepaired() throws Exception {

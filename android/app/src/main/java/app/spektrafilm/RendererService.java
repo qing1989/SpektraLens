@@ -6,8 +6,6 @@ import android.app.Service;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Bitmap;
-import android.graphics.ColorSpace;
-import android.graphics.ImageDecoder;
 import android.os.*;
 import android.os.Process;
 import java.io.File;
@@ -180,27 +178,7 @@ public class RendererService extends Service {
   }
 
   private Bitmap decodeRasterPreview(File source, int targetLongEdge) throws java.io.IOException {
-    Bitmap bitmap =
-        ImageDecoder.decodeBitmap(
-            ImageDecoder.createSource(source),
-            (decoder, info, value) -> {
-              decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
-              decoder.setMutableRequired(true);
-              decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB));
-              if (targetLongEdge > 0) {
-                int width = info.getSize().getWidth();
-                int height = info.getSize().getHeight();
-                float scale = Math.min(1, targetLongEdge / (float) Math.max(width, height));
-                decoder.setTargetSize(
-                    Math.max(1, Math.round(width * scale)),
-                    Math.max(1, Math.round(height * scale)));
-              }
-            });
-    if (bitmap.getConfig() == Bitmap.Config.ARGB_8888) return bitmap;
-    Bitmap converted = bitmap.copy(Bitmap.Config.ARGB_8888, true);
-    Bitmaps.release(bitmap);
-    if (converted == null) throw new java.io.IOException("无法转换原照片");
-    return converted;
+    return RasterDecoder.decode(source, targetLongEdge).bitmap;
   }
 
   private Bitmap resizeForTransfer(Bitmap bitmap, int targetLongEdge) {

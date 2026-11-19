@@ -46,6 +46,15 @@ public final class MainActivity extends Activity {
   private UpdateBadge homeAbout;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService thumbnailIo = Executors.newSingleThreadExecutor();
+  private final ExecutorService bootStateIo = Executors.newSingleThreadExecutor();
+  private final ExecutorService libraryWriter = Executors.newSingleThreadExecutor();
+  private final Object libraryFileLock = new Object();
+  private final java.util.concurrent.atomic.AtomicInteger libraryWritesPending =
+      new java.util.concurrent.atomic.AtomicInteger();
+  private volatile long libraryWrittenVersion;
+  private long libraryWriteVersion;
+  private volatile boolean libraryDirty;
+  private Runnable libraryWritePending;
   private final ThumbnailWorkQueue homeThumbJobs = new ThumbnailWorkQueue();
   private final PendingBitmaps thumbnailDeliveries = new PendingBitmaps();
   private volatile boolean homeThumbPaused = true;
@@ -128,6 +137,8 @@ public final class MainActivity extends Activity {
   private int engineBootGeneration;
   private long engineBootStarted;
   private boolean engineBootPending;
+  private String engineBootStage = "连接计算进程";
+  private boolean bootStateReading;
   private Bitmap openedSource;
   private boolean ready, comparing;
   private volatile boolean exporting, batchImportRunning;
@@ -291,6 +302,8 @@ public final class MainActivity extends Activity {
     engine = 0;
     openedSource = null;
     engineBootPending = true;
+    engineBootStage = "连接计算进程";
+    bootStateReading = false;
     engineBootStarted = SystemClock.elapsedRealtime();
     SpectralRenderer next = new SpectralRenderer(this);
     renderer = next;
@@ -404,40 +417,68 @@ public final class MainActivity extends Activity {
     if (activeImport == null) {
       SpectralRenderer current = renderer;
       String mode = current != null && current.backend().equals("cpu") ? "兼容显影" : "显影引擎";
-      String stage = "连接计算进程";
-      if (current != null) {
-        File state = new File(getFilesDir(), "engine-" + current.backend() + ".json");
-        try (InputStream in = new FileInputStream(state);
-            ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-          copy(in, out);
-          JSONObject j = new JSONObject(out.toString("UTF-8"));
-          if (j.optInt("pid") == current.processId()) {
-            String key = j.optString("stage");
-            if (key.equals("spectral_resources")) stage = "加载胶片与印相数据";
-            else if (key.startsWith("vkCreateComputePipelines")) stage = "编译计算自检程序";
-            else if (key.startsWith("vkWait") || key.startsWith("vkQueue")) stage = "执行计算自检";
-            else if (key.equals("vkCreateDevice")) stage = "建立计算设备";
-            else if (key.equals("ready")) stage = "恢复照片预览";
-            else stage = "加载计算驱动";
-          }
-        } catch (Exception ignored) {
-          // 状态行只是文案，键名解析失败就保持上一段说明
+      if (current != null && !bootStateReading) {
+        bootStateReading = true;
+        int pid = current.processId();
+        String backend = current.backend();
+        try {
+          bootStateIo.execute(
+              () -> {
+                String stage = readRendererStage(backend, pid);
+                ui(
+                    () -> {
+                      bootStateReading = false;
+                      if (destroyed
+                          || boot != engineBootGeneration
+                          || ready
+                          || !engineBootPending
+                          || activeImport != null) return;
+                      if (stage != null) engineBootStage = stage;
+                      showBootStatus(mode, boot);
+                    });
+              });
+        } catch (RuntimeException ex) {
+          bootStateReading = false;
         }
       }
-      setStatus(
-          "准备"
-              + mode
-              + " · "
-              + stage
-              + " · "
-              + ((SystemClock.elapsedRealtime() - engineBootStarted) / 1000)
-              + " 秒",
-          true);
-      exportButton.setText("查看显影诊断");
-      exportButton.setEnabled(true);
-      exportButton.setOnClickListener(v -> showDiagnostics());
+      showBootStatus(mode, boot);
     }
     main.postDelayed(() -> watchRendererBoot(boot), 500);
+  }
+
+  private void showBootStatus(String mode, int boot) {
+    if (destroyed || boot != engineBootGeneration || ready || !engineBootPending) return;
+    setStatus(
+        "准备"
+            + mode
+            + " · "
+            + engineBootStage
+            + " · "
+            + ((SystemClock.elapsedRealtime() - engineBootStarted) / 1000)
+            + " 秒",
+        true);
+    exportButton.setText("查看显影诊断");
+    exportButton.setEnabled(true);
+    exportButton.setOnClickListener(v -> showDiagnostics());
+  }
+
+  private String readRendererStage(String backend, int pid) {
+    File state = new File(getFilesDir(), "engine-" + backend + ".json");
+    try (InputStream in = new FileInputStream(state);
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      copy(in, out);
+      JSONObject j = new JSONObject(out.toString("UTF-8"));
+      if (j.optInt("pid") != pid) return null;
+      String key = j.optString("stage");
+      if (key.equals("spectral_resources")) return "加载胶片与印相数据";
+      if (key.startsWith("vkCreateComputePipelines")) return "编译计算自检程序";
+      if (key.startsWith("vkWait") || key.startsWith("vkQueue")) return "执行计算自检";
+      if (key.equals("vkCreateDevice")) return "建立计算设备";
+      if (key.equals("ready")) return "恢复照片预览";
+      return "加载计算驱动";
+    } catch (Exception ignored) {
+      return null;
+    }
   }
 
   private void restartRenderer() {
@@ -2692,10 +2733,24 @@ public final class MainActivity extends Activity {
     papers.sort(Comparator.comparing(s -> s.name));
   }
 
+  private interface ByteProgress {
+    void onBytes(long copied);
+  }
+
   private static void copy(InputStream in, OutputStream out) throws IOException {
+    copy(in, out, null);
+  }
+
+  private static void copy(InputStream in, OutputStream out, ByteProgress progress)
+      throws IOException {
     byte[] bytes = new byte[65536];
     int n;
-    while ((n = in.read(bytes)) != -1) out.write(bytes, 0, n);
+    long copied = 0;
+    while ((n = in.read(bytes)) != -1) {
+      out.write(bytes, 0, n);
+      copied += n;
+      if (progress != null) progress.onBytes(copied);
+    }
   }
 
   private String readAsset(String path) throws IOException {
@@ -3403,29 +3458,10 @@ public final class MainActivity extends Activity {
         out.width = out.meta.getInt("width");
         out.height = out.meta.getInt("height");
       } else {
-        out.bitmap =
-            ImageDecoder.decodeBitmap(
-                ImageDecoder.createSource(file),
-                (decoder, info, src) -> {
-                  decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
-                  decoder.setMutableRequired(true);
-                  decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB));
-                  out.width = info.getSize().getWidth();
-                  out.height = info.getSize().getHeight();
-                  float scale =
-                      longEdge == 0
-                          ? 1
-                          : Math.min(1, longEdge / (float) Math.max(out.width, out.height));
-                  decoder.setTargetSize(
-                      Math.max(1, Math.round(out.width * scale)),
-                      Math.max(1, Math.round(out.height * scale)));
-                });
-        if (out.bitmap.getConfig() != Bitmap.Config.ARGB_8888) {
-          Bitmap normalised = out.bitmap.copy(Bitmap.Config.ARGB_8888, true);
-          if (normalised == null) throw new IOException("无法转换照片预览");
-          Bitmaps.release(out.bitmap);
-          out.bitmap = normalised;
-        }
+        RasterDecoder.Result decoded = RasterDecoder.decode(file, longEdge);
+        out.bitmap = decoded.bitmap;
+        out.width = decoded.width;
+        out.height = decoded.height;
         readRasterMetadata(file, out.meta);
       }
       if (out.bitmap == null) throw new IOException("照片解码没有返回图像");
@@ -3624,8 +3660,6 @@ public final class MainActivity extends Activity {
         copyProviderPhoto(selected.uri, job, index, photos.size(), generation);
         if (job.copied == 0) throw new IOException("所选照片没有可读取的内容");
         job.check();
-        if (PhotoFormats.isMovingPhoto(job.temp))
-          throw new IOException("Live / Motion Photo 暂不支持，已跳过");
         job.stage("解码照片");
         LoadedPhoto loaded = readPhoto(job.temp, 1024);
         try {
@@ -3714,41 +3748,82 @@ public final class MainActivity extends Activity {
 
   private void copyProviderPhoto(
       Uri uri, PhotoImportJob job, int index, int total, int generation) throws IOException {
-    try (android.content.res.AssetFileDescriptor descriptor =
-        getContentResolver().openAssetFileDescriptor(uri, "r", job.signal)) {
-      if (descriptor == null) throw new IOException("相册没有返回可读取的照片");
-      if (job.total < 0) job.total = descriptor.getLength();
-      try (InputStream in = descriptor.createInputStream();
-          OutputStream out = new FileOutputStream(job.temp)) {
-        job.input = in;
-        job.check();
-        job.stage("复制原照片");
-        byte[] buffer = new byte[65536];
-        int n;
-        long lastProgressPost = 0;
-        while ((n = in.read(buffer)) != -1) {
-          job.check();
-          out.write(buffer, 0, n);
-          job.copied += n;
-          job.lastProgress = SystemClock.elapsedRealtime();
-          if (job.lastProgress - lastProgressPost >= 100) {
-            lastProgressPost = job.lastProgress;
-            float fraction =
-                job.total > 0
-                    ? Math.min(.92f, job.copied / (float) job.total * .92f)
-                    : .08f;
-            ui(
-                () -> {
-                  if (generation == batchImportGeneration)
-                    setHomeImportProgress(index, total, fraction);
-                });
-          }
+    IOException first = null;
+    try {
+      try (android.content.res.AssetFileDescriptor descriptor =
+          getContentResolver().openAssetFileDescriptor(uri, "r", job.signal)) {
+        if (descriptor == null) throw new IOException("相册没有返回可读取的照片");
+        if (job.total < 0) job.total = descriptor.getLength();
+        try (InputStream in = descriptor.createInputStream();
+            OutputStream out = new FileOutputStream(job.temp)) {
+          copyStream(in, out, job, index, total, generation);
         }
-        job.check();
-      } finally {
-        job.input = null;
       }
+      if (job.copied > 0) {
+        job.check();
+        return;
+      }
+      throw new IOException("相册没有返回可读取的照片");
+    } catch (android.os.OperationCanceledException error) {
+      throw error;
+    } catch (IOException | RuntimeException error) {
+      first = asIOException(error);
+      android.util.Log.w("SpektraLensAndroid", "AssetFileDescriptor read failed; retrying stream", error);
     }
+
+    job.copied = 0;
+    try (InputStream in = getContentResolver().openInputStream(uri);
+        OutputStream out = new FileOutputStream(job.temp)) {
+      if (in == null) throw new IOException("相册没有返回可读取的照片");
+      copyStream(in, out, job, index, total, generation);
+    } catch (android.os.OperationCanceledException error) {
+      throw error;
+    } catch (IOException | RuntimeException error) {
+      IOException fallback = asIOException(error);
+      if (first != null) fallback.addSuppressed(first);
+      throw fallback;
+    }
+    if (job.copied == 0) throw new IOException("所选照片没有可读取的内容");
+    job.check();
+  }
+
+  private void copyStream(
+      InputStream in, OutputStream out, PhotoImportJob job, int index, int total, int generation)
+      throws IOException {
+    job.input = in;
+    job.copied = 0;
+    try {
+      job.check();
+      job.stage("复制原照片");
+      byte[] buffer = new byte[65536];
+      int n;
+      long lastProgressPost = 0;
+      while ((n = in.read(buffer)) != -1) {
+        job.check();
+        out.write(buffer, 0, n);
+        job.copied += n;
+        job.lastProgress = SystemClock.elapsedRealtime();
+        if (job.lastProgress - lastProgressPost >= 100) {
+          lastProgressPost = job.lastProgress;
+          float fraction =
+              job.total > 0 ? Math.min(.92f, job.copied / (float) job.total * .92f) : .08f;
+          ui(
+              () -> {
+                if (generation == batchImportGeneration)
+                  setHomeImportProgress(index, total, fraction);
+              });
+        }
+      }
+      job.check();
+    } finally {
+      job.input = null;
+    }
+  }
+
+  private static IOException asIOException(Throwable error) {
+    return error instanceof IOException
+        ? (IOException) error
+        : new IOException(error.getMessage() == null ? error.toString() : error.getMessage(), error);
   }
 
   private void finishBatchImport(
@@ -3797,7 +3872,7 @@ public final class MainActivity extends Activity {
           .setTitle("照片导入未完成")
           .setMessage(
               failed > 0
-                  ? failed + " 张照片未能读取。不支持的视频、Live / Motion Photo 或损坏文件会被跳过。"
+                  ? failed + " 张照片未能读取。不支持的视频、损坏文件或无法解码的照片会被跳过。"
                   : "没有可导入的照片。")
           .setPositiveButton("知道了", null)
           .show();
@@ -4098,28 +4173,7 @@ public final class MainActivity extends Activity {
             }
             job.check();
             job.stage("打开相册照片");
-            try (android.content.res.AssetFileDescriptor descriptor =
-                getContentResolver().openAssetFileDescriptor(uri, "r", job.signal)) {
-              if (descriptor == null) throw new IOException("相册没有返回可读取的照片");
-              if (job.total < 0) job.total = descriptor.getLength();
-              try (InputStream in = descriptor.createInputStream();
-                  OutputStream out = new FileOutputStream(job.temp)) {
-                job.input = in;
-                job.check();
-                job.stage("复制原照片");
-                byte[] buffer = new byte[65536];
-                int n;
-                while ((n = in.read(buffer)) != -1) {
-                  job.check();
-                  out.write(buffer, 0, n);
-                  job.copied += n;
-                  job.lastProgress = SystemClock.elapsedRealtime();
-                }
-                job.check();
-              } finally {
-                job.input = null;
-              }
-            }
+            copyProviderPhoto(uri, job, 0, 1, -1);
             if (job.copied == 0) throw new IOException("所选照片没有可读取的内容");
             job.check();
             if (PhotoFormats.isRaster(job.temp)) {
@@ -4516,18 +4570,29 @@ public final class MainActivity extends Activity {
         if (look != null) look.delete();
       }
       frame.params = params;
-      saveLibrary();
+      scheduleLibraryWrite();
     }
   }
 
   private void saveLibrary() {
-    if (!writeLibrary())
+    if (libraryWritePending != null) {
+      main.removeCallbacks(libraryWritePending);
+      libraryWritePending = null;
+    }
+    libraryDirty = false;
+    if (!writeLibrary()) {
+      libraryDirty = true;
       showNotice("编辑记录保存失败，请检查剩余空间", true);
+    }
   }
 
   private boolean writeLibrary() {
+    return writeLibrary(librarySnapshot(), ++libraryWriteVersion);
+  }
+
+  private JSONArray librarySnapshot() {
+    JSONArray list = new JSONArray();
     try {
-      JSONArray list = new JSONArray();
       for (Frame frame : library) {
         JSONObject j = new JSONObject();
         j.put("id", frame.id);
@@ -4540,18 +4605,79 @@ public final class MainActivity extends Activity {
         j.put("edited", frame.edited);
         list.put(j);
       }
-      File temp = new File(getFilesDir(), "library.pending");
-      try (FileOutputStream out = new FileOutputStream(temp)) {
-        out.write(list.toString().getBytes(StandardCharsets.UTF_8));
-        out.getFD().sync();
+    } catch (JSONException ex) {
+      throw new IllegalStateException(ex);
+    }
+    return list;
+  }
+
+  private boolean writeLibrary(JSONArray list, long version) {
+    synchronized (libraryFileLock) {
+      if (version < libraryWrittenVersion) return true;
+      try {
+        File temp = new File(getFilesDir(), "library.pending");
+        try (FileOutputStream out = new FileOutputStream(temp)) {
+          out.write(list.toString().getBytes(StandardCharsets.UTF_8));
+          out.getFD().sync();
+        }
+        if (!temp.renameTo(new File(getFilesDir(), "library.json")))
+          throw new IOException("Cannot write library");
+        libraryWrittenVersion = version;
+        return true;
+      } catch (Exception ex) {
+        android.util.Log.e("SpektraLensAndroid", "Save library", ex);
+        new File(getFilesDir(), "library.pending").delete();
+        return false;
       }
-      if (!temp.renameTo(new File(getFilesDir(), "library.json")))
-        throw new IOException("Cannot write library");
-      return true;
-    } catch (Exception ex) {
-      android.util.Log.e("SpektraLensAndroid", "Save library", ex);
-      new File(getFilesDir(), "library.pending").delete();
-      return false;
+    }
+  }
+
+  private void scheduleLibraryWrite() {
+    libraryDirty = true;
+    if (libraryWritePending != null) main.removeCallbacks(libraryWritePending);
+    libraryWritePending =
+        () -> {
+          libraryWritePending = null;
+          if (!libraryDirty || destroyed) return;
+          JSONArray snapshot = librarySnapshot();
+          long version = ++libraryWriteVersion;
+          libraryDirty = false;
+          libraryWritesPending.incrementAndGet();
+          try {
+            libraryWriter.execute(
+                () -> {
+                  boolean ok = false;
+                  try {
+                    ok = writeLibrary(snapshot, version);
+                  } finally {
+                    libraryWritesPending.decrementAndGet();
+                  }
+                  if (!ok) {
+                    libraryDirty = true;
+                    ui(() -> showNotice("编辑记录保存失败，请检查剩余空间", true));
+                  }
+                });
+          } catch (RuntimeException ex) {
+            libraryWritesPending.decrementAndGet();
+            libraryDirty = true;
+            android.util.Log.e("SpektraLensAndroid", "Queue library write", ex);
+          }
+        };
+    main.postDelayed(libraryWritePending, 300);
+  }
+
+  private void flushLibraryWrite() {
+    if (libraryWritePending != null) {
+      main.removeCallbacks(libraryWritePending);
+      libraryWritePending = null;
+    }
+    if (!libraryDirty && libraryWritesPending.get() == 0) return;
+    JSONArray snapshot = librarySnapshot();
+    long version = ++libraryWriteVersion;
+    libraryDirty = false;
+    if (!writeLibrary(snapshot, version)) {
+      libraryDirty = true;
+      showNotice("编辑记录保存失败，请检查剩余空间", true);
     }
   }
 
@@ -5681,9 +5807,9 @@ public final class MainActivity extends Activity {
             options -> {
               if (sourceFile != selectedSource || revision != selectedRevision) {
                 showNotice("照片已更新，请重新打开导出面板");
-                return;
+                return false;
               }
-              export(options);
+              return export(options);
             });
     exportSheet.setOnDismissListener(dialog -> styleExportButtonForSheet(false));
     styleExportButtonForSheet(true);
@@ -5722,12 +5848,17 @@ public final class MainActivity extends Activity {
     return hex.toString();
   }
 
+  private static long exportCreepMillis(int width, int height) {
+    double megapixels = (double) width * height / 1_000_000.0;
+    return (long) Math.max(3000, Math.min(24000, 3000 + megapixels * 200));
+  }
+
   private void export(int mode) {
     export(new ExportOptions(mode, ExportOptions.RECOMMENDED));
   }
 
-  private void export(ExportOptions options) {
-    if (exporting || sourceFile == null) return;
+  private boolean export(ExportOptions options) {
+    if (exporting || sourceFile == null) return false;
     int mode = options.mode;
     final String exportEdits;
     try {
@@ -5737,7 +5868,7 @@ public final class MainActivity extends Activity {
       exportEdits = edits.toString();
     } catch (JSONException error) {
       report("无法读取导出设置", error);
-      return;
+      return false;
     }
     lock(true);
     ++revision;
@@ -5760,6 +5891,7 @@ public final class MainActivity extends Activity {
     trace.put("source_raw", raw);
     trace.put("format", format);
     if (options.isJpeg()) trace.put("jpeg_quality", options.jpegQuality);
+    final ExportSheet sheet = exportSheet;
     worker.execute(
         () -> {
           Uri uri = null;
@@ -5785,6 +5917,10 @@ public final class MainActivity extends Activity {
             else {
               renderer.openFile(original.getAbsolutePath(), openParams(p));
             }
+            ui(
+                () -> {
+                  if (sheet != null) sheet.setProgress(0.18f, 500);
+                });
             String base =
                 getString(R.string.app_name)
                     + "_"
@@ -5794,6 +5930,11 @@ public final class MainActivity extends Activity {
             cache = new File(getCacheDir(), base + ext);
             trace.phase("develop_encode_ms", "原尺寸显影与编码");
             ui(() -> setStatus("正在原尺寸显影与编码…", true));
+            long creepMs = exportCreepMillis(width, height);
+            ui(
+                () -> {
+                  if (sheet != null) sheet.setProgress(0.82f, creepMs);
+                });
             JSONObject dimensions =
                 new JSONObject(renderer.exportImage(p, edits, cache.getAbsolutePath(), format));
             trace.put("backend_after", renderer.backend());
@@ -5802,6 +5943,11 @@ public final class MainActivity extends Activity {
             trace.put("output_width", dimensions.getInt("width"));
             trace.put("output_height", dimensions.getInt("height"));
             trace.put("output_bytes", cache.length());
+            float afterRender = mode == 3 ? 0.90f : 0.86f;
+            ui(
+                () -> {
+                  if (sheet != null) sheet.setProgress(afterRender, 250);
+                });
             trace.phase("gallery_ms", "写入相册");
             ui(() -> setStatus(mode == 3 ? "正在准备分享…" : "正在写入相册…", true));
             if (!cache.isFile() || cache.length() == 0) throw new IOException("导出没有生成有效文件");
@@ -5818,13 +5964,32 @@ public final class MainActivity extends Activity {
               try (OutputStream out = getContentResolver().openOutputStream(uri);
                   InputStream in = new FileInputStream(cache)) {
                 if (out == null) throw new IOException("无法写入相册");
-                copy(in, out);
+                long total = Math.max(1, cache.length());
+                long[] last = {0};
+                copy(
+                    in,
+                    out,
+                    copied -> {
+                      if (copied - last[0] >= 262144 || copied >= total) {
+                        last[0] = copied;
+                        float fraction =
+                            0.86f + 0.10f * Math.min(1f, copied / (float) total);
+                        ui(
+                            () -> {
+                              if (sheet != null) sheet.setProgress(fraction);
+                            });
+                      }
+                    });
               }
               v.clear();
               v.put(MediaStore.Images.Media.IS_PENDING, 0);
               getContentResolver().update(uri, v, null, null);
             }
             trace.phase("verification_record_ms", "校验并保存导出记录");
+            ui(
+                () -> {
+                  if (sheet != null) sheet.setProgress(0.97f, 200);
+                });
             JSONObject recipe = new JSONObject();
             recipe.put("app_version", "0.3.6");
             recipe.put("source_name", name);
@@ -5872,6 +6037,7 @@ public final class MainActivity extends Activity {
             String fileSize = android.text.format.Formatter.formatShortFileSize(this, cache.length());
             ui(
                 () -> {
+                  if (sheet != null) sheet.finishExport();
                   lock(false);
                   setStatus("已导出 · " + label, false);
                   exportButton.setText("导出照片");
@@ -5911,7 +6077,11 @@ public final class MainActivity extends Activity {
             trace.finish(ex);
             if (uri != null) getContentResolver().delete(uri, null, null);
             if (cache != null) cache.delete();
-            ui(() -> lock(false));
+            ui(
+                () -> {
+                  if (sheet != null) sheet.failExport();
+                  lock(false);
+                });
             report("导出未完成", ex);
           } finally {
             try {
@@ -5922,6 +6092,7 @@ public final class MainActivity extends Activity {
             openedSource = null;
           }
         });
+    return true;
   }
 
   private String getPackageVersion() {
@@ -6049,6 +6220,7 @@ public final class MainActivity extends Activity {
     if (flowingBackground != null) flowingBackground.setHostResumed(false);
     AppNotice.clear(getWindow());
     if (homeImportProgress != null) homeImportProgress.setAnimating(false);
+    flushLibraryWrite();
     super.onPause();
   }
 
@@ -6072,6 +6244,7 @@ public final class MainActivity extends Activity {
       backCallback = null;
     }
     if (updates != null) updates.close();
+    flushLibraryWrite();
     destroyed = true;
     homeThumbJobs.clear();
     thumbnailDeliveries.close();
@@ -6095,6 +6268,8 @@ public final class MainActivity extends Activity {
     engine = 0;
     worker.shutdown();
     thumbnailIo.shutdown();
+    bootStateIo.shutdownNow();
+    libraryWriter.shutdown();
     super.onDestroy();
   }
 }

@@ -26,16 +26,6 @@ public final class PhotoFormatPolicyTest {
     check(
         !PhotoFormatPolicy.supported("animated.gif", "image/jpeg"),
         "unsupported extension wins over a misleading vendor MIME");
-    check(
-        PhotoFormatPolicy.movingPhotoMetadata(
-            "<rdf:Description GCamera:MotionPhoto=\"1\" />"),
-        "Motion Photo marker");
-    check(
-        PhotoFormatPolicy.movingPhotoMetadata("apple:ContentIdentifier=\"ABC\""),
-        "Apple Live Photo marker");
-    check(
-        !PhotoFormatPolicy.movingPhotoMetadata("<dc:title>still photo</dc:title>"),
-        "ordinary XMP remains selectable");
     System.out.println("PhotoFormatPolicy: " + checks + " checks passed");
   }
 }

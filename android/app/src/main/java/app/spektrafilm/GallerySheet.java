@@ -31,8 +31,7 @@ final class GallerySheet extends Dialog {
   private List<GalleryPhotos.Photo> phone = new ArrayList<>(), visible = new ArrayList<>();
   private final LinkedHashMap<String, GalleryPhotos.Photo> selected = new LinkedHashMap<>();
   private final ExecutorService metadata = Executors.newSingleThreadExecutor(),
-      thumbnails = Executors.newFixedThreadPool(3),
-      checks = Executors.newSingleThreadExecutor();
+      thumbnails = Executors.newFixedThreadPool(3);
   private final Handler main = new Handler(Looper.getMainLooper());
   private final LruCache<String, Bitmap> cache =
       new LruCache<String, Bitmap>(12 * 1024 * 1024) {
@@ -40,15 +39,13 @@ final class GallerySheet extends Dialog {
           return bitmap.getAllocationByteCount();
         }
       };
-  private final ArrayList<CancellationSignal> thumbnailSignals = new ArrayList<>(),
-      motionSignals = new ArrayList<>();
-  private final LinkedHashSet<String> seenKeys = new LinkedHashSet<>(),
-      movingKeys = new LinkedHashSet<>(),
-      motionChecked = new LinkedHashSet<>();
+  private final ArrayList<CancellationSignal> thumbnailSignals = new ArrayList<>();
+  private final LinkedHashSet<String> seenKeys = new LinkedHashSet<>();
   private CancellationSignal querySignal;
   private GalleryPaging paging;
   private boolean closed, loading, albumPanelOpen, fullScan;
   private String albumId = "", loadError = "";
+  private LinearLayout root;
   private GridView grid;
   private ListView albumList;
   private LinearLayout albumPanel;
@@ -142,7 +139,7 @@ final class GallerySheet extends Dialog {
   }
 
   private void build() {
-    LinearLayout root = column();
+    root = column();
     AppStyle.surface(root, AppStyle.SURFACE, AppStyle.R_LARGE);
     PanelHandle grab = new PanelHandle(getContext());
     grab.setContentDescription("上拉展开图库，下拉收起");
@@ -262,15 +259,10 @@ final class GallerySheet extends Dialog {
           GalleryPhotos.Photo photo = visible.get(position);
           String key = photo.key();
           if (selected.containsKey(key)) selected.remove(key);
-          else if (movingKeys.contains(key)) {
-            AppNotice.show(this, "实况 / 动态照片暂不支持导入");
-          } else {
+          else {
             if (maxSelection > 0 && selected.size() >= maxSelection) {
               AppNotice.show(this, "最多选择 " + maxSelection + " 张照片");
-            } else {
-              selected.put(key, photo);
-              watchMotion(photo);
-            }
+            } else selected.put(key, photo);
           }
           updateSelectionUi();
           adapter.notifyDataSetChanged();
@@ -316,7 +308,6 @@ final class GallerySheet extends Dialog {
   }
 
   public void show() {
-    super.show();
     Window window = getWindow();
     window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
     window.setGravity(Gravity.BOTTOM);
@@ -324,9 +315,13 @@ final class GallerySheet extends Dialog {
     WindowManager.LayoutParams attributes = window.getAttributes();
     attributes.dimAmount = .58f;
     attributes.y = dp(10);
+    attributes.alpha = 1f;
     window.setAttributes(attributes);
-    activity.getWindow().getDecorView().addOnLayoutChangeListener(windowSizeChanged);
+    window.setWindowAnimations(R.style.GallerySheetAnimation);
     resize(true);
+    root.setAlpha(1f);
+    super.show();
+    activity.getWindow().getDecorView().addOnLayoutChangeListener(windowSizeChanged);
     refresh();
   }
 
@@ -406,7 +401,7 @@ final class GallerySheet extends Dialog {
     merged.sort(GalleryPhotos.NEWEST_FIRST);
     phone = merged;
     loading = false;
-    filter(false);
+    if (added > 0 || phone.isEmpty()) filter(false);
     int next =
         result.complete
             ? GalleryPaging.DONE
@@ -429,32 +424,6 @@ final class GallerySheet extends Dialog {
     loading = false;
     if (phone.isEmpty()) loadError = "相册暂时无法读取";
     filter(false);
-  }
-
-  /** Reads this photo's XMP once, so Live / Motion photos are rejected on tap, not at import. */
-  private void watchMotion(GalleryPhotos.Photo photo) {
-    String key = photo.key();
-    if (photo.uri == null || !motionChecked.add(key)) return;
-    CancellationSignal signal = new CancellationSignal();
-    motionSignals.add(signal);
-    checks.execute(
-        () -> {
-          boolean moving;
-          try {
-            moving = GalleryPhotos.moving(activity, photo, signal);
-          } catch (Exception ignored) {
-            return;
-          }
-          main.post(
-              () -> {
-                motionSignals.remove(signal);
-                if (closed || !moving) return;
-                movingKeys.add(key);
-                if (selected.remove(key) != null) updateSelectionUi();
-                adapter.notifyDataSetChanged();
-                AppNotice.show(this, "实况 / 动态照片暂不支持导入");
-              });
-        });
   }
 
   private void filter(boolean scrollToTop) {
@@ -636,6 +605,7 @@ final class GallerySheet extends Dialog {
     final View scrim;
     CancellationSignal signal;
     Future<?> future;
+    boolean loading;
 
     Tile() {
       super(GallerySheet.this.getContext());
@@ -672,13 +642,8 @@ final class GallerySheet extends Dialog {
     }
 
     void bind(GalleryPhotos.Photo photo, boolean isSelected) {
-      if (signal != null) {
-        signal.cancel();
-        thumbnailSignals.remove(signal);
-      }
-      if (future != null) future.cancel(true);
       String key = photo.key();
-      image.setTag(key);
+      boolean same = key.equals(image.getTag());
       setContentDescription(
           (isSelected ? "已选择，" : "") + photo.name + "，点击" + (isSelected ? "取消选择" : "选择"));
       scrim.setVisibility(isSelected ? View.VISIBLE : View.GONE);
@@ -688,17 +653,44 @@ final class GallerySheet extends Dialog {
               ColorStateList.valueOf(0x30ffffff),
               isSelected ? borderFor() : null,
               AppStyle.shape(getContext(), Color.WHITE, AppStyle.R_SMALL, false)));
-      Bitmap hit = cache.get(key);
-      image.setImageBitmap(hit);
-      if (hit != null) return;
+      if (same) {
+        Bitmap hit = cache.get(key);
+        if (hit != null) {
+          if (image.getDrawable() == null) image.setImageBitmap(hit);
+          return;
+        }
+        if (loading || image.getDrawable() != null) return;
+      } else {
+        cancelLoad();
+        image.setTag(key);
+        image.setImageBitmap(null);
+      }
+      startLoad(photo, key);
+    }
+
+    private void cancelLoad() {
+      if (signal != null) {
+        signal.cancel();
+        thumbnailSignals.remove(signal);
+        signal = null;
+      }
+      if (future != null) {
+        future.cancel(true);
+        future = null;
+      }
+      loading = false;
+    }
+
+    private void startLoad(GalleryPhotos.Photo photo, String key) {
+      loading = true;
       CancellationSignal request = signal = new CancellationSignal();
       thumbnailSignals.add(request);
       future =
           thumbnails.submit(
               () -> {
+                Bitmap loaded = null;
                 try {
                   request.throwIfCanceled();
-                  Bitmap loaded;
                   if (photo.uri != null) {
                     int side =
                         Math.max(
@@ -720,17 +712,20 @@ final class GallerySheet extends Dialog {
                     request.throwIfCanceled();
                     loaded = BitmapFactory.decodeFile(photo.thumbnail.getAbsolutePath(), options);
                   }
-                  if (loaded == null) return;
-                  main.post(
-                      () -> {
-                        thumbnailSignals.remove(request);
-                        if (closed || request.isCanceled()) return;
-                        cache.put(key, loaded);
-                        if (key.equals(image.getTag())) image.setImageBitmap(loaded);
-                      });
                 } catch (Exception ignored) {
-                  main.post(() -> thumbnailSignals.remove(request));
                 }
+                Bitmap bitmap = loaded;
+                main.post(
+                    () -> {
+                      thumbnailSignals.remove(request);
+                      if (signal != request) return;
+                      signal = null;
+                      future = null;
+                      loading = false;
+                      if (closed || request.isCanceled() || bitmap == null) return;
+                      cache.put(key, bitmap);
+                      if (key.equals(image.getTag())) image.setImageBitmap(bitmap);
+                    });
               });
     }
 
@@ -756,14 +751,12 @@ final class GallerySheet extends Dialog {
     if (querySignal != null) querySignal.cancel();
     for (CancellationSignal signal : thumbnailSignals) signal.cancel();
     thumbnailSignals.clear();
-    for (CancellationSignal signal : motionSignals) signal.cancel();
-    motionSignals.clear();
     albumPanel.animate().cancel();
     albumArrow.animate().cancel();
+    if (root != null) root.animate().cancel();
     activity.getWindow().getDecorView().removeOnLayoutChangeListener(windowSizeChanged);
     metadata.shutdownNow();
     thumbnails.shutdownNow();
-    checks.shutdownNow();
     grid.setAdapter(null);
     phone.clear();
     visible.clear();

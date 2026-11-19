@@ -44,6 +44,7 @@ public final class ExportSheetInstrumentedTest
                   options -> {
                     selected.set(options);
                     submissions.incrementAndGet();
+                    return true;
                   });
           sheet.show();
         });
@@ -72,6 +73,14 @@ public final class ExportSheetInstrumentedTest
     assertEquals(1, submissions.get());
     assertEquals(ExportOptions.JPEG, selected.get().mode);
     assertEquals(90, selected.get().jpegQuality);
+    assertTrue(sheet.isShowing());
+    assertEquals(View.VISIBLE, view("export.progress").getVisibility());
+    assertEquals(View.GONE, view("export.actions").getVisibility());
+    assertEquals(
+        AppStyle.dp(getActivity(), 8), view("export.progress.bar").getLayoutParams().height);
+    assertEquals("正在导出照片…", ((TextView) view("export.progress.label")).getText().toString());
+    assertEquals("导出进度", view("export.progress.bar").getContentDescription().toString());
+    main(sheet::finishExport);
     assertFalse(sheet.isShowing());
     assertFalse("The sheet must not recycle the editor preview", preview.isRecycled());
   }
@@ -93,6 +102,7 @@ public final class ExportSheetInstrumentedTest
     main(() -> view("export.share").performClick());
     assertEquals(ExportOptions.SHARE_JPEG, selected.get().mode);
     assertEquals(85, selected.get().jpegQuality);
+    main(sheet::finishExport);
   }
 
   public void testCancelDoesNotExportAndReopeningDefaultsToRecommended() {
@@ -119,6 +129,7 @@ public final class ExportSheetInstrumentedTest
           });
       assertEquals(format, selected.get().mode);
       assertFalse(selected.get().isJpeg());
+      main(sheet::finishExport);
       main(() -> Bitmaps.release(preview));
     }
   }

@@ -17,8 +17,6 @@ import java.util.*;
  *
  * <p>The picker never reads the XMP blob column while listing: on libraries with tens of thousands
  * of photos that single column turns a fast index scan into minutes of CursorWindow refills.
- * Motion / Live detection moved to {@link #moving}, which reads one row when the user picks it, and
- * to the byte scan performed while importing.
  */
 final class GalleryPhotos {
   /** Rows per metadata query; keeps the first screen cheap on very large libraries. */
@@ -182,43 +180,6 @@ final class GalleryPhotos {
   /** Whole-library read; used by tests and by the paging fallback. */
   static List<Photo> query(Context context, CancellationSignal cancellation) {
     return page(context, cancellation, 0, 0).photos;
-  }
-
-  /**
-   * One-row XMP probe for the photo the user is about to include. Returns false when the provider
-   * has no XMP column; the byte scan in {@link PhotoFormats#isMovingPhoto} still rejects moving
-   * photos before they are saved.
-   */
-  static boolean moving(Context context, Photo photo, CancellationSignal cancellation) {
-    if (photo == null || photo.uri == null || photo.mediaId <= 0) return false;
-    Uri collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL);
-    String[] projection = {MediaStore.MediaColumns.XMP};
-    String selection = MediaStore.Images.Media._ID + " = ?";
-    String[] arguments = {Long.toString(photo.mediaId)};
-    try (Cursor cursor =
-        context
-            .getContentResolver()
-            .query(collection, projection, selection, arguments, null, cancellation)) {
-      if (cursor == null || !cursor.moveToFirst()) return false;
-      return PhotoFormatPolicy.movingPhotoMetadata(readXmp(cursor, 0));
-    } catch (RuntimeException ignored) {
-      return false;
-    }
-  }
-
-  private static String readXmp(Cursor cursor, int column) {
-    if (column < 0 || cursor.isNull(column)) return null;
-    try {
-      if (cursor.getType(column) == Cursor.FIELD_TYPE_BLOB) {
-        byte[] bytes = cursor.getBlob(column);
-        return bytes == null
-            ? null
-            : new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-      }
-      return cursor.getString(column);
-    } catch (RuntimeException ignored) {
-      return null;
-    }
   }
 
   static long photoTime(long takenMs, long modifiedSeconds, long addedSeconds) {

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.Dialog;
 import android.graphics.Bitmap;
@@ -17,6 +18,7 @@ import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.animation.LinearInterpolator;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -27,7 +29,7 @@ import java.util.concurrent.Executors;
 
 final class ExportSheet extends Dialog {
   interface Listener {
-    void export(ExportOptions options);
+    boolean export(ExportOptions options);
   }
 
   private final Activity activity;
@@ -45,10 +47,16 @@ final class ExportSheet extends Dialog {
         if (!closed && (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop))
           resize();
       };
-  private LinearLayout qualityPanel;
-  private TextView lossless, description, size, sizeNote, share;
+  private LinearLayout root, header, qualityPanel, idleFooter, progressFooter;
+  private LinearLayout content;
+  private TextView dimensionsText;
+  private TextView lossless, description, size, sizeNote, share, cancelButton, progressLabel;
+  private View progressBar;
+  private ImportProgressDrawable progressDrawable;
+  private ValueAnimator progressAnimator;
+  private float progressFraction;
   private int format = ExportOptions.JPEG, quality = ExportOptions.RECOMMENDED;
-  private boolean estimationFinished, submitted;
+  private boolean estimationFinished, submitted, exporting;
 
   ExportSheet(
       Activity activity, String dimensions, int outputWidth, int outputHeight,
@@ -101,29 +109,45 @@ final class ExportSheet extends Dialog {
   }
 
   private void build(String dimensions) {
-    LinearLayout root = column();
+    root = column();
     root.setPadding(dp(20), dp(12), dp(20), dp(12));
     AppStyle.surface(root, AppStyle.SURFACE, AppStyle.R_LARGE, false);
 
-    LinearLayout header = new LinearLayout(getContext());
+    header = new LinearLayout(getContext());
     header.setGravity(Gravity.CENTER_VERTICAL);
     TextView title = text("导出照片", AppStyle.TYPE_HEADING, AppStyle.INK);
     AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
     header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-    header.addView(
-        action("取消", "export.cancel", AppStyle.MUTED, Color.TRANSPARENT, this::dismiss),
-        new LinearLayout.LayoutParams(-2, -2));
+    cancelButton =
+        action("取消", "export.cancel", AppStyle.MUTED, Color.TRANSPARENT, this::dismiss);
+    header.addView(cancelButton, new LinearLayout.LayoutParams(-2, -2));
     root.addView(header);
-    TextView dimensionsText =
-        text("原尺寸 · " + dimensions, AppStyle.TYPE_LABEL, AppStyle.MUTED);
+    dimensionsText = text("原尺寸 · " + dimensions, AppStyle.TYPE_LABEL, AppStyle.MUTED);
     AppStyle.setNumericTypeface(dimensionsText);
     dimensionsText.setTag("export.dimensions");
     root.addView(dimensionsText);
+
+    progressFooter = column();
+    progressFooter.setTag("export.progress");
+    progressFooter.setVisibility(View.GONE);
+    progressFooter.setPadding(0, dp(12), 0, 0);
+    progressLabel = text("正在导出照片…", AppStyle.TYPE_BODY, AppStyle.MUTED);
+    progressLabel.setTag("export.progress.label");
+    progressFooter.addView(progressLabel);
+    gap(progressFooter, 8);
+    progressBar = new View(getContext());
+    progressBar.setTag("export.progress.bar");
+    progressDrawable = new ImportProgressDrawable(getContext());
+    progressBar.setBackground(progressDrawable);
+    progressBar.setContentDescription("导出进度");
+    progressFooter.addView(progressBar, new LinearLayout.LayoutParams(-1, dp(8)));
+    root.addView(progressFooter);
+
     gap(root, 18);
 
     ScrollView scroll = new ScrollView(getContext());
     scroll.setClipToPadding(false);
-    LinearLayout content = column();
+    content = column();
     scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
     root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     content.addView(heading("文件格式"));
@@ -192,7 +216,10 @@ final class ExportSheet extends Dialog {
     sizeNote.setLineSpacing(dp(3), 1);
     content.addView(sizeNote);
     gap(content, 12);
-    gap(root, 12);
+
+    idleFooter = column();
+    idleFooter.setPadding(0, dp(12), 0, 0);
+    idleFooter.setTag("export.actions");
     TextView save =
         action(
             "保存到相册",
@@ -202,10 +229,12 @@ final class ExportSheet extends Dialog {
             () -> submit(false));
     AppStyle.setTypeface(save, AppStyle.FONT_BOLD);
     save.setMinHeight(dp(AppStyle.TOUCH_PRIMARY));
-    root.addView(save, new LinearLayout.LayoutParams(-1, -2));
+    idleFooter.addView(save, new LinearLayout.LayoutParams(-1, -2));
     share =
         action("分享 JPEG", "export.share", AppStyle.MUTED, Color.TRANSPARENT, () -> submit(true));
-    root.addView(share, new LinearLayout.LayoutParams(-1, -2));
+    idleFooter.addView(share, new LinearLayout.LayoutParams(-1, -2));
+    root.addView(idleFooter);
+
     setContentView(root);
     refresh();
   }
@@ -306,8 +335,98 @@ final class ExportSheet extends Dialog {
     submitted = true;
     ExportOptions options =
         new ExportOptions(sharing ? ExportOptions.SHARE_JPEG : format, quality);
+    beginExport(sharing);
+    if (!listener.export(options)) dismiss();
+  }
+
+  private void beginExport(boolean sharing) {
+    exporting = true;
+    setCancelable(false);
+    setCanceledOnTouchOutside(false);
+    cancelButton.setText("请稍候");
+    cancelButton.setTextSize(AppStyle.TYPE_LABEL);
+    cancelButton.setTextColor(AppStyle.MUTED);
+    cancelButton.setOnClickListener(null);
+    cancelButton.setClickable(false);
+    cancelButton.setFocusable(false);
+    for (TextView button : formatButtons) button.setEnabled(false);
+    for (TextView button : qualityButtons) button.setEnabled(false);
+    content.setAlpha(.45f);
+    idleFooter.setVisibility(View.GONE);
+    progressFooter.setVisibility(View.VISIBLE);
+    progressLabel.setText(sharing ? "正在准备分享…" : "正在导出照片…");
+    resize();
+    progressFraction = 0f;
+    progressDrawable.setFraction(0f);
+    progressDrawable.setAnimating(true);
+    setProgress(0.04f, 350);
+  }
+
+  void setProgress(float fraction) {
+    setProgress(fraction, 0);
+  }
+
+  void setProgress(float fraction, long durationMs) {
+    if (closed || !exporting) return;
+    float target = Math.max(0f, Math.min(1f, fraction));
+    if (progressAnimator != null) {
+      progressAnimator.cancel();
+      progressAnimator = null;
+    }
+    if (durationMs <= 0) {
+      progressFraction = target;
+      progressDrawable.setFraction(target);
+      return;
+    }
+    progressAnimator = ValueAnimator.ofFloat(progressFraction, target);
+    progressAnimator.setDuration(durationMs);
+    progressAnimator.setInterpolator(new LinearInterpolator());
+    progressAnimator.addUpdateListener(
+        animation -> {
+          progressFraction = (float) animation.getAnimatedValue();
+          progressDrawable.setFraction(progressFraction);
+        });
+    progressAnimator.start();
+  }
+
+  void finishExport() {
+    if (closed) return;
+    if (progressAnimator != null) {
+      progressAnimator.cancel();
+      progressAnimator = null;
+    }
+    progressLabel.setText("导出完成");
+    progressFraction = 1f;
+    progressDrawable.setFraction(1f);
+    progressDrawable.setAnimating(false);
     dismiss();
-    listener.export(options);
+  }
+
+  void failExport() {
+    if (closed || !exporting) return;
+    exporting = false;
+    if (progressAnimator != null) {
+      progressAnimator.cancel();
+      progressAnimator = null;
+    }
+    progressDrawable.setAnimating(false);
+    progressFraction = 0f;
+    progressDrawable.setFraction(0f);
+    progressFooter.setVisibility(View.GONE);
+    idleFooter.setVisibility(View.VISIBLE);
+    content.setAlpha(1f);
+    cancelButton.setText("取消");
+    cancelButton.setTextSize(AppStyle.TYPE_TITLE);
+    cancelButton.setTextColor(AppStyle.MUTED);
+    cancelButton.setOnClickListener(view -> dismiss());
+    cancelButton.setClickable(true);
+    cancelButton.setFocusable(true);
+    for (TextView button : formatButtons) button.setEnabled(true);
+    for (TextView button : qualityButtons) button.setEnabled(true);
+    setCancelable(true);
+    setCanceledOnTouchOutside(true);
+    submitted = false;
+    resize();
   }
 
   private void estimate(Bitmap preview, int outputWidth, int outputHeight) {
@@ -387,14 +506,43 @@ final class ExportSheet extends Dialog {
       width = getContext().getResources().getDisplayMetrics().widthPixels;
       height = getContext().getResources().getDisplayMetrics().heightPixels - dp(48);
     }
-    getWindow().setLayout(
-        Math.min(dp(560), Math.max(dp(200), width - dp(24))),
-        Math.min(Math.max(dp(240), height - dp(20)), dp(format == ExportOptions.JPEG ? 560 : 460)));
+    int windowWidth = Math.min(dp(560), Math.max(dp(200), width - dp(24)));
+    int maxHeight =
+        Math.min(Math.max(dp(240), height - dp(20)), dp(format == ExportOptions.JPEG ? 560 : 460));
+    int windowHeight = maxHeight;
+    if (exporting
+        && header != null
+        && dimensionsText != null
+        && progressFooter != null
+        && content != null) {
+      int contentWidth = Math.max(1, windowWidth - dp(40));
+      int exactWidth = View.MeasureSpec.makeMeasureSpec(contentWidth, View.MeasureSpec.EXACTLY);
+      int unspecifiedHeight = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+      header.measure(exactWidth, unspecifiedHeight);
+      dimensionsText.measure(exactWidth, unspecifiedHeight);
+      progressFooter.measure(exactWidth, unspecifiedHeight);
+      content.measure(exactWidth, unspecifiedHeight);
+      int natural =
+          dp(12)
+              + header.getMeasuredHeight()
+              + dimensionsText.getMeasuredHeight()
+              + progressFooter.getMeasuredHeight()
+              + dp(18)
+              + content.getMeasuredHeight()
+              + dp(12);
+      windowHeight = Math.max(dp(240), Math.min(maxHeight, natural));
+    }
+    getWindow().setLayout(windowWidth, windowHeight);
   }
 
   @Override
   protected void onStop() {
     closed = true;
+    if (progressAnimator != null) {
+      progressAnimator.cancel();
+      progressAnimator = null;
+    }
+    if (progressDrawable != null) progressDrawable.setAnimating(false);
     estimator.shutdown();
     main.removeCallbacksAndMessages(null);
     activity.getWindow().getDecorView().removeOnLayoutChangeListener(windowChanged);

@@ -157,13 +157,4 @@ public final class GalleryLargeLibraryInstrumentedTest extends InstrumentationTe
     assertEquals(0, provider.xmpQueries);
   }
 
-  public void testMotionProbeReadsOneRowOnly() {
-    CancellationSignal signal = new CancellationSignal();
-    GalleryPhotos.Page page = GalleryPhotos.page(context, signal, 0, GalleryPhotos.PAGE_SIZE);
-    int before = provider.queries;
-    assertFalse(GalleryPhotos.moving(context, page.photos.get(0), signal));
-    assertEquals(before + 1, provider.queries);
-    assertEquals(1, provider.xmpQueries);
-    assertEquals(1, provider.lastRows);
-  }
 }

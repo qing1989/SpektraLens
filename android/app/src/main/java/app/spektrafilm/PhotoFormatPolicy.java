@@ -5,17 +5,12 @@ package app.spektrafilm;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
-/** Static-image allow-list and Motion Photo / Live Photo rejection shared with the gallery. */
+/** Static-image allow-list shared with the gallery. */
 final class PhotoFormatPolicy {
   private static final Pattern SUPPORTED_EXTENSION =
       Pattern.compile(".*\\.(?:jpe?g|png|heic|heif|dng)$", Pattern.CASE_INSENSITIVE);
   private static final Pattern ANY_EXTENSION =
       Pattern.compile(".*\\.[a-z0-9]{2,6}$", Pattern.CASE_INSENSITIVE);
-  private static final Pattern MOVING_PHOTO =
-      Pattern.compile(
-          "(?i)(?:motionphoto\\s*[=:]\\s*[\"']?1|microvideo|"
-              + "live[-_ ]?photo|com\\.apple\\.quicktime\\.content\\.identifier|"
-              + "apple\\s*:\\s*contentidentifier)");
 
   private PhotoFormatPolicy() {}
 
@@ -31,9 +26,5 @@ final class PhotoFormatPolicy {
         || normalizedMime.equals("image/x-adobe-dng")
         || normalizedMime.equals("image/dng")) return true;
     return SUPPORTED_EXTENSION.matcher(safeName).matches();
-  }
-
-  static boolean movingPhotoMetadata(String xmp) {
-    return xmp != null && MOVING_PHOTO.matcher(xmp).find();
   }
 }

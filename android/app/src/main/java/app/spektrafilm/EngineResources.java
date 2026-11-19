@@ -3,6 +3,7 @@
 package app.spektrafilm;
 
 import android.content.Context;
+import android.content.pm.PackageInfo;
 import android.content.res.AssetManager;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -12,7 +13,25 @@ import java.util.*;
 
 /** The installed APK, not an earlier installation's .ready file, owns the engine resources. */
 final class EngineResources {
+  private static final int MARKER_MAGIC = 0x53504b31;
+
+  private static final class Marker {
+    final long updateTime, versionCode, fileCount, totalBytes;
+    final byte[] fingerprint;
+
+    Marker(long updateTime, long versionCode, long fileCount, long totalBytes, byte[] fingerprint) {
+      this.updateTime = updateTime;
+      this.versionCode = versionCode;
+      this.fileCount = fileCount;
+      this.totalBytes = totalBytes;
+      this.fingerprint = fingerprint;
+    }
+  }
+
   static synchronized File prepare(Context context, File directory) throws IOException {
+    PackageInfo info = packageInfo(context);
+    File marker = new File(directory, ".ready");
+    if (info != null && fastMatches(info, directory, marker)) return directory;
     AssetManager assets = context.getAssets();
     Map<String, byte[]> expected = new TreeMap<>();
     collect(assets, "", expected);
@@ -24,8 +43,11 @@ final class EngineResources {
       bundle.update(file.getValue());
     }
     byte[] fingerprint = bundle.digest();
-    File marker = new File(directory, ".ready");
-    if (matches(directory, fingerprint, expected)) return directory;
+    if (matches(directory, fingerprint, expected)) {
+      if (info != null) writeMarker(marker, info, fingerprint, directory);
+      else Files.write(marker.toPath(), fingerprint);
+      return directory;
+    }
 
     // Invalidate first, publish the marker last. An interrupted copy is retried on next startup.
     remove(directory);
@@ -47,8 +69,106 @@ final class EngineResources {
       if (!MessageDigest.isEqual(file.getValue(), copied.digest()))
         throw new IOException("显影资源校验失败：" + file.getKey());
     }
-    Files.write(marker.toPath(), fingerprint);
+    if (info != null) writeMarker(marker, info, fingerprint, directory);
+    else Files.write(marker.toPath(), fingerprint);
     return directory;
+  }
+
+  private static PackageInfo packageInfo(Context context) {
+    try {
+      return context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+    } catch (Exception ignored) {
+      return null;
+    }
+  }
+
+  private static boolean fastMatches(PackageInfo info, File directory, File marker) {
+    Marker saved = readMarker(marker);
+    if (saved == null
+        || saved.updateTime != info.lastUpdateTime
+        || saved.versionCode != info.getLongVersionCode()) return false;
+    try {
+      long[] stats = measure(directory, marker);
+      if (stats[0] != saved.fileCount || stats[1] != saved.totalBytes) return false;
+      return MessageDigest.isEqual(saved.fingerprint, directoryFingerprint(directory, marker));
+    } catch (IOException ex) {
+      return false;
+    }
+  }
+
+  private static byte[] directoryFingerprint(File directory, File marker) throws IOException {
+    ArrayList<String> paths = new ArrayList<>();
+    collectPaths(directory, marker, "", paths);
+    Collections.sort(paths);
+    MessageDigest bundle = sha256();
+    for (String path : paths) {
+      bundle.update(path.getBytes(StandardCharsets.UTF_8));
+      bundle.update((byte) 0);
+      bundle.update(hash(new FileInputStream(new File(directory, path))));
+    }
+    return bundle.digest();
+  }
+
+  private static void collectPaths(File directory, File marker, String prefix, ArrayList<String> paths)
+      throws IOException {
+    File[] files = directory.listFiles();
+    if (files == null) throw new IOException("无法读取显影资源目录");
+    for (File file : files) {
+      if (file.equals(marker)) continue;
+      String path = prefix.isEmpty() ? file.getName() : prefix + "/" + file.getName();
+      if (file.isDirectory()) collectPaths(file, marker, path, paths);
+      else paths.add(path);
+    }
+  }
+
+  private static Marker readMarker(File marker) {
+    if (!marker.isFile()) return null;
+    try (DataInputStream in =
+        new DataInputStream(new BufferedInputStream(new FileInputStream(marker)))) {
+      if (in.readInt() != MARKER_MAGIC) return null;
+      long updateTime = in.readLong(), versionCode = in.readLong();
+      long fileCount = in.readLong(), totalBytes = in.readLong();
+      int length = in.readInt();
+      if (length <= 0 || length > 64) return null;
+      byte[] fingerprint = new byte[length];
+      in.readFully(fingerprint);
+      return new Marker(updateTime, versionCode, fileCount, totalBytes, fingerprint);
+    } catch (IOException ex) {
+      return null;
+    }
+  }
+
+  private static void writeMarker(
+      File marker, PackageInfo info, byte[] fingerprint, File directory) throws IOException {
+    long[] stats = measure(directory, marker);
+    try (DataOutputStream out =
+        new DataOutputStream(new BufferedOutputStream(new FileOutputStream(marker)))) {
+      out.writeInt(MARKER_MAGIC);
+      out.writeLong(info.lastUpdateTime);
+      out.writeLong(info.getLongVersionCode());
+      out.writeLong(stats[0]);
+      out.writeLong(stats[1]);
+      out.writeInt(fingerprint.length);
+      out.write(fingerprint);
+    }
+  }
+
+  private static long[] measure(File directory, File marker) throws IOException {
+    File[] files = directory.listFiles();
+    if (files == null) throw new IOException("无法读取显影资源目录");
+    long count = 0, bytes = 0;
+    for (File file : files) {
+      if (file.equals(marker)) continue;
+      if (file.isDirectory()) {
+        long[] child = measure(file, marker);
+        count += child[0];
+        bytes += child[1];
+      } else {
+        count++;
+        bytes += file.length();
+      }
+    }
+    return new long[] {count, bytes};
   }
 
   private static void collect(AssetManager assets, String path, Map<String, byte[]> files)
