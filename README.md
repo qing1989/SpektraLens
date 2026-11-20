@@ -19,9 +19,9 @@ RAW 解码、光谱显影、相纸印相、调色、颗粒与光晕合成、编�
 </p>
 
 <p align="center">
-  <img src="docs/images/09-home-0.5.jpg" width="26%" alt="首页：最近照片与导入入口" />
-  <img src="docs/images/10-editor-bw.jpg" width="26%" alt="编辑页：黑白胶片画廊" />
-  <img src="docs/images/11-export-0.5.jpg" width="26%" alt="导出面板" />
+  <img src="docs/images/01-home.jpg" width="26%" alt="首页：最近照片与导入入口" />
+  <img src="docs/images/02-film.jpg" width="26%" alt="胶片型号与画廊" />
+  <img src="docs/images/07-export.jpg" width="26%" alt="导出照片" />
 </p>
 
 ---
@@ -38,13 +38,29 @@ RAW 解码、光谱显影、相纸印相、调色、颗粒与光晕合成、编�
 ## 界面
 
 <p align="center">
-  <img src="docs/images/09-home-0.5.jpg" width="23%" alt="首页" />
-  <img src="docs/images/10-editor-bw.jpg" width="23%" alt="黑白胶片画廊" />
-  <img src="docs/images/11-export-0.5.jpg" width="23%" alt="导出面板" />
-  <img src="docs/images/12-manage.jpg" width="23%" alt="长按菜单" />
+  <img src="docs/images/01-home.jpg" width="30%" alt="首页" />
+  <img src="docs/images/02-film.jpg" width="30%" alt="胶片型号" />
+  <img src="docs/images/07-export.jpg" width="30%" alt="导出照片" />
 </p>
 <p align="center">
-  <sub><b>首页</b> 最近导入优先，卡片标着已套用的胶卷 &nbsp;·&nbsp; <b>胶片</b> 25 款按负片 / 电影 / 反转 / 黑白分类，每格都是这张照片的实际显影 &nbsp;·&nbsp; <b>导出</b> 原尺寸、格式与画质 &nbsp;·&nbsp; <b>长按</b> 编辑、复制与批量粘贴</sub>
+  <sub><b>首页</b> 最近照片与导入入口 &nbsp;·&nbsp; <b>胶片</b> 五个分类，格子里是这张照片的实际显影 &nbsp;·&nbsp; <b>导出</b> 原尺寸、格式与画质</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/03-paper.jpg" width="23%" alt="相纸与印相" />
+  <img src="docs/images/04-adjust.jpg" width="23%" alt="调整面板" />
+  <img src="docs/images/05-border.jpg" width="23%" alt="边框与日期" />
+</p>
+<p align="center">
+  <sub><b>相纸</b> 与所选胶片联动的印相材料与印相亮度 &nbsp;·&nbsp; <b>调整</b> 基础 / 曲线 / 颜色分级 / HSL / 暗角 &nbsp;·&nbsp; <b>边框</b> 片边样式与日期水印</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/06-texture.jpg" width="23%" alt="质感" />
+  <img src="docs/images/08-manage.jpg" width="23%" alt="长按菜单" />
+</p>
+<p align="center">
+  <sub><b>质感</b> 银盐颗粒、光晕与高光余量 &nbsp;·&nbsp; <b>长按</b> 再次编辑、复制与批量粘贴、收藏、导出、删除</sub>
 </p>
 
 > 截图取自 v0.5.3 实机运行。
