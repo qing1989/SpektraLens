@@ -90,6 +90,7 @@ final class GallerySheet extends Dialog {
     this.maxSelection = Math.max(0, maxSelection);
     this.listener = listener;
     requestWindowFeature(Window.FEATURE_NO_TITLE);
+    getWindow().setWindowAnimations(0);
     Haptics.install(getWindow());
     build();
     setCanceledOnTouchOutside(true);
@@ -317,12 +318,46 @@ final class GallerySheet extends Dialog {
     attributes.y = dp(10);
     attributes.alpha = 1f;
     window.setAttributes(attributes);
-    window.setWindowAnimations(R.style.GallerySheetAnimation);
+    // Some OEMs still apply their dialog alpha transition even when a custom
+    // windowEnterAnimation is supplied. Disable the window animation and slide only the
+    // opaque content, so no frame can show the Activity through the sheet.
+    window.setWindowAnimations(0);
     resize(true);
     root.setAlpha(1f);
+    root.setTranslationY(getContext().getResources().getDisplayMetrics().heightPixels);
     super.show();
+    // Set alpha again after the window is attached; OEM window managers may reset it while
+    // adding the dialog. The content translation is the only entrance motion.
+    WindowManager.LayoutParams shown = window.getAttributes();
+    shown.alpha = 1f;
+    window.setAttributes(shown);
+    window.getDecorView().setAlpha(1f);
+    root.setAlpha(1f);
+    root.post(
+        () -> {
+          if (!closed) {
+            root.animate().translationY(0).setDuration(180).start();
+          }
+        });
     activity.getWindow().getDecorView().addOnLayoutChangeListener(windowSizeChanged);
     refresh();
+  }
+
+  @Override
+  public void dismiss() {
+    if (!closed) {
+      Window window = getWindow();
+      window.setWindowAnimations(0);
+      WindowManager.LayoutParams attributes = window.getAttributes();
+      attributes.alpha = 1f;
+      window.setAttributes(attributes);
+      if (root != null) {
+        root.animate().cancel();
+        root.setAlpha(1f);
+        root.setTranslationY(0);
+      }
+    }
+    super.dismiss();
   }
 
   private void resize(boolean initial) {

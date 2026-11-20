@@ -40,11 +40,20 @@ public final class MainActivity extends Activity {
   private static final long PANEL_MOTION_MS = 200, TOOL_MOTION_MS = 140;
   private static final int MAX_BATCH_IMPORT = 20;
   private static final PathInterpolator EDITOR_EASING = new PathInterpolator(.2f, 0f, 0f, 1f);
-  private static final int GALLERY_SOURCE_EDGE = 1024;
+  private static final int GALLERY_SOURCE_MIN_EDGE = 384;
+  private static final int GALLERY_WARM_COUNT = 3;
   private static final long GALLERY_CACHE_BYTES = 16L * 1024 * 1024;
   private UpdateController updates;
   private UpdateBadge homeAbout;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
+  private final ExecutorService exportIo =
+      Executors.newFixedThreadPool(
+          2,
+          runnable -> {
+            Thread thread = new Thread(runnable, "export-io");
+            thread.setDaemon(true);
+            return thread;
+          });
   private final ExecutorService thumbnailIo = Executors.newSingleThreadExecutor();
   private final ExecutorService bootStateIo = Executors.newSingleThreadExecutor();
   private final ExecutorService libraryWriter = Executors.newSingleThreadExecutor();
@@ -118,6 +127,9 @@ public final class MainActivity extends Activity {
       new java.util.concurrent.atomic.AtomicInteger();
   private volatile long thumbRenderCount, homeThumbRenderCount;
   private long thumbDiskHits;
+  private String warmPrint = "";
+  private int warmIndex;
+  private final ArrayList<String> warmStocks = new ArrayList<>();
   private final Set<String> thumbFailed = new HashSet<>();
   private int previewWorkTicket = -1;
   // 面板每次重建都会换掉 ImageView，所以渲染完成时不能只认建时的那个引用。
@@ -1361,6 +1373,7 @@ public final class MainActivity extends Activity {
     homeScreen.setVisibility(View.GONE);
     editorScreen.setVisibility(View.VISIBLE);
     homeImages.loadVisible();
+    main.postDelayed(this::warmGalleryThumbs, 900);
   }
 
   private void updateComparison() {
@@ -2999,8 +3012,59 @@ public final class MainActivity extends Activity {
         int l = i * stridePx, r = l + sizePx;
         boolean visible = r > left && l < right;
         int priority = visible ? (stocks.get(i).equals(settings.optString("film_stock")) ? 0 : 1) : 2;
-        if (pass != priority || r < left - dp(60) || l > right + dp(60)) continue;
+        if (pass != priority || r < left - dp(160) || l > right + dp(160)) continue;
         requestFilmThumb(stocks.get(i), views.get(i));
+      }
+    }
+  }
+
+  /**
+   * Warm the first few neutral gallery cards while the editor is idle. Rendering still goes
+   * through the same single worker and never starts while a main preview is pending; the only
+   * effect is that opening the gallery later finds those cards ready.
+   */
+  private void warmGalleryThumbs() {
+    if (destroyed
+        || !ready
+        || source == null
+        || exporting
+        || activeImport != null
+        || mainPreviewPending()
+        || thumbBusy
+        || galleryVisible()
+        || editorScreen.getVisibility() != View.VISIBLE
+        || thumbStocksRef.isEmpty()) return;
+    syncThumbCache();
+    String print = thumbFingerprint() + ":" + gallerySourceEdge();
+    if (!print.equals(warmPrint)) {
+      warmPrint = print;
+      warmIndex = 0;
+      warmStocks.clear();
+      String current = settings.optString("film_stock");
+      if (thumbStocksRef.contains(current)) warmStocks.add(current);
+      for (String stock : thumbStocksRef) {
+        if (warmStocks.size() >= GALLERY_WARM_COUNT) break;
+        if (!warmStocks.contains(stock)) warmStocks.add(stock);
+      }
+    }
+    while (warmIndex < warmStocks.size()) {
+      int before = warmIndex;
+      String stock = warmStocks.get(warmIndex++);
+      if (filmThumbs.containsKey(stock) || thumbFailed.contains(stock)) continue;
+      requestFilmThumb(stock, null);
+      if (thumbBusy) return;
+      String diskKey = thumbStockDiskKeys.get(stock);
+      boolean pendingDisk = diskKey != null && thumbDiskPending.containsKey(diskKey);
+      boolean resolved = filmThumbs.containsKey(stock) || thumbFailed.contains(stock);
+      if (!resolved) {
+        // Either a disk probe is in flight or a main preview has priority. Retry the same card
+        // when that work reports back, instead of silently skipping it.
+        warmIndex = before;
+        return;
+      }
+      if (pendingDisk) {
+        warmIndex = before;
+        return;
       }
     }
   }
@@ -3008,7 +3072,7 @@ public final class MainActivity extends Activity {
   private void requestFilmThumb(String stock, ImageView target) {
     Bitmap cached = filmThumbs.get(stock);
     if (cached != null && !cached.isRecycled()) {
-      target.setImageBitmap(cached);
+      if (target != null) target.setImageBitmap(cached);
       return;
     }
     // One thumbnail at a time lets a newly requested main preview jump ahead of the rest.
@@ -3064,12 +3128,14 @@ public final class MainActivity extends Activity {
     final int generation = thumbGeneration;
     final String fingerprint = thumbPrint;
     final int postLongEdge = galleryThumbEdge();
+    final int sourceEdge = gallerySourceEdge();
     final SpectralRenderer activeRenderer = renderer;
     final String backendKey = galleryBackendKey();
     final String photoKey = file == null ? null : ThumbnailDiskCache.key(file.getAbsolutePath());
     final String diskKey = file == null ? null : photoKey + "-" + ThumbnailDiskCache.key(
-        "neutral-gallery-v1", file.getAbsolutePath(), Long.toString(file.length()),
-        Long.toString(file.lastModified()), backendKey, renderParams, Integer.toString(postLongEdge));
+        "neutral-gallery-v2", file.getAbsolutePath(), Long.toString(file.length()),
+        Long.toString(file.lastModified()), backendKey, Integer.toString(sourceEdge), renderParams,
+        Integer.toString(postLongEdge));
     if (diskKey != null) thumbStockDiskKeys.put(stock, diskKey);
     if (diskKey != null && !thumbDiskChecked.contains(diskKey)) {
       if (!thumbDiskPending.containsKey(diskKey)) {
@@ -3101,7 +3167,10 @@ public final class MainActivity extends Activity {
                 if (live != null && stock.equals(live.getTag())) live.setImageBitmap(hit);
               }
             } else Bitmaps.release(hit);
-            if (!destroyed) refillThumbs();
+            if (!destroyed) {
+              refillThumbs();
+              warmGalleryThumbs();
+            }
           });
         });
       }
@@ -3126,7 +3195,7 @@ public final class MainActivity extends Activity {
                 long started = SystemClock.elapsedRealtime();
                 if (raw) activeRenderer.openRaw(file.getAbsolutePath(), openParams1, 800);
                 else if (file != null)
-                  activeRenderer.openFile(file.getAbsolutePath(), openParams1, GALLERY_SOURCE_EDGE);
+                  activeRenderer.openFile(file.getAbsolutePath(), openParams1, sourceEdge);
                 else activeRenderer.open(input, openParams1);
                 long opened = SystemClock.elapsedRealtime();
                 made = activeRenderer.render(renderParams, "{}", false, postLongEdge);
@@ -3148,7 +3217,11 @@ public final class MainActivity extends Activity {
                       } finally {
                         Bitmaps.release(diskCopy);
                         thumbWrites.decrementAndGet();
-                        main.post(this::refillThumbs);
+                        main.post(
+                            () -> {
+                              refillThumbs();
+                              warmGalleryThumbs();
+                            });
                       }
                       });
                     } catch (RejectedExecutionException closed) {
@@ -3168,7 +3241,9 @@ public final class MainActivity extends Activity {
                         + "ms bitmap="
                         + made.getWidth()
                         + "x"
-                        + made.getHeight());
+                        + made.getHeight()
+                        + " source="
+                        + sourceEdge);
               } finally {
                 openedSource = null;
               }
@@ -3193,7 +3268,10 @@ public final class MainActivity extends Activity {
                   if (live != null && stock.equals(live.getTag())) live.setImageBitmap(result);
                 } else Bitmaps.release(result);
                 if (current && error) thumbFailed.add(stock);
-                if (!destroyed) refillThumbs();
+                if (!destroyed) {
+                  refillThumbs();
+                  warmGalleryThumbs();
+                }
               });
         });
   }
@@ -3207,6 +3285,15 @@ public final class MainActivity extends Activity {
     // 88dp cards stay sharp on 4x-density screens without carrying an 800px bitmap for every
     // stock. The engine still renders at its required 800px minimum.
     return Math.max(256, Math.min(512, dp(112)));
+  }
+
+  /**
+   * The gallery source is already at or below the engine's live-tier edge, so the engine shares
+   * it instead of downscaling an 800px image. This cuts pixels per stock by roughly 3x while the
+   * 88dp card still receives a 1x-4x-density bitmap.
+   */
+  private int gallerySourceEdge() {
+    return Math.max(GALLERY_SOURCE_MIN_EDGE, galleryThumbEdge());
   }
 
   private void cacheFilmThumb(String stock, Bitmap bitmap) {
@@ -3242,14 +3329,25 @@ public final class MainActivity extends Activity {
 
   /** Gallery recipes are fixed defaults; only photo/engine identity invalidates their results. */
   private String thumbFingerprint() {
+    // Reopening the same file must not throw away valid thumbnails. Identity is only needed for
+    // the in-memory demo bitmap; file-backed photos use path, length and mtime.
+    String photo =
+        sourceFile == null
+            ? "demo:" + System.identityHashCode(source)
+            : sourceFile.getAbsolutePath()
+                + ":"
+                + sourceFile.length()
+                + ":"
+                + sourceFile.lastModified();
     return photoLoadGeneration
         + ":"
         + engineBootGeneration
         + ":"
-        + System.identityHashCode(source)
+        + photo
         + ":"
-        + (sourceFile == null ? "" : sourceFile.getAbsolutePath())
-        + ":" + galleryBackendKey();
+        + gallerySourceEdge()
+        + ":"
+        + galleryBackendKey();
   }
 
   private boolean mainPreviewPending() {
@@ -3345,6 +3443,7 @@ public final class MainActivity extends Activity {
                         previewWorkTicket = -1;
                         mainPreviewRevision = -1;
                         refillThumbs();
+                        main.postDelayed(this::warmGalleryThumbs, 350);
                         if (homeScreen != null && homeScreen.getVisibility() == View.VISIBLE)
                           saveDevelopedLook();
                         pumpHomeThumbnails();
@@ -5836,6 +5935,16 @@ public final class MainActivity extends Activity {
     if (!value) refillThumbs();
   }
 
+  private static String awaitHash(Future<String> hash) throws Exception {
+    try {
+      return hash.get();
+    } catch (ExecutionException error) {
+      Throwable cause = error.getCause();
+      if (cause instanceof Exception) throw (Exception) cause;
+      throw error;
+    }
+  }
+
   private String sha256(File file) throws Exception {
     java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
     try (InputStream in = new FileInputStream(file)) {
@@ -5851,6 +5960,18 @@ public final class MainActivity extends Activity {
   private static long exportCreepMillis(int width, int height) {
     double megapixels = (double) width * height / 1_000_000.0;
     return (long) Math.max(3000, Math.min(24000, 3000 + megapixels * 200));
+  }
+
+  private static final class ExportMemoryException extends IOException {
+    final long requiredBytes, availableBytes;
+    final int safeEdge;
+
+    ExportMemoryException(long requiredBytes, long availableBytes, int safeEdge) {
+      super("原尺寸显影内存不足");
+      this.requiredBytes = requiredBytes;
+      this.availableBytes = availableBytes;
+      this.safeEdge = safeEdge;
+    }
   }
 
   private void export(int mode) {
@@ -5880,8 +6001,13 @@ public final class MainActivity extends Activity {
         name = filename,
         exportedSettings = settings.toString();
     File original = sourceFile;
+    // Source hashing is independent of rendering; overlap it with the spectral pass instead of
+    // reading the whole original again after the export finishes.
     boolean raw = sourceRaw;
     int width = fullWidth, height = fullHeight;
+    final int requestedEdge = options.maxLongEdge;
+    final int[] requestedSize = ExportOptions.scaledSize(width, height, requestedEdge);
+    final int renderWidth = requestedSize[0], renderHeight = requestedSize[1];
     String format = mode == 1 ? "png" : mode == 2 ? "tiff" : "jpeg";
     ExportTrace trace = new ExportTrace(this);
     trace.put("source_name", name);
@@ -5889,13 +6015,19 @@ public final class MainActivity extends Activity {
     trace.put("source_width", width);
     trace.put("source_height", height);
     trace.put("source_raw", raw);
+    trace.put("render_long_edge", Math.max(renderWidth, renderHeight));
     trace.put("format", format);
     if (options.isJpeg()) trace.put("jpeg_quality", options.jpegQuality);
     final ExportSheet sheet = exportSheet;
+    if (requestedEdge > 0 && sheet != null) {
+      int[] labelSize = ExportOptions.scaledSize(width, height, requestedEdge);
+      ui(() -> sheet.setSizeLabel("较小尺寸 · " + labelSize[0] + " × " + labelSize[1]));
+    }
     worker.execute(
         () -> {
           Uri uri = null;
           File cache = null;
+          Future<String> sourceHash = null, outputHash = null;
           try {
             trace.put("backend_before", renderer.backend());
             trace.phase("open_ms", "读取原文件");
@@ -5903,20 +6035,18 @@ public final class MainActivity extends Activity {
                 new android.app.ActivityManager.MemoryInfo();
             ((android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE))
                 .getMemoryInfo(memory);
-            long estimate = (long) width * height * 100 + 128L * 1024 * 1024;
+            long estimate = ExportOptions.estimateBytes(renderWidth, renderHeight);
             if (estimate > memory.availMem * .85)
-              throw new IOException(
-                  "本次原尺寸显影预计需要约 "
-                      + (estimate / 1024 / 1024)
-                      + " MB 可用内存，当前约 "
-                      + (memory.availMem / 1024 / 1024)
-                      + " MB。请关闭其他应用后重试，或使用较小的源照片。");
+              throw new ExportMemoryException(
+                  estimate, memory.availMem, ExportOptions.safeLongEdge(width, height, memory.availMem));
             renderer.closeImage();
             openedSource = null;
-            if (raw) renderer.openRaw(original.getAbsolutePath(), openParams(p), 0);
+            if (raw) renderer.openRaw(original.getAbsolutePath(), openParams(p), requestedEdge);
             else {
-              renderer.openFile(original.getAbsolutePath(), openParams(p));
+              renderer.openFile(original.getAbsolutePath(), openParams(p), requestedEdge);
             }
+            // Decode is done; hash the source while the spectral full render runs.
+            sourceHash = exportIo.submit(() -> sha256(original));
             ui(
                 () -> {
                   if (sheet != null) sheet.setProgress(0.18f, 500);
@@ -5928,15 +6058,22 @@ public final class MainActivity extends Activity {
             String ext = mode == 1 ? ".png" : mode == 2 ? ".tiff" : ".jpg";
             String mime = mode == 1 ? "image/png" : mode == 2 ? "image/tiff" : "image/jpeg";
             cache = new File(getCacheDir(), base + ext);
-            trace.phase("develop_encode_ms", "原尺寸显影与编码");
-            ui(() -> setStatus("正在原尺寸显影与编码…", true));
-            long creepMs = exportCreepMillis(width, height);
+            trace.phase(
+                "develop_encode_ms", requestedEdge > 0 ? "按较小尺寸显影与编码" : "原尺寸显影与编码");
+            ui(
+                () ->
+                    setStatus(
+                        requestedEdge > 0 ? "正在按较小尺寸显影与编码…" : "正在原尺寸显影与编码…",
+                        true));
+            long creepMs = exportCreepMillis(renderWidth, renderHeight);
             ui(
                 () -> {
                   if (sheet != null) sheet.setProgress(0.82f, creepMs);
                 });
             JSONObject dimensions =
                 new JSONObject(renderer.exportImage(p, edits, cache.getAbsolutePath(), format));
+            final File exported = cache;
+            outputHash = exportIo.submit(() -> sha256(exported));
             trace.put("backend_after", renderer.backend());
             trace.put("fallback_reason", renderer.fallbackReason());
             trace.put("native_timings", dimensions.optJSONObject("timings"));
@@ -5993,7 +6130,8 @@ public final class MainActivity extends Activity {
             JSONObject recipe = new JSONObject();
             recipe.put("app_version", "0.3.6");
             recipe.put("source_name", name);
-            recipe.put("source_sha256", sha256(original));
+            recipe.put(
+                "source_sha256", sourceHash == null ? sha256(original) : awaitHash(sourceHash));
             recipe.put("source_width", width);
             recipe.put("source_height", height);
             recipe.put("source_raw", raw);
@@ -6016,7 +6154,8 @@ public final class MainActivity extends Activity {
             recipe.put("native_timings", dimensions.optJSONObject("timings"));
             recipe.put("renderer_capabilities", new JSONObject(renderer.capabilities()));
             recipe.put("export", base + ext);
-            recipe.put("output_sha256", sha256(cache));
+            recipe.put(
+                "output_sha256", outputHash == null ? sha256(cache) : awaitHash(outputHash));
             recipe.put("presentation_model", "scan-side borders and date");
             File records = new File(getFilesDir(), "exports");
             if (!records.exists() && !records.mkdirs()) throw new IOException("无法保存导出记录");
@@ -6071,6 +6210,16 @@ public final class MainActivity extends Activity {
                             "再编辑一张", (dialog, which) -> importPhoto(exportedSettings))
                         .show();
                 });
+          } catch (ExportMemoryException memoryError) {
+            trace.put("backend_after", renderer.backend());
+            trace.finish(memoryError);
+            ui(
+                () -> {
+                  if (sheet != null) sheet.failExport();
+                  lock(false);
+                  setStatus("原尺寸超出设备内存", false, true);
+                  promptReducedExport(memoryError, options);
+                });
           } catch (Throwable ex) {
             trace.put("backend_after", renderer.backend());
             trace.put("fallback_reason", renderer.fallbackReason());
@@ -6093,6 +6242,46 @@ public final class MainActivity extends Activity {
           }
         });
     return true;
+  }
+
+  private void promptReducedExport(ExportMemoryException memory, ExportOptions options) {
+    if (destroyed) return;
+    int[] target = ExportOptions.scaledSize(fullWidth, fullHeight, memory.safeEdge);
+    long requiredMb = memory.requiredBytes / 1024 / 1024;
+    long availableMb = memory.availableBytes / 1024 / 1024;
+    String reason =
+        "原尺寸预计需要约 "
+            + requiredMb
+            + " MB 可用内存，当前约 "
+            + availableMb
+            + " MB。";
+    if (memory.safeEdge <= 0
+        || (target[0] >= fullWidth && target[1] >= fullHeight)) {
+      new Haptics.DialogBuilder(this)
+          .setTitle("导出未完成")
+          .setMessage(reason + "\n\n请关闭其他应用后重试，或换用较小的源照片。")
+          .setPositiveButton("知道了", null)
+          .show();
+      return;
+    }
+    new Haptics.DialogBuilder(this)
+        .setTitle("原尺寸超出设备内存")
+        .setMessage(
+            reason
+                + "\n\n可按 "
+                + target[0]
+                + " × "
+                + target[1]
+                + " 导出，调色、片边和日期会保留；是否继续？")
+        .setNegativeButton("取消", null)
+        .setPositiveButton(
+            "按较小尺寸导出",
+            (dialog, which) -> {
+              if (exportSheet != null)
+                exportSheet.retryExport(options.mode == ExportOptions.SHARE_JPEG);
+              export(new ExportOptions(options.mode, options.jpegQuality, memory.safeEdge));
+            })
+        .show();
   }
 
   private String getPackageVersion() {
@@ -6268,6 +6457,7 @@ public final class MainActivity extends Activity {
     engine = 0;
     worker.shutdown();
     thumbnailIo.shutdown();
+    exportIo.shutdownNow();
     bootStateIo.shutdownNow();
     libraryWriter.shutdown();
     super.onDestroy();

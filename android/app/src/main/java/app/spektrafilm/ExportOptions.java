@@ -8,14 +8,22 @@ final class ExportOptions {
 
   final int mode;
   final int jpegQuality;
+  /** 0 keeps the source resolution; a positive value is the maximum render long edge. */
+  final int maxLongEdge;
 
   ExportOptions(int mode, int jpegQuality) {
+    this(mode, jpegQuality, 0);
+  }
+
+  ExportOptions(int mode, int jpegQuality, int maxLongEdge) {
     if (mode < JPEG || mode > SHARE_JPEG)
       throw new IllegalArgumentException("Unsupported export format");
     if (jpegQuality != HIGH && jpegQuality != RECOMMENDED && jpegQuality != COMPACT)
       throw new IllegalArgumentException("Unsupported JPEG quality");
+    if (maxLongEdge < 0) throw new IllegalArgumentException("Invalid export edge");
     this.mode = mode;
     this.jpegQuality = jpegQuality;
+    this.maxLongEdge = maxLongEdge;
   }
 
   boolean isJpeg() {
@@ -38,6 +46,35 @@ final class ExportOptions {
       case COMPACT -> "文件更小，细节可能略有损失";
       default -> throw new IllegalArgumentException("Unsupported JPEG quality");
     };
+  }
+
+  /** Conservative peak-memory budget used before starting a full-size export. */
+  static long estimateBytes(int width, int height) {
+    return (long) width * height * 100 + 128L * 1024 * 1024;
+  }
+
+  /** Preserve aspect ratio; 0 means the source resolution. */
+  static int[] scaledSize(int width, int height, int maxLongEdge) {
+    int longest = Math.max(width, height);
+    if (maxLongEdge <= 0 || longest <= maxLongEdge) return new int[] {width, height};
+    double scale = maxLongEdge / (double) longest;
+    return new int[] {
+      Math.max(1, (int) Math.round(width * scale)),
+      Math.max(1, (int) Math.round(height * scale))
+    };
+  }
+
+  /**
+   * Long edge whose conservative estimate fits in 80% of the available bytes. Returns 0 when the
+   * device cannot fit even a 1024px export.
+   */
+  static int safeLongEdge(int width, int height, long availableBytes) {
+    double budget = availableBytes * .80 - 128.0 * 1024 * 1024;
+    if (budget <= 0) return 0;
+    double scale = Math.sqrt(budget / (100.0 * width * height));
+    int edge = Math.min(Math.max(width, height),
+                        (int) Math.floor(Math.max(width, height) * scale));
+    return edge >= 1024 ? edge : 0;
   }
 
   static long[] estimateJpegBytes(

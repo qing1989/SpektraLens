@@ -362,6 +362,17 @@ final class ExportSheet extends Dialog {
     setProgress(0.04f, 350);
   }
 
+  /** Re-enter the exporting state when the user accepts a reduced-size retry. */
+  void retryExport(boolean sharing) {
+    if (closed) return;
+    submitted = true;
+    beginExport(sharing);
+  }
+
+  void setSizeLabel(String label) {
+    if (!closed && dimensionsText != null) dimensionsText.setText(label);
+  }
+
   void setProgress(float fraction) {
     setProgress(fraction, 0);
   }

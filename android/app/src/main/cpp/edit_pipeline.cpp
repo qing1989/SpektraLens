@@ -126,6 +126,28 @@ struct Grade {
             hsl |= hues[i] != 0 || sats[i] != 0 || lights[i] != 0;
         }
     }
+    /**
+     * True when every grade control is at its neutral value. The export path can then copy the
+     * engine result instead of resampling and grading a second full-size 16-bit image.
+     */
+    bool identity() const {
+        if (!enabled) return true;
+        if (curves || hsl) return false;
+        if (std::fabs(wb[0] - 1) > 1e-6f || std::fabs(wb[1] - 1) > 1e-6f ||
+            std::fabs(wb[2] - 1) > 1e-6f) return false;
+        if (std::fabs(gain - 1) > 1e-6f || std::fabs(contrast) > 1e-6f ||
+            std::fabs(brightness) > 1e-6f || std::fabs(shadows) > 1e-6f ||
+            std::fabs(highlights) > 1e-6f || std::fabs(black) > 1e-6f ||
+            std::fabs(white) > 1e-6f || std::fabs(saturation - 1) > 1e-6f ||
+            std::fabs(vignette) > 1e-6f) return false;
+        for (int i = 0; i < 4; i++) {
+            if (std::fabs(lum[i]) > 1e-6f) return false;
+            for (int k = 0; k < 3; k++)
+                if (std::fabs(balance[i][k]) > 1e-6f) return false;
+        }
+        return true;
+    }
+
     void apply(float c[3], float u, float v) const {
         if (!enabled)
             return;
@@ -242,6 +264,7 @@ struct FrameLayout {
         width = w + margin * 2;
         height = h + margin + bottom;
     }
+    bool identity() const { return margin == 0 && bottom == 0 && style == "none"; }
 };
 void rect(Image16 &im, int x, int y, int w, int h, const float c[3], float alpha = 1) {
     int x0 = std::max(x, 0), y0 = std::max(y, 0), x1 = std::min(int(im.width), x + w),
@@ -588,6 +611,17 @@ void Geometry::sample(uint32_t ox, uint32_t oy, double &sx, double &sy) const {
     sx = x + crop_w * .5 + std::cos(angle) * dx + std::sin(angle) * dy - .5;
     sy = y + crop_h * .5 - std::sin(angle) * dx + std::cos(angle) * dy - .5;
 }
+namespace {
+bool identity_geometry(const Geometry &geo) {
+    return geo.x == 0 && geo.y == 0 && geo.crop_w == geo.source_w && geo.crop_h == geo.source_h &&
+           geo.out_w == geo.source_w && geo.out_h == geo.source_h && geo.angle == 0 &&
+           geo.turns == 0 && !geo.flip_h && !geo.flip_v;
+}
+bool date_active(const spk::Json &edits) {
+    return edits.at("date_enabled").as_bool() && !edits.at("date_text").as_string().empty();
+}
+}  // namespace
+
 Image16 apply_edits(const uint16_t *pixels, uint32_t w, uint32_t h, uint32_t stride,
                     const spk::Json &edits) {
     if (!w || !h || !pixels)
@@ -597,6 +631,24 @@ Image16 apply_edits(const uint16_t *pixels, uint32_t w, uint32_t h, uint32_t str
     FrameLayout f(geo.out_w, geo.out_h, edits);
     if (uint64_t(f.width) * f.height > 300000000ull)
         throw std::runtime_error("Edited output exceeds 300 megapixels");
+    // Keep this predicate in sync with every visual key consumed below. A new overlay or
+    // crop field must make identity() false, otherwise the fast path would silently skip it.
+    if (identity_geometry(geo) && grade.identity() && f.identity() && !date_active(edits)) {
+        Image16 out;
+        out.width = w;
+        out.height = h;
+        out.rgba.resize(size_t(w) * h * 4);
+        const size_t row_pixels = size_t(w) * 4;
+        for (uint32_t y = 0; y < h; y++) {
+            auto *row = &out.rgba[size_t(y) * row_pixels];
+            std::memcpy(row, pixels + size_t(y) * stride * 4,
+                        row_pixels * sizeof(uint16_t));
+            // The slow path always writes opaque output; preserve that for editBitmap inputs
+            // that may still carry an alpha channel.
+            for (uint32_t x = 0; x < w; x++) row[size_t(x) * 4 + 3] = 65535;
+        }
+        return out;
+    }
     Image16 out;
     out.width = f.width;
     out.height = f.height;

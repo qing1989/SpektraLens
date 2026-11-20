@@ -99,6 +99,22 @@ int main(int argc, char **argv) {
             auto unchanged = mobile::apply_edits(
                 image.rgba.data(), image.width, image.height, image.width, edits);
             check(unchanged.rgba == original, "Encoding quality must not alter developed pixels");
+            auto graded = spk::Json::object();
+            graded.set("grade_exposure", spk::Json(1.0));
+            auto gradedImage = mobile::apply_edits(
+                image.rgba.data(), image.width, image.height, image.width, graded);
+            check(gradedImage.rgba != original, "Grade edits must not use the identity fast path");
+            auto cropped = spk::Json::object();
+            cropped.set("geo_w", spk::Json(0.5));
+            auto croppedImage = mobile::apply_edits(
+                image.rgba.data(), image.width, image.height, image.width, cropped);
+            check(croppedImage.width == image.width / 2, "Geometry crop width changed");
+            auto framed = spk::Json::object();
+            framed.set("edge_style", spk::Json(std::string("135_black")));
+            framed.set("edge_amount", spk::Json(6.0));
+            auto framedImage = mobile::apply_edits(
+                image.rgba.data(), image.width, image.height, image.width, framed);
+            check(framedImage.width > image.width, "Frame edits must not use the identity fast path");
             auto path = directory / ("quality-" + std::to_string(quality) + ".jpg");
             mobile::write_image(image, path.string(), "jpeg", argv[1], edits);
             auto bytes = read(path);

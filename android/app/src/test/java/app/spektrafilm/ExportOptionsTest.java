@@ -28,12 +28,35 @@ public final class ExportOptionsTest {
       check(!ExportOptions.qualityDescription(quality).isEmpty(), "Quality needs a description");
       check(!new ExportOptions(ExportOptions.PNG, quality).isJpeg(), "PNG is lossless");
       check(!new ExportOptions(ExportOptions.TIFF, quality).isJpeg(), "TIFF is lossless");
+      check(
+          new ExportOptions(ExportOptions.JPEG, quality, 6000).maxLongEdge == 6000,
+          "Reduced export edge must survive options");
     }
     for (int quality : new int[] {-1, 0, 70, 82, 89, 96, 100, 101})
       reject(ExportOptions.JPEG, quality);
     reject(-1, 90);
     reject(4, 90);
+    try {
+      new ExportOptions(ExportOptions.JPEG, 90, -1);
+      throw new AssertionError("Negative export edge accepted");
+    } catch (IllegalArgumentException expected) {
+      // expected
+    }
 
+    int[] full = ExportOptions.scaledSize(8192, 6144, 0);
+    check(full[0] == 8192 && full[1] == 6144, "Zero edge keeps source size");
+    long available = 3533L * 1024 * 1024;
+    int edge = ExportOptions.safeLongEdge(8192, 6144, available);
+    check(edge >= 5120 && edge < 8192, "50MP fallback must reduce but stay usable");
+    int[] reduced50 = ExportOptions.scaledSize(8192, 6144, edge);
+    check(
+        ExportOptions.estimateBytes(reduced50[0], reduced50[1]) <= available * .85,
+        "Fallback estimate must fit available memory");
+    check(
+        ExportOptions.safeLongEdge(4000, 3000, 64L * 1024 * 1024 * 1024) == 4000,
+        "Large memory must not upscale");
+    check(ExportOptions.safeLongEdge(8192, 6144, 64L * 1024 * 1024) == 0,
+        "Impossible memory must not propose an unusable edge");
     long[] original = ExportOptions.estimateJpegBytes(120000, 600, 400, 6000, 4000);
     long[] portrait = ExportOptions.estimateJpegBytes(120000, 400, 600, 4000, 6000);
     check(original != null && original[0] > 0 && original[1] > original[0], "Positive size range");

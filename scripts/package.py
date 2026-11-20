@@ -22,8 +22,14 @@ OUT = ROOT / 'deliverables'
 OUT.mkdir(exist_ok=True)
 apk = ROOT / 'android/app/build/outputs/apk/debug/app-debug.apk'
 gradle = (ROOT / 'android/app/build.gradle').read_text()
-version_code = int(re.search(r'versionCode\s+(\d+)', gradle).group(1))
-version = re.search(r"versionName\s+'([^']+)'", (ROOT / 'android/app/build.gradle').read_text()).group(1)
+version_code_match = re.search(r'versionCode\s+sideBySideTest\s*\?\s*\d+\s*:\s*(\d+)', gradle)
+if not version_code_match:
+    version_code_match = re.search(r'versionCode\s+(\d+)', gradle)
+version_code = int(version_code_match.group(1))
+version_name_match = re.search(r"versionName\s+sideBySideTest\s*\?\s*'[^']+'\s*:\s*'([^']+)'", gradle)
+if not version_name_match:
+    version_name_match = re.search(r"versionName\s+'([^']+)'", gradle)
+version = version_name_match.group(1)
 for suffix in ('debug.apk', '完整源码.zip', '交付包.zip'):
     target = OUT / f'SpektraLens-v{version}-{suffix}'
     if target.exists():
