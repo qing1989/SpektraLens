@@ -2,8 +2,8 @@
 
 **把一间光谱胶片实验室装进口袋。**
 
-[![版本](https://img.shields.io/badge/version-0.5.2-e0b47a?style=flat-square)](CHANGELOG.md)
-[![下载](https://img.shields.io/badge/download-APK%20v0.5.2-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
+[![版本](https://img.shields.io/badge/version-0.5.3-e0b47a?style=flat-square)](CHANGELOG.md)
+[![下载](https://img.shields.io/badge/download-APK%20v0.5.3-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
 [![平台](https://img.shields.io/badge/Android-10%2B-3ddc84?style=flat-square&logo=android&logoColor=white)](#兼容性)
 [![渲染](https://img.shields.io/badge/Vulkan-GPU%20%2B%20CPU%20%E5%9B%9E%E9%80%80-4a90d9?style=flat-square)](#工作原理)
 [![离线](https://img.shields.io/badge/100%25-%E6%9C%AC%E5%9C%B0%E6%98%BE%E5%BD%B1-8a8a8a?style=flat-square)](#为什么不是滤镜)
@@ -19,9 +19,9 @@ RAW 解码、光谱显影、相纸印相、调色、颗粒与光晕合成、编�
 </p>
 
 <p align="center">
-  <img src="docs/images/01-home.jpg" width="26%" alt="首页" />
-  <img src="docs/images/02-film.jpg" width="26%" alt="胶片与画廊" />
-  <img src="docs/images/07-export.jpg" width="26%" alt="导出面板" />
+  <img src="docs/images/09-home-0.5.jpg" width="26%" alt="首页：最近照片与导入入口" />
+  <img src="docs/images/10-editor-bw.jpg" width="26%" alt="编辑页：黑白胶片画廊" />
+  <img src="docs/images/11-export-0.5.jpg" width="26%" alt="导出面板" />
 </p>
 
 ---
@@ -38,48 +38,37 @@ RAW 解码、光谱显影、相纸印相、调色、颗粒与光晕合成、编�
 ## 界面
 
 <p align="center">
-  <img src="docs/images/01-home.jpg" width="23%" alt="首页" />
-  <img src="docs/images/02-film.jpg" width="23%" alt="胶片与画廊" />
-  <img src="docs/images/03-paper.jpg" width="23%" alt="相纸与印相" />
+  <img src="docs/images/09-home-0.5.jpg" width="23%" alt="首页" />
+  <img src="docs/images/10-editor-bw.jpg" width="23%" alt="黑白胶片画廊" />
+  <img src="docs/images/11-export-0.5.jpg" width="23%" alt="导出面板" />
+  <img src="docs/images/12-manage.jpg" width="23%" alt="长按菜单" />
 </p>
 <p align="center">
-  <sub><b>首页</b> 导入或继续最近的底片，卡片上标着已套用的胶卷 &nbsp;·&nbsp; <b>胶片</b> 当前 25 款，按负片 / 电影 / 反转 / 黑白分类，一格一个效果 &nbsp;·&nbsp; <b>相纸</b> 当前 9 款印相材料与印相亮度</sub>
+  <sub><b>首页</b> 最近导入优先，卡片标着已套用的胶卷 &nbsp;·&nbsp; <b>胶片</b> 25 款按负片 / 电影 / 反转 / 黑白分类，每格都是这张照片的实际显影 &nbsp;·&nbsp; <b>导出</b> 原尺寸、格式与画质 &nbsp;·&nbsp; <b>长按</b> 编辑、复制与批量粘贴</sub>
 </p>
 
-<p align="center">
-  <img src="docs/images/04-adjust.jpg" width="23%" alt="调整面板" />
-  <img src="docs/images/05-border.jpg" width="23%" alt="片边与日期" />
-  <img src="docs/images/06-texture.jpg" width="23%" alt="质感" />
-</p>
-<p align="center">
-  <sub><b>调整</b> 基础 / 曲线 / 色彩平衡 / HSL / 暗角 &nbsp;·&nbsp; <b>边框</b> 片边样式与日期水印 &nbsp;·&nbsp; <b>质感</b> 颗粒、光晕与乳剂散射</sub>
-</p>
-
-<p align="center">
-  <img src="docs/images/07-export.jpg" width="23%" alt="导出面板" />
-  <img src="docs/images/08-about.jpg" width="23%" alt="关于页" />
-</p>
-<p align="center">
-  <sub><b>导出</b> JPEG 8 位 / PNG 16 位 / TIFF 16 位，JPEG 画质三档，先给体积再保存 &nbsp;·&nbsp; <b>关于</b> 版本、检查更新、上游与许可</sub>
-</p>
-
-> 截图取自 v0.4.3 实机运行；当时为 20 款彩色胶片和 8 款彩色相纸，当前源码已增至 25 款胶片和 9 款相纸。
+> 截图取自 v0.5.3 实机运行。
 
 ## 功能
 
 **胶片与相纸**
 
-- 20 款彩色胶片：Kodak Portra 160 / 400 / 800（含 800 Push 1、Push 2）、Ektar 100、Gold 200、Ultramax 400、Ektachrome 100、Kodachrome 64、Vision3 50D / 200T / 250D / 500T、Verita 200D；Fujifilm C200、Pro 400H、X-Tra 400、Provia 100F、Velvia 100
-- 8 款相纸与拷贝片：Kodak Professional Endura Premier / Supra Endura / Ultra Endura / Portra Endura、Ektacolor Edge、Vision 2383 / Premier 2393、Fujifilm Crystal Archive Type II
-- 当前开发源码另加入 4 款黑白胶片：Kodak Tri-X 400、T-Max 100、Fujifilm Neopan 100 Acros II、Ilford HP5 Plus 400，以及自动配对的 Ilford Multigrade IV RC 黑白相纸；同时接入带无防光晕层高光余量的 CineStill 800T。合计 25 款胶片、9 款印相材料，尚未随版本发布。接入规则及验证范围见[黑白胶片](docs/黑白胶片.md)。
+- 21 款彩色胶片：Kodak Portra 160 / 400 / 800（含 800 Push 1、Push 2）、Ektar 100、Gold 200、Ultramax 400、Ektachrome 100、Kodachrome 64、Vision3 50D / 200T / 250D / 500T、Verita 200D、CineStill 800T；Fujifilm C200、Pro 400H、X-Tra 400、Provia 100F、Velvia 100
+- 4 款黑白胶片：Kodak Tri-X 400、T-Max 100、Fujifilm Neopan 100 Acros II、Ilford HP5 Plus 400，附带六项镜头滤镜与五档相纸反差；颗粒强度按各胶片上游值校准
+- 9 款相纸与拷贝片：Kodak Professional Endura Premier / Supra Endura / Ultra Endura / Portra Endura、Ektacolor Edge、Vision 2383 / Premier 2393、Fujifilm Crystal Archive Type II、Ilford Multigrade IV RC
 - 负片走完整印相链路（亮度 + 洋红 / 黄色滤色），反转片直接扫描；切换胶片时相纸与分类自动联动
+- 黑白固定使用银盐相纸、关闭彩色亚层与扩展动态范围；切回彩色自动恢复合法相纸与滤镜偏移
+- CineStill 800T 带无防光晕层的高光余量，可在「质感」中调整 0–8 EV
 - 每张照片的胶片画廊缩略图都按当前照片现场显影，看到的就是这张图的实际效果，不是样片
 
-<p align="center">
-  <img src="docs/images/film-canisters.png" width="70%" alt="旧版 20 款彩色胶片图标" />
-  <br/>
-  <sub>图示为此前的 20 款彩色胶卷；当前源码新增的 4 款黑白胶片与 CineStill 标签同样由 Canvas 代码绘制，不使用第三方胶卷位图</sub>
-</p>
+**照片库**
+
+- 从系统相册多选导入，JPG / PNG / HEIC / HEIF / DNG，一次最多 20 张；同一批按拍摄时间排序
+- 相册列表在导入浮层内直接展开切换；超大相册分页加载，打开即可勾选，不阻塞界面
+- HEIC / JPEG 的动态照片导入静态帧；视频和动图不进入图库
+- 最近导入优先：重新导入的旧照片也会回到第一张
+- 照片管理支持全选 / 取消选择与批量删除，删除先写库、失败整体回滚；收藏状态与编辑记录持久化
+- 长按菜单：开始 / 再次编辑、复制参数、单张粘贴、批量粘贴（上限 20 张）、收藏、导出、删除
 
 **显影与调色**
 
@@ -101,7 +90,8 @@ RAW 解码、光谱显影、相纸印相、调色、颗粒与光晕合成、编�
 - RAW：`.DNG` `.NEF` `.RAF` `.ARW` 等，LibRaw 原尺寸 AHD 去马赛克，使用传感器数据而非内嵌预览
 - 普通：JPEG / PNG / HEIC 等系统解码格式
 - 导出：sRGB JPEG（8 位，高画质 95 / 推荐 90 / 节省空间 85 三档）、PNG / TIFF（16 位），每次从原文件重新显影，不放大小图；保留可读 EXIF 与 ICC，不复制 GPS
-- 导出前按当前预览给出体积估算，PNG / TIFF 以实际导出为准，不阻塞保存
+- 原尺寸导出为默认；5000 万像素等大图内存不足时，先算出安全长边并确认，再按较小尺寸导出，调色、片边和日期保留
+- 导出前按当前预览给出体积估算，PNG / TIFF 以实际导出为准；导出面板底部有细进度条，可随时取消
 - 每张照片独立编辑记录，30 步会话撤销 / 重做；导出配方与输入输出 SHA-256 存档，便于复现
 
 **应用内更新**
@@ -128,7 +118,7 @@ flowchart LR
     J --> K["JPEG · PNG16 · TIFF16"]
 ```
 
-显影在独立进程中执行：优先尝试设备 GPU，通过严格数值自检后启用；初始化超时或失败则切换到随包 SwiftShader CPU 驱动。两类后端使用同一份材料数据与着色器，切换后结果一致性由仪器测试比对。画廊缩略图在私有显影进程中复用已解码的 1024px 长边图，按 16 MiB LRU 缓存，滚动不重复显影。
+显影在独立进程中执行：优先尝试设备 GPU，通过严格数值自检后启用；初始化超时或失败则切换到随包 SwiftShader CPU 驱动。两类后端使用同一份材料数据与着色器，切换后结果一致性由仪器测试比对。画廊缩略图在私有显影进程中按卡片密度解码源图（384–512 px），以 16 MiB LRU 缓存，滚动不重复显影；主预览固定 1024 px，导出始终读原图。
 
 ## 技术栈
 
@@ -140,11 +130,11 @@ flowchart LR
 | RAW | LibRaw 0.22.2（固定源码随仓库） |
 | CPU 回退 | SwiftShader（双 ABI 预编译 + 完整源码 ZIP） |
 | 构建 | Gradle 8.11.1 / AGP 8.9.2 / NDK 27.2.12479018 / CMake 3.22.1 |
-| 体积 | APK 约 32 MB |
+| 体积 | APK 约 33 MB |
 
 ## 下载安装
 
-从 [Releases](https://github.com/qing1989/SpektraLens/releases/latest) 下载最新 `SpektraLens-v{version}.apk`（约 32 MB）：
+从 [Releases](https://github.com/qing1989/SpektraLens/releases/latest) 下载最新 `SpektraLens-v{version}.apk`（约 33 MB）：
 
 - 要求 Android 10+、arm64 设备；允许「安装未知来源应用」后直接安装
 - 装好之后可以只在应用内更新：「关于 → 检查更新」，不必再访问网页
@@ -179,8 +169,8 @@ python3 scripts/build.py -PpublicBuild=true :app:assembleDebug
 | 系统 | Android 10 及以上，arm64-v8a |
 | GPU | Vulkan 1.1+；不可用时自动回退 CPU 渲染 |
 | 预览 | 最长边 1024 |
-| 导出 | 受可用内存与 Vulkan 缓冲上限约束，导出前按源像素估算，不足时提示重试而不静默缩图 |
-| 暂未开放 | 裁切 / 旋转 / 拉直 / 翻转、局部蒙版、批量处理、CineStill 配置、半格拼接 |
+| 导出 | 默认原尺寸；内存不足时按可用内存反算安全长边，经确认后导出较小尺寸，不静默缩图 |
+| 暂未开放 | 裁切 / 旋转 / 拉直 / 翻转、局部蒙版、批量导出、半格拼接 |
 
 已知问题与逐版修正记录见 [CHANGELOG.md](CHANGELOG.md)；能力边界与实现细节见 [docs/](docs/)。
 
@@ -199,6 +189,8 @@ design/           启动图标与视觉设计稿
 ## 文档
 
 - [胶片显影对照](docs/胶片显影对照.md) — 原始 Python / 桌面 Metal / Android Vulkan 三端数值核对
+- [黑白胶片](docs/黑白胶片.md) — 四款黑白胶片、银盐相纸与镜头滤镜的接入规则
+- [最近照片与批量导入](docs/最近照片与批量导入.md) — 导入、照片管理与批量粘贴
 - [胶片画廊与缩略图](docs/胶片画廊与缩略图.md) — 有界解码、缓存与失效规则
 - [兼容显影实现](docs/兼容显影实现.md) — SwiftShader CPU 后端
 - [移动 GPU 移植](docs/移动GPU移植.md) — 社区 GPU 代码的适配范围与差异
