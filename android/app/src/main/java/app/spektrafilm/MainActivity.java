@@ -11,6 +11,7 @@ import android.content.*;
 import android.content.res.ColorStateList;
 import android.graphics.*;
 import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.*;
@@ -32,13 +33,27 @@ public final class MainActivity extends Activity {
       INK = AppStyle.INK,
       MUTED = AppStyle.MUTED,
       GOLD = AppStyle.GOLD,
-      LINE = AppStyle.OUTLINE;
+      LINE = AppStyle.OUTLINE,
+      DISABLED_ICON = 0xff555555;
   /** 面板下沿的渐隐高度（dp）：提示「下面还有」，滚到底就淡出。 */
   static final int FADE_ROW_DP = 24;
   /** 面板的最大高度（dp）。预览区按这个值预留，所以它也决定照片能有多大。 */
   static final int PANEL_MAX_DP = 320;
+  private static final ColorStateList ICON_TINT =
+      new ColorStateList(
+          new int[][] {new int[] {-android.R.attr.state_enabled}, new int[] {}},
+          new int[] {DISABLED_ICON, Color.WHITE});
+  private static final ColorStateList COMPARE_TINT =
+      new ColorStateList(
+          new int[][] {
+            new int[] {-android.R.attr.state_enabled},
+            new int[] {android.R.attr.state_selected},
+            new int[] {}
+          },
+          new int[] {DISABLED_ICON, GOLD, Color.WHITE});
   private static final long PANEL_MOTION_MS = 200, TOOL_MOTION_MS = 140;
   private static final int MAX_BATCH_IMPORT = 20;
+  private static final int REQUEST_IMPORT_FILES = 42;
   private static final PathInterpolator EDITOR_EASING = new PathInterpolator(.2f, 0f, 0f, 1f);
   private static final int GALLERY_SOURCE_MIN_EDGE = 384;
   private static final int GALLERY_WARM_COUNT = 3;
@@ -79,8 +94,10 @@ public final class MainActivity extends Activity {
   private final ArrayList<Stock> films = new ArrayList<>(), papers = new ArrayList<>();
   private JSONObject settings = new JSONObject();
   private SharedPreferences prefs;
-  private LinearLayout root, editor, header, statusRow, editorBody, previewColumn, toolsColumn;
+  private LinearLayout root, editor, header, editorBody, previewColumn, toolsColumn;
+  private FrameLayout statusRow;
   private FrameLayout photoStage;
+  private EditorPhotoStrip editorStrip;
   private OnBackInvokedCallback backCallback;
   private boolean curveHintShown;
   private ScrollView panelScroll;
@@ -93,8 +110,7 @@ public final class MainActivity extends Activity {
       paperTitle,
       paperSub,
       fileLabel,
-      exportButton,
-      compareButton;
+      exportButton;
   private PhotoView photo;
   private ProgressBar progress;
   private Bitmap source, developed, compared;
@@ -161,7 +177,6 @@ public final class MainActivity extends Activity {
   private FrameLayout screens;
   private AboutPage aboutPage;
   private SponsorPage sponsorPage;
-  private FlowingBackgroundView flowingBackground;
   private LinearLayout homeScreen, editorScreen, panel, tabRow, filmCards, historyList;
   private FrameLayout homeStage;
   private LinearLayout homeContent;
@@ -179,6 +194,7 @@ public final class MainActivity extends Activity {
   private FrameLayout batchPasteShell;
   private final Map<String, BatchCardViews> batchCardViews = new HashMap<>();
   private GallerySheet gallerySheet;
+  private String filePickerSettings;
   private LibraryActionSheet frameActions;
   private ExportSheet exportSheet;
   private int selectedTab;
@@ -191,7 +207,8 @@ public final class MainActivity extends Activity {
   private String editorPhotoId = "";
   private final ArrayDeque<String> undoStack = new ArrayDeque<>(), redoStack = new ArrayDeque<>();
   private String committed;
-  private TextView undoButton, redoButton;
+  private ImageButton undoButton, redoButton, compareButton;
+  private TextView resetButton;
   private TextView recentCount;
   /** 上一次渲染历史列表时的内容指纹，用来跳过无意义的重建。 */
   private String historySignature;
@@ -199,6 +216,9 @@ public final class MainActivity extends Activity {
   private volatile int batchImportGeneration;
   private boolean editorNeedsSync;
   private int homeExportGeneration;
+  private String editorBaselineId, editorBaselineParams, editorStartSettings;
+  private boolean editorBaselineEdited;
+  private Dialog editorExitDialog;
 
   private static final class Frame {
     String id, name, path, params;
@@ -655,6 +675,13 @@ public final class MainActivity extends Activity {
     return v;
   }
 
+  private ImageButton iconButton(int drawable, String description, Runnable action) {
+    ImageButton v = AppStyle.iconButton(this, drawable, description, Color.WHITE);
+    v.setImageTintList(ICON_TINT);
+    v.setOnClickListener(view -> action.run());
+    return v;
+  }
+
   private LinearLayout vertical() {
     LinearLayout v = new LinearLayout(this);
     v.setOrientation(LinearLayout.VERTICAL);
@@ -722,8 +749,6 @@ public final class MainActivity extends Activity {
         (v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
           if (r - l != oldR - oldL || b - t != oldB - oldT) updateEditorLayout();
         });
-    flowingBackground = new FlowingBackgroundView(this);
-    screens.addView(flowingBackground, new FrameLayout.LayoutParams(-1, -1));
     editorScreen = vertical();
     editorScreen.setBackgroundColor(BG);
     screens.addView(editorScreen, new FrameLayout.LayoutParams(-1, -1));
@@ -731,12 +756,7 @@ public final class MainActivity extends Activity {
     header.setPadding(dp(12), dp(3), dp(12), dp(3));
     FrameLayout toolbar = new FrameLayout(this);
     add(header, toolbar, -1, 48);
-    TextView back = button("返回", INK, BG);
-    back.setTextSize(AppStyle.TYPE_BODY);
-    back.setPadding(0, 0, 0, 0);
-    back.setSingleLine(true);
-    back.setContentDescription("返回首页");
-    back.setOnClickListener(v -> showHome());
+    ImageButton back = iconButton(R.drawable.ic_ui_back, "返回首页", () -> leaveEditor());
     toolbar.addView(
         back,
         new FrameLayout.LayoutParams(dp(48), dp(44), Gravity.START | Gravity.CENTER_VERTICAL));
@@ -780,65 +800,110 @@ public final class MainActivity extends Activity {
     photo = new PhotoView(this);
     photo.setOnClickListener(v -> togglePanelFromPreview());
     photoStage.addView(photo, new FrameLayout.LayoutParams(-1, -1));
-    statusRow = horizontal();
-    statusRow.setPadding(dp(18), 0, dp(18), 0);
+    statusRow = new FrameLayout(this);
+    statusRow.setMinimumWidth(dp(120));
     progress = new ProgressBar(this);
-    add(statusRow, progress, 12, 12);
-    add(statusRow, new View(this), 7, 1);
-    status = text("准备中", AppStyle.TYPE_MICRO, MUTED);
+    FrameLayout.LayoutParams progressParams =
+        new FrameLayout.LayoutParams(dp(12), dp(12), Gravity.START | Gravity.CENTER_VERTICAL);
+    progressParams.leftMargin = dp(14);
+    statusRow.addView(progress, progressParams);
+    status = text("准备中", AppStyle.TYPE_MICRO, INK);
     AppStyle.setNumericTypeface(status);
+    status.setGravity(Gravity.CENTER);
     status.setSingleLine(true);
     status.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    status.setPadding(dp(34), 0, dp(34), 0);
+    status.setMaxWidth(dp(280));
     status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-    statusRow.addView(status, new LinearLayout.LayoutParams(0, dp(30), 1));
-    TextView zoom = button("适应画面", MUTED, BG);
-    zoom.setPadding(0, 0, 0, 0);
-    zoom.setMinHeight(0);
-    zoom.setTextSize(AppStyle.TYPE_LABEL);
-    zoom.setOnClickListener(
-        v -> {
-          photo.resetZoom();
-        });
-    AppStyle.surface(statusRow, AppStyle.withAlpha(AppStyle.SURFACE, .95f), AppStyle.R_SMALL);
-    FrameLayout.LayoutParams feedback = new FrameLayout.LayoutParams(-1, dp(28), Gravity.BOTTOM);
-    feedback.setMargins(dp(12), 0, dp(12), dp(6));
+    statusRow.addView(status, new FrameLayout.LayoutParams(-2, dp(30), Gravity.CENTER));
+    statusRow.setBackground(
+        AppStyle.pill(this, AppStyle.withAlpha(AppStyle.SURFACE, .80f), false));
+    statusRow.setClipToOutline(true);
+    FrameLayout.LayoutParams feedback =
+        new FrameLayout.LayoutParams(-2, dp(30), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+    feedback.setMargins(dp(12), 0, dp(12), dp(20));
     photoStage.addView(statusRow, feedback);
     statusRow.setVisibility(View.GONE);
-    LinearLayout meta = horizontal();
+    editorStrip =
+        new EditorPhotoStrip(
+            this,
+            id -> {
+              if (exporting || !ready || activeImport != null) return;
+              Frame target = findFrame(id);
+              if (target != null && !target.id.equals(activeId)) openFrame(target, null, true);
+            });
+    previewColumn.addView(editorStrip, new LinearLayout.LayoutParams(-1, dp(82)));
+    editorStrip.setVisibility(View.GONE);
+    FrameLayout meta = new FrameLayout(this);
     meta.setPadding(dp(12), 0, dp(12), 0);
     fileLabel = text(filename, AppStyle.TYPE_MICRO, MUTED);
     fileLabel.setSingleLine(true);
     fileLabel.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
     // Keep source details available without crowding the compact photo action bar.
     fileLabel.setVisibility(View.GONE);
-    meta.addView(fileLabel, new LinearLayout.LayoutParams(0, dp(40), 1));
-    undoButton = button("撤销", MUTED, BG);
-    undoButton.setTextSize(AppStyle.TYPE_LABEL);
-    undoButton.setPadding(0, 0, 0, 0);
-    undoButton.setMinHeight(0);
-    undoButton.setContentDescription("撤销");
-    undoButton.setOnClickListener(v -> historyStep(false));
-    add(meta, undoButton, 44, 40);
-    redoButton = button("重做", MUTED, BG);
-    redoButton.setTextSize(AppStyle.TYPE_LABEL);
-    redoButton.setPadding(0, 0, 0, 0);
-    redoButton.setMinHeight(0);
-    redoButton.setContentDescription("重做");
-    redoButton.setOnClickListener(v -> historyStep(true));
-    add(meta, redoButton, 44, 40);
-    meta.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
-    add(meta, zoom, 64, 40);
-    compareButton = button("对比原图", INK, BG);
-    compareButton.setTextSize(AppStyle.TYPE_LABEL);
-    compareButton.setMinHeight(0);
-    compareButton.setPadding(dp(8), 0, dp(8), 0);
-    compareButton.setOnClickListener(
+    LinearLayout historyActions = horizontal();
+    historyActions.setGravity(Gravity.CENTER_VERTICAL);
+    undoButton = iconButton(R.drawable.ic_editor_undo, "撤销", () -> historyStep(false));
+    controls.add(undoButton);
+    historyActions.addView(undoButton, new LinearLayout.LayoutParams(dp(40), dp(40)));
+    redoButton = iconButton(R.drawable.ic_editor_redo, "重做", () -> historyStep(true));
+    controls.add(redoButton);
+    LinearLayout.LayoutParams redoParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+    redoParams.leftMargin = dp(6);
+    historyActions.addView(redoButton, redoParams);
+    meta.addView(
+        historyActions,
+        new FrameLayout.LayoutParams(-2, dp(40), Gravity.START | Gravity.CENTER_VERTICAL));
+    resetButton = button("重置", Color.WHITE, BG);
+    resetButton.setTextSize(AppStyle.TYPE_LABEL);
+    resetButton.setMinHeight(0);
+    resetButton.setMinWidth(dp(76));
+    resetButton.setPadding(dp(20), 0, dp(20), 0);
+    resetButton.setBackground(
+        new android.graphics.drawable.RippleDrawable(
+            ColorStateList.valueOf(0x24ffffff),
+            AppStyle.pill(this, Color.TRANSPARENT, true),
+            AppStyle.pill(this, Color.WHITE, false)));
+    resetButton.setTextColor(
+        new ColorStateList(
+            new int[][] {new int[] {-android.R.attr.state_enabled}, new int[] {}},
+            new int[] {0xff555555, Color.WHITE}));
+    resetButton.setContentDescription("重置显影参数");
+    resetButton.setOnClickListener(
         v -> {
-          comparing = !comparing;
-          updateComparison();
+          if (editorHasChanges()) reset();
         });
-    add(meta, compareButton, 80, 40);
-    add(previewColumn, meta, -1, 40);
+    resetButton.setVisibility(View.GONE);
+    meta.addView(
+        resetButton, new FrameLayout.LayoutParams(-2, dp(34), Gravity.CENTER));
+    LinearLayout viewActions = horizontal();
+    viewActions.setGravity(Gravity.CENTER_VERTICAL);
+    ImageButton fitButton =
+        iconButton(R.drawable.ic_editor_fit, "适应画面", () -> photo.resetZoom());
+    // 裁切尚未支持，先隐藏这个容易被理解为裁切入口的图标；双击预览仍可复位缩放。
+    fitButton.setVisibility(View.GONE);
+    controls.add(fitButton);
+    viewActions.addView(fitButton, new LinearLayout.LayoutParams(dp(40), dp(40)));
+    compareButton =
+        iconButton(
+            R.drawable.ic_editor_compare,
+            "对比原图",
+            () -> {
+              comparing = !comparing;
+              updateComparison();
+            });
+    compareButton.setImageTintList(COMPARE_TINT);
+    controls.add(compareButton);
+    LinearLayout.LayoutParams compareParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+    compareParams.leftMargin = dp(6);
+    viewActions.addView(compareButton, compareParams);
+    meta.addView(
+        viewActions,
+        new FrameLayout.LayoutParams(-2, dp(40), Gravity.END | Gravity.CENTER_VERTICAL));
+    LinearLayout.LayoutParams metaLayout = new LinearLayout.LayoutParams(-1, dp(40));
+    // 显影状态与操作行整体上移，收紧照片下方的空白；面板位置保持不变。
+    metaLayout.bottomMargin = dp(12);
+    previewColumn.addView(meta, metaLayout);
     tabRow = horizontal();
     tabRow.setPadding(dp(5), dp(4), dp(5), dp(4));
     tabRow.setBackground(AppStyle.pill(this, AppStyle.SURFACE, false));
@@ -891,6 +956,8 @@ public final class MainActivity extends Activity {
       toolsColumn.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
     }
     updatePanelHeight();
+    refreshEditorStrip(false);
+    updatePhotoStageHeight();
   }
 
   /** 只取消时间轴，保留当前帧尺寸和透明度，供快速反向点击接着播放。 */
@@ -1035,7 +1102,8 @@ public final class MainActivity extends Activity {
 
   /** 面板的绝对上限（dp）：屏高扣掉顶栏、状态条、工具行、导航，照片只剩 92dp 的极端值。 */
   private int panelLimit() {
-    return Math.max(96, editorHeightDp() - 284);
+    // 额外预留 72dp 给大图下方的最近照片缩略图条；极小窗口仍保证照片至少约 92dp。
+    return Math.max(96, editorHeightDp() - 366);
   }
 
   /**
@@ -1300,11 +1368,13 @@ public final class MainActivity extends Activity {
   }
 
   private void showHome() {
+    clearEditorBaseline();
+    // 多张照片切换后回首页，当前照片的参数也要落盘。
+    saveActiveFrame();
     if (homeScreen != null) {
       if (photo != null) photo.cancelPendingSingleTap();
       finishPendingSliderTaps();
       updateEditorLayout();
-      flowingBackground.setVisibility(View.VISIBLE);
       homeThumbPaused = false;
       homeScreen.setVisibility(View.VISIBLE);
       editorScreen.setVisibility(View.GONE);
@@ -1366,26 +1436,184 @@ public final class MainActivity extends Activity {
     return id == null ? null : new File(new File(getFilesDir(), "developed"), id + ".jpg");
   }
 
+  /**
+   * The photo stage follows the image's fitted height instead of keeping a tall letterbox. This
+   * brings the recent-photo strip close to the photo and keeps the developing pill inside the
+   * image. Panel focus mode still gives the stage the full available height.
+   */
+  private void updatePhotoStageHeight() {
+    if (photoStage == null || previewColumn == null) return;
+    int width = previewColumn.getWidth();
+    if (width <= 0) width = getResources().getDisplayMetrics().widthPixels;
+    int strip = editorStrip != null && editorStrip.getVisibility() == View.VISIBLE ? dp(82) : 0;
+    int available = previewHeightPx() - strip - dp(40) - dp(12);
+    if (available <= 0) return;
+    int height = available;
+    if (!panelCollapsed && fullWidth > 0 && fullHeight > 0) {
+      float pad = dp(PhotoView.framePadDp());
+      float imageWidth = Math.max(1, width - pad * 2);
+      int desired = Math.round(imageWidth * fullHeight / (float) fullWidth + pad * 2);
+      height = Math.min(available, Math.max(dp(120), desired));
+    }
+    LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) photoStage.getLayoutParams();
+    if (params.height == height && params.weight == 0) return;
+    params.height = height;
+    params.weight = 0;
+    photoStage.setLayoutParams(params);
+  }
+
+  private void refreshEditorStrip(boolean scrollToActive) {
+    if (editorStrip == null) return;
+    ArrayList<EditorPhotoStrip.Photo> photos = new ArrayList<>();
+    for (Frame frame : library) {
+      File thumbnail = new File(new File(getFilesDir(), "thumbnails"), frame.id + ".jpg");
+      photos.add(
+          new EditorPhotoStrip.Photo(frame.id, PhotoLabels.title(frame.name), thumbnail, new File(frame.path)));
+    }
+    boolean wasVisible = editorStrip.getVisibility() == View.VISIBLE;
+    boolean tallEnough = editorBody == null || editorBody.getHeight() <= 0
+        || previewHeightPx() >= dp(226);
+    boolean show = photos.size() > 1 && findFrame(activeId) != null && tallEnough;
+    int visibility = show ? View.VISIBLE : View.GONE;
+    if (editorStrip.getVisibility() != visibility) editorStrip.setVisibility(visibility);
+    if (show) editorStrip.setPhotos(photos, activeId, scrollToActive || !wasVisible);
+    updatePhotoStageHeight();
+  }
+
+  private void beginEditorSession(
+      Frame frame, String baselineParams, boolean baselineEdited, String startSettings) {
+    editorBaselineId = frame == null ? activeId : frame.id;
+    editorBaselineParams = baselineParams;
+    editorBaselineEdited = baselineEdited;
+    editorStartSettings = startSettings;
+    updateHistoryButtons();
+  }
+
+  private void clearEditorBaseline() {
+    editorBaselineId = null;
+    editorBaselineParams = null;
+    editorStartSettings = null;
+    editorBaselineEdited = false;
+  }
+
+  private boolean editorHasChanges() {
+    return editorStartSettings != null && !editorStartSettings.equals(settings.toString());
+  }
+
+  private void leaveEditor() {
+    if (editorExitDialog != null) return;
+    if (editorHasChanges()) {
+      showExitConfirm();
+      return;
+    }
+    clearEditorBaseline();
+    showHome();
+  }
+
+  private TextView dialogAction(String label, int color, Runnable run) {
+    TextView action = text(label, AppStyle.TYPE_TITLE, color);
+    action.setGravity(Gravity.CENTER);
+    action.setSingleLine(true);
+    action.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    action.setPadding(dp(12), 0, dp(12), 0);
+    action.setOnClickListener(v -> run.run());
+    AppStyle.pillAction(action, color, AppStyle.CONTROL);
+    return action;
+  }
+
+  private void showExitConfirm() {
+    if (editorExitDialog != null) return;
+    Dialog dialog = new Dialog(this);
+    dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+    Haptics.install(dialog.getWindow());
+    dialog.setCanceledOnTouchOutside(true);
+
+    LinearLayout card = vertical();
+    AppStyle.surface(card, AppStyle.SURFACE, AppStyle.R_LARGE);
+    card.setPadding(dp(20), dp(20), dp(20), dp(16));
+    TextView title = text("要放弃当前修改吗？", AppStyle.TYPE_HEADING, INK);
+    title.setGravity(Gravity.CENTER);
+    AppStyle.setTypeface(title, AppStyle.FONT_SEMIBOLD);
+    card.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+    LinearLayout actions = horizontal();
+    actions.setPadding(0, dp(18), 0, 0);
+    TextView cancel = dialogAction("取消", Color.WHITE, dialog::dismiss);
+    TextView discard =
+        dialogAction(
+            "放弃修改",
+            Color.WHITE,
+            () -> {
+              dialog.dismiss();
+              discardEditorSession();
+            });
+    actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(48), 1));
+    LinearLayout.LayoutParams discardParams = new LinearLayout.LayoutParams(0, dp(48), 1);
+    discardParams.leftMargin = dp(10);
+    actions.addView(discard, discardParams);
+    card.addView(actions, new LinearLayout.LayoutParams(-1, -2));
+
+    FrameLayout inset = new FrameLayout(this);
+    inset.setPadding(dp(12), dp(12), dp(12), dp(10));
+    inset.addView(card, new FrameLayout.LayoutParams(-1, -2));
+    dialog.setContentView(inset);
+    Window window = dialog.getWindow();
+    window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+    window.setGravity(Gravity.BOTTOM);
+    window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+    WindowManager.LayoutParams attributes = window.getAttributes();
+    attributes.dimAmount = .58f;
+    attributes.y = dp(10);
+    attributes.alpha = 1f;
+    window.setAttributes(attributes);
+    window.setWindowAnimations(0);
+    dialog.setOnDismissListener(d -> editorExitDialog = null);
+    editorExitDialog = dialog;
+    dialog.show();
+    WindowManager.LayoutParams shown = window.getAttributes();
+    shown.alpha = 1f;
+    window.setAttributes(shown);
+    window.getDecorView().setAlpha(1f);
+    int width =
+        Math.min(dp(480), getResources().getDisplayMetrics().widthPixels - dp(24));
+    window.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT);
+  }
+
+  private void discardEditorSession() {
+    String baseline = editorBaselineParams;
+    Frame frame = findFrame(editorBaselineId);
+    if (frame != null) {
+      frame.params = baseline == null ? "{}" : baseline;
+      frame.edited = editorBaselineEdited;
+    }
+    try {
+      settings = new JSONObject(baseline == null ? "{}" : baseline);
+    } catch (JSONException ignored) {
+      settings = new JSONObject();
+    }
+    committed = settings.toString();
+    undoStack.clear();
+    redoStack.clear();
+    editorPhotoId = "";
+    scheduleLibraryWrite();
+    showHome();
+  }
+
   private void showEditor() {
     closeAbout();
     homeThumbPaused = true;
-    flowingBackground.setVisibility(View.GONE);
     homeScreen.setVisibility(View.GONE);
     editorScreen.setVisibility(View.VISIBLE);
+    refreshEditorStrip(true);
     homeImages.loadVisible();
     main.postDelayed(this::warmGalleryThumbs, 900);
   }
 
   private void updateComparison() {
     photo.compare(comparing);
-    compareButton.setText(comparing ? "结束对比" : "对比原图");
+    if (compareButton == null) return;
     compareButton.setSelected(comparing);
-    AppStyle.pillAction(
-        compareButton,
-        comparing ? GOLD : INK,
-        comparing ? AppStyle.CONTROL : Color.TRANSPARENT);
-    AppStyle.setTypeface(
-        compareButton, comparing ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
+    compareButton.setContentDescription(comparing ? "结束对比" : "对比原图");
   }
 
   private boolean isCurrentTool(int tool) {
@@ -1484,6 +1712,10 @@ public final class MainActivity extends Activity {
   }
 
   private void buildPanel(boolean preserveTransition) {
+    buildPanel(preserveTransition, false);
+  }
+
+  private void buildPanel(boolean preserveTransition, boolean preserveCollapsed) {
     if (panel == null) return;
     // Keep the deferred crop tool's ID reserved without exposing its panel.
     if (selectedTab == 3) selectedTab = 0;
@@ -1491,7 +1723,7 @@ public final class MainActivity extends Activity {
     String sessionKey = sourceFile == null ? "internal" : sourceFile.getAbsolutePath();
     if (!sessionKey.equals(filmSessionKey)) {
       filmSessionKey = sessionKey;
-      panelCollapsed = false;
+      if (!preserveCollapsed) panelCollapsed = false;
       preserveTransition = false;
       categoryScrollX.clear();
       filmCategory = "全部";
@@ -2538,7 +2770,7 @@ public final class MainActivity extends Activity {
       exitBatchPaste();
       return;
     }
-    if (homeScreen.getVisibility() != View.VISIBLE) showHome();
+    if (homeScreen.getVisibility() != View.VISIBLE) leaveEditor();
     else finish();
   }
 
@@ -3644,6 +3876,7 @@ public final class MainActivity extends Activity {
     sourceRaw = image.raw;
     fullWidth = image.width;
     fullHeight = image.height;
+    updatePhotoStageHeight();
     // Old previews may still be queued on the worker; recycle only after those jobs finish.
     if (previous != null && previous != source)
       worker.execute(
@@ -3701,10 +3934,59 @@ public final class MainActivity extends Activity {
               public void permission() {
                 requestGalleryPermission();
               }
+
+              public void files() {
+                chooseFiles(initialSettings == null ? MAX_BATCH_IMPORT : 1, initialSettings);
+              }
             });
     gallerySheet.show();
     if (GalleryPhotos.access(this) == GalleryPhotos.Access.NONE
         && !prefs.getBoolean("gallery_permission_requested", false)) requestGalleryPermission();
+  }
+
+  private void chooseFiles(int maxSelection, String initialSettings) {
+    filePickerSettings = initialSettings;
+    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+    intent.addCategory(Intent.CATEGORY_OPENABLE);
+    intent.setType("*/*");
+    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, maxSelection != 1);
+    intent.putExtra(
+        Intent.EXTRA_MIME_TYPES,
+        new String[] {
+          "image/jpeg", "image/png", "image/heic", "image/heif", "image/x-adobe-dng", "image/dng"
+        });
+    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+    try {
+      startActivityForResult(intent, REQUEST_IMPORT_FILES);
+    } catch (ActivityNotFoundException error) {
+      filePickerSettings = null;
+      showNotice("没有可用的文件选择器", true);
+    }
+  }
+
+  private GalleryPhotos.Photo filePhoto(Uri uri) {
+    String name = "文件";
+    String mime = null;
+    try {
+      mime = getContentResolver().getType(uri);
+      try (android.database.Cursor cursor =
+          getContentResolver()
+              .query(
+                  uri,
+                  new String[] {android.provider.OpenableColumns.DISPLAY_NAME},
+                  null,
+                  null,
+                  null)) {
+        if (cursor != null && cursor.moveToFirst()) {
+          int column = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+          if (column >= 0 && !cursor.isNull(column)) name = cursor.getString(column);
+        }
+      }
+    } catch (RuntimeException ignored) {
+      // A provider may not expose metadata; the file can still be copied and decoded.
+    }
+    if (!PhotoFormatPolicy.supported(name, mime)) return null;
+    return new GalleryPhotos.Photo(uri, null, name, "file", "文件", null);
   }
 
   private void importPhotosBatch(List<GalleryPhotos.Photo> photos) {
@@ -4202,6 +4484,31 @@ public final class MainActivity extends Activity {
   }
 
   @Override
+  protected void onActivityResult(int request, int result, Intent data) {
+    super.onActivityResult(request, result, data);
+    if (request != REQUEST_IMPORT_FILES) return;
+    String settings = filePickerSettings;
+    filePickerSettings = null;
+    if (result != RESULT_OK || data == null) return;
+    ArrayList<Uri> uris = new ArrayList<>();
+    ClipData clip = data.getClipData();
+    if (clip != null) {
+      for (int i = 0; i < clip.getItemCount(); i++) uris.add(clip.getItemAt(i).getUri());
+    } else if (data.getData() != null) uris.add(data.getData());
+    ArrayList<GalleryPhotos.Photo> photos = new ArrayList<>();
+    for (Uri uri : uris) {
+      GalleryPhotos.Photo photo = filePhoto(uri);
+      if (photo != null) photos.add(photo);
+    }
+    if (photos.isEmpty()) {
+      showNotice("没有可导入的照片", true);
+      return;
+    }
+    if (settings != null) importUri(photos.get(0).uri, settings);
+    else importPhotosBatch(photos);
+  }
+
+  @Override
   protected void onNewIntent(Intent i) {
     super.onNewIntent(i);
     setIntent(i);
@@ -4360,6 +4667,9 @@ public final class MainActivity extends Activity {
             undoStack.clear();
             redoStack.clear();
             committed = settings.toString();
+            beginEditorSession(
+                importedFrame, settings.toString(), importedFrame.edited, settings.toString());
+            refreshEditorStrip(true);
             prefs
                 .edit()
                 .putString("filename", filename)
@@ -4863,13 +5173,14 @@ public final class MainActivity extends Activity {
         FrameLayout.LayoutParams favoriteParams = null;
         if (frame.favorite) {
           favorite = new ImageView(this);
-          favorite.setImageResource(R.drawable.ic_material_favorite);
+          favorite.setImageResource(R.drawable.ic_ui_favorite_remove);
+          favorite.setImageTintList(ColorStateList.valueOf(GOLD));
           favorite.setPadding(0, 0, 0, 0);
           favorite.setBackground(null);
           favorite.setContentDescription("已收藏");
           favorite.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
           favoriteParams =
-              new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP | Gravity.END);
+              new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.TOP | Gravity.END);
           favoriteParams.topMargin = dp(9);
           favoriteParams.rightMargin = dp(selectionActive() ? 16 + AppStyle.SELECTION_BADGE : 8);
           photoBox.addView(favorite, favoriteParams);
@@ -5747,6 +6058,11 @@ public final class MainActivity extends Activity {
 
   /** Apply the unedited-photo entry state without recording it as a user adjustment. */
   private boolean prepareUneditedPhoto(Frame frame, String initialSettings) {
+    return prepareUneditedPhoto(frame, initialSettings, false);
+  }
+
+  private boolean prepareUneditedPhoto(
+      Frame frame, String initialSettings, boolean preserveCollapsed) {
     boolean firstEntry = !frame.id.equals(editorPhotoId);
     editorPhotoId = frame.id;
     if (!firstEntry || frame.edited || initialSettings != null) return false;
@@ -5754,7 +6070,7 @@ public final class MainActivity extends Activity {
     set("film_stock", defaultFilmStock());
     selectedTab = 0;
     filmCategory = "全部";
-    panelCollapsed = false;
+    if (!preserveCollapsed) panelCollapsed = false;
     categoryScrollX.clear();
     pendingFilmScrollX = 0;
     committed = settings.toString();
@@ -5771,11 +6087,18 @@ public final class MainActivity extends Activity {
   }
 
   private void openFrame(Frame frame) {
-    openFrame(frame, null);
+    openFrame(frame, null, false);
   }
 
   private void openFrame(Frame frame, String initialSettings) {
+    openFrame(frame, initialSettings, false);
+  }
+
+  private void openFrame(Frame frame, String initialSettings, boolean preserveView) {
     if (exporting || !ready) return;
+    boolean enteredFromHome = homeScreen.getVisibility() == View.VISIBLE;
+    String entryParams = frame.params;
+    boolean entryEdited = frame.edited;
     if (frame.id.equals(activeId)) {
       boolean unedited =
           !frame.id.equals(editorPhotoId) && !frame.edited && initialSettings == null;
@@ -5800,11 +6123,17 @@ public final class MainActivity extends Activity {
         // Startup restores the source on Home and defers developing until this photo is opened.
         scheduleRender();
       }
+      if (enteredFromHome)
+        beginEditorSession(frame, entryParams, entryEdited, settings.toString());
+      refreshEditorStrip(false);
       return;
     }
     saveActiveFrame();
+    // 切走前把当前照片的显影小图也落盘；回到首页时多张照片各自带回自己的效果。
+    saveDevelopedLook();
     int ticket = ++revision;
     showEditor();
+    if (editorStrip != null) editorStrip.setActive(frame.id, true);
     setStatus("读取照片与编辑记录…", true);
     exportButton.setEnabled(false);
     worker.execute(
@@ -5822,6 +6151,9 @@ public final class MainActivity extends Activity {
                   developed = null;
                   activeId = frame.id;
                   syncHeroLook();
+                  // Opening a photo refreshes its 240px thumbnail; let the strip pick it up.
+                  if (editorStrip != null) editorStrip.invalidate(frame.id);
+                  refreshEditorStrip(true);
                   filename = frame.name;
                   try {
                     settings =
@@ -5831,12 +6163,14 @@ public final class MainActivity extends Activity {
                   }
                   defaults();
                   filmCategory = category(find(films, settings.optString("film_stock")));
-                  prepareUneditedPhoto(frame, initialSettings);
+                  prepareUneditedPhoto(frame, initialSettings, preserveView);
                   committed = settings.toString();
                   undoStack.clear();
                   redoStack.clear();
                   if (initialSettings != null && !frame.params.equals(settings.toString()))
                     undoStack.push(frame.params);
+                  // 每次切换到另一张照片都是新的编辑会话，重置和返回确认不能沿用上一张的基线。
+                  beginEditorSession(frame, entryParams, entryEdited, settings.toString());
                   prefs
                       .edit()
                       .putString("activeId", activeId)
@@ -5844,8 +6178,9 @@ public final class MainActivity extends Activity {
                       .apply();
                   fileLabel.setText(filename);
                   photo.images(source, null);
-                  photo.resetZoom();
-                  buildPanel();
+                  if (preserveView) photo.retainView();
+                  else photo.resetZoom();
+                  buildPanel(false, preserveView);
                   editorNeedsSync = false;
                   scheduleRender();
                 });
@@ -5856,13 +6191,41 @@ public final class MainActivity extends Activity {
   }
 
   private void updateHistoryButtons() {
-    if (undoButton != null) {
-      undoButton.setEnabled(!undoStack.isEmpty() && !exporting);
-      undoButton.setAlpha(undoStack.isEmpty() ? .3f : 1);
-      undoButton.setVisibility(undoStack.isEmpty() ? View.GONE : View.VISIBLE);
-      redoButton.setEnabled(!redoStack.isEmpty() && !exporting);
-      redoButton.setAlpha(redoStack.isEmpty() ? .3f : 1);
-      redoButton.setVisibility(redoStack.isEmpty() ? View.GONE : View.VISIBLE);
+    if (undoButton == null) return;
+    undoButton.setEnabled(!undoStack.isEmpty() && !exporting);
+    redoButton.setEnabled(!redoStack.isEmpty() && !exporting);
+    if (resetButton != null) {
+      boolean changed = editorHasChanges();
+      resetButton.setEnabled(changed && !exporting);
+      setResetButtonVisible(changed);
+    }
+    if (compareButton != null) compareButton.setEnabled(!exporting);
+  }
+
+  /** 只有本次进入编辑页产生过改动时才显示重置；出现时轻微淡入，避免硬切。 */
+  private void setResetButtonVisible(boolean visible) {
+    if (resetButton == null) return;
+    if (visible) {
+      if (resetButton.getVisibility() == View.VISIBLE) return;
+      resetButton.animate().cancel();
+      resetButton.setAlpha(0f);
+      resetButton.setScaleX(.94f);
+      resetButton.setScaleY(.94f);
+      resetButton.setVisibility(View.VISIBLE);
+      resetButton
+          .animate()
+          .alpha(1f)
+          .scaleX(1f)
+          .scaleY(1f)
+          .setDuration(160)
+          .setInterpolator(new PathInterpolator(.2f, 0f, 0f, 1f))
+          .start();
+    } else if (resetButton.getVisibility() != View.GONE) {
+      resetButton.animate().cancel();
+      resetButton.setVisibility(View.GONE);
+      resetButton.setAlpha(1f);
+      resetButton.setScaleX(1f);
+      resetButton.setScaleY(1f);
     }
   }
 
@@ -6021,7 +6384,7 @@ public final class MainActivity extends Activity {
     final ExportSheet sheet = exportSheet;
     if (requestedEdge > 0 && sheet != null) {
       int[] labelSize = ExportOptions.scaledSize(width, height, requestedEdge);
-      ui(() -> sheet.setSizeLabel("较小尺寸 · " + labelSize[0] + " × " + labelSize[1]));
+      ui(() -> sheet.setOutputSize("较小尺寸 · " + labelSize[0] + " × " + labelSize[1], labelSize[0], labelSize[1]));
     }
     worker.execute(
         () -> {
@@ -6396,7 +6759,6 @@ public final class MainActivity extends Activity {
   protected void onResume() {
     super.onResume();
     if (updates != null) updates.resume();
-    if (flowingBackground != null) flowingBackground.setHostResumed(true);
     if (gallerySheet != null && gallerySheet.isShowing()) gallerySheet.refresh();
     if (batchImportRunning && homeImportProgress != null) homeImportProgress.setAnimating(true);
   }
@@ -6406,7 +6768,6 @@ public final class MainActivity extends Activity {
     if (photo != null) photo.cancelPendingSingleTap();
     finishPendingSliderTaps();
     updateEditorLayout();
-    if (flowingBackground != null) flowingBackground.setHostResumed(false);
     AppNotice.clear(getWindow());
     if (homeImportProgress != null) homeImportProgress.setAnimating(false);
     flushLibraryWrite();
@@ -6416,10 +6777,10 @@ public final class MainActivity extends Activity {
   @Override
   protected void onDestroy() {
     if (photo != null) photo.cancelPendingSingleTap();
+    if (editorStrip != null) editorStrip.close();
     if (batchImportRunning) cancelBatchImport();
     cancelPanelAnimation();
     finishToolAnimations();
-    if (flowingBackground != null) flowingBackground.setHostResumed(false);
     if (gallerySheet != null) gallerySheet.dismiss();
     if (exportSheet != null) exportSheet.dismiss();
     if (sponsorPage != null) {

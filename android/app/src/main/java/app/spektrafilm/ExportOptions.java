@@ -82,10 +82,30 @@ final class ExportOptions {
     if (sampleBytes <= 0 || sampleWidth <= 0 || sampleHeight <= 0
         || outputWidth <= 0 || outputHeight <= 0) return null;
     double ratio = (double) outputWidth * outputHeight / ((double) sampleWidth * sampleHeight);
-    double estimate = Math.max(1, sampleBytes - 1024) * ratio + 1024;
+    double estimate = Math.max(1, sampleBytes - 1024) * ratio + 4096;
     return new long[] {
-      Math.max(1024, Math.round(estimate * .6)),
-      Math.max(2048, Math.round(estimate * 1.8))
+      Math.max(1024, Math.round(estimate * .80)),
+      Math.max(2048, Math.round(estimate * 1.20))
+    };
+  }
+
+  /** Native TIFF output is uncompressed 16-bit RGB; metadata overhead is bounded and small. */
+  static long estimateTiffBytes(int width, int height) {
+    if (width <= 0 || height <= 0) return 0;
+    return (long) width * height * 6 + 32L * 1024;
+  }
+
+  /**
+   * PNG16 uses the native zlib level-3 encoder with filter byte 0. The caller supplies the
+   * compressed/raw ratio measured on a downscaled 16-bit sample; the factor covers the finer
+   * low-byte variation of a true 16-bit export.
+   */
+  static long[] estimatePngBytes(double compressedRatio, int width, int height) {
+    if (compressedRatio <= 0 || width <= 0 || height <= 0) return null;
+    double estimate = (long) width * height * 6 * compressedRatio * 1.20 + 32L * 1024;
+    return new long[] {
+      Math.max(1024, Math.round(estimate * .80)),
+      Math.max(2048, Math.round(estimate * 1.20))
     };
   }
 }

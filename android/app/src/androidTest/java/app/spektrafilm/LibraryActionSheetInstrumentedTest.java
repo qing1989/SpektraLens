@@ -71,7 +71,11 @@ public final class LibraryActionSheetInstrumentedTest
 
   private TextView label(int action) {
     ViewGroup row = (ViewGroup) view("row." + action);
-    return (TextView) ((ViewGroup) row.getChildAt(0)).getChildAt(0);
+    for (int i = 0; i < row.getChildCount(); i++) {
+      View child = row.getChildAt(i);
+      if (child instanceof ViewGroup) return (TextView) ((ViewGroup) child).getChildAt(0);
+    }
+    throw new AssertionError("row has no label");
   }
 
   private int dp(float value) {

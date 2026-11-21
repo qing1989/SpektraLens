@@ -26,6 +26,7 @@ import java.io.OutputStream;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.zip.Deflater;
 
 final class ExportSheet extends Dialog {
   interface Listener {
@@ -41,6 +42,11 @@ final class ExportSheet extends Dialog {
     ExportOptions.HIGH, ExportOptions.RECOMMENDED, ExportOptions.COMPACT
   };
   private final long[][] estimates = new long[3][];
+  private final long[] jpegSampleBytes = new long[3];
+  private long[] pngEstimate;
+  private long tiffBytes;
+  private int sampleWidth, sampleHeight, outputWidth, outputHeight;
+  private double pngRatio;
   private volatile boolean closed;
   private final View.OnLayoutChangeListener windowChanged =
       (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
@@ -299,22 +305,35 @@ final class ExportSheet extends Dialog {
     share.setVisibility(jpeg ? View.VISIBLE : View.GONE);
     description.setText(ExportOptions.qualityDescription(quality));
     long[] range = null;
-    for (int index = 0; index < qualities.length; index++)
-      if (qualities[index] == quality) range = estimates[index];
-    if (!jpeg) {
-      size.setText("以实际导出为准");
-      sizeNote.setText("无损输出，文件通常较大");
-    } else if (range == null) {
+    String note;
+    if (format == ExportOptions.JPEG) {
+      for (int index = 0; index < qualities.length; index++)
+        if (qualities[index] == quality) range = estimates[index];
+      note = "根据当前预览估算；颗粒、纹理会让实际大小有约 ±20% 波动";
+    } else if (format == ExportOptions.PNG) {
+      range = pngEstimate;
+      note = "压缩率随画面内容变化，实际可能相差约 ±20%";
+    } else {
+      range = tiffBytes > 0 ? new long[] {tiffBytes, tiffBytes} : null;
+      note = "未压缩，文件大小基本固定";
+    }
+    if (range == null) {
       size.setText(estimationFinished ? "以实际导出为准" : "估算中…");
       sizeNote.setText("可以直接保存，无需等待估算");
     } else {
-      double unit = range[1] < 1e6 ? 1e3 : 1e6;
-      size.setText(
-          String.format(
-              Locale.CHINA, "约 %.1f–%.1f %s", range[0] / unit, range[1] / unit,
-              unit == 1e3 ? "KB" : "MB"));
-      sizeNote.setText("根据当前预览粗略估算；颗粒、纹理会影响体积，实际以导出为准");
+      size.setText(formatRange(range));
+      sizeNote.setText(note);
     }
+  }
+
+  private String formatRange(long[] range) {
+    long low = range[0], high = range[1];
+    long unit = Math.max(low, high) < 1_000_000 ? 1_000 : 1_000_000;
+    String suffix = unit == 1_000 ? "KB" : "MB";
+    if (high <= low * 1.02)
+      return String.format(Locale.CHINA, "约 %.1f %s", (low + high) / 2.0 / unit, suffix);
+    return String.format(
+        Locale.CHINA, "约 %.1f–%.1f %s", low / (double) unit, high / (double) unit, suffix);
   }
 
   private void selected(TextView button, boolean selected) {
@@ -367,10 +386,6 @@ final class ExportSheet extends Dialog {
     if (closed) return;
     submitted = true;
     beginExport(sharing);
-  }
-
-  void setSizeLabel(String label) {
-    if (!closed && dimensionsText != null) dimensionsText.setText(label);
   }
 
   void setProgress(float fraction) {
@@ -441,10 +456,13 @@ final class ExportSheet extends Dialog {
   }
 
   private void estimate(Bitmap preview, int outputWidth, int outputHeight) {
+    this.outputWidth = outputWidth;
+    this.outputHeight = outputHeight;
+    rebuildEstimates();
     Bitmap snapshot = null;
     try {
       if (preview != null && !preview.isRecycled() && outputWidth > 0 && outputHeight > 0) {
-        double scale = Math.min(1, 768.0 / Math.max(preview.getWidth(), preview.getHeight()));
+        double scale = Math.min(1, 1024.0 / Math.max(preview.getWidth(), preview.getHeight()));
         int width = Math.max(1, (int) Math.round(preview.getWidth() * scale));
         int height = Math.max(1, (int) Math.round(preview.getHeight() * scale));
         snapshot = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
@@ -464,33 +482,111 @@ final class ExportSheet extends Dialog {
       estimator.shutdown();
       return;
     }
+    final int snapshotWidth = snapshot.getWidth(), snapshotHeight = snapshot.getHeight();
     Bitmap owned = snapshot;
     estimator.execute(
         () -> {
-          long[][] results = new long[qualities.length][];
+          long[] samples = new long[qualities.length];
+          double png = 0;
           try {
             for (int index = 0; index < qualities.length && !closed; index++) {
               ByteCounter counter = new ByteCounter();
               if (owned.compress(Bitmap.CompressFormat.JPEG, qualities[index], counter))
-                results[index] =
-                    ExportOptions.estimateJpegBytes(
-                        counter.count, owned.getWidth(), owned.getHeight(), outputWidth, outputHeight);
+                samples[index] = counter.count;
             }
+            if (!closed) png = estimatePngRatio(owned);
           } catch (RuntimeException | OutOfMemoryError error) {
             android.util.Log.w("SpektraLensExport", "Size estimate unavailable", error);
           } finally {
             Bitmaps.release(owned);
           }
           if (closed) return;
+          final long[] sampleResult = samples;
+          final double pngResult = png;
           main.post(
               () -> {
                 if (closed) return;
-                System.arraycopy(results, 0, estimates, 0, results.length);
+                System.arraycopy(sampleResult, 0, jpegSampleBytes, 0, sampleResult.length);
+                sampleWidth = snapshotWidth;
+                sampleHeight = snapshotHeight;
+                pngRatio = pngResult;
+                rebuildEstimates();
                 estimationFinished = true;
                 refresh();
               });
         });
     estimator.shutdown();
+  }
+
+  private void rebuildEstimates() {
+    tiffBytes = ExportOptions.estimateTiffBytes(outputWidth, outputHeight);
+    for (int index = 0; index < qualities.length; index++) {
+      estimates[index] =
+          jpegSampleBytes[index] > 0 && sampleWidth > 0 && sampleHeight > 0
+              ? ExportOptions.estimateJpegBytes(
+                  jpegSampleBytes[index], sampleWidth, sampleHeight, outputWidth, outputHeight)
+              : null;
+    }
+    pngEstimate =
+        pngRatio > 0
+            ? ExportOptions.estimatePngBytes(pngRatio, outputWidth, outputHeight)
+            : null;
+  }
+
+  void setOutputSize(String label, int width, int height) {
+    if (closed) return;
+    if (dimensionsText != null) dimensionsText.setText(label);
+    outputWidth = width;
+    outputHeight = height;
+    rebuildEstimates();
+    refresh();
+  }
+
+  /** Mirrors the native PNG16 encoder: filter byte 0, RGB 16-bit, zlib level 3. */
+  private double estimatePngRatio(Bitmap source) {
+    Bitmap sample = null;
+    Deflater deflater = null;
+    try {
+      double scale = Math.min(1, 512.0 / Math.max(source.getWidth(), source.getHeight()));
+      int width = Math.max(1, (int) Math.round(source.getWidth() * scale));
+      int height = Math.max(1, (int) Math.round(source.getHeight() * scale));
+      sample = Bitmap.createScaledBitmap(source, width, height, true);
+      int[] pixels = new int[width * height];
+      sample.getPixels(pixels, 0, width, 0, 0, width, height);
+      int rowBytes = width * 6 + 1;
+      byte[] raw = new byte[rowBytes * height];
+      for (int y = 0; y < height; y++) {
+        int row = y * rowBytes;
+        raw[row] = 0;
+        for (int x = 0; x < width; x++) {
+          int color = pixels[y * width + x];
+          int p = row + 1 + x * 6;
+          int r = (color >> 16) & 255, g = (color >> 8) & 255, b = color & 255;
+          raw[p] = (byte) r;
+          raw[p + 1] = (byte) r;
+          raw[p + 2] = (byte) g;
+          raw[p + 3] = (byte) g;
+          raw[p + 4] = (byte) b;
+          raw[p + 5] = (byte) b;
+        }
+      }
+      deflater = new Deflater(3);
+      deflater.setInput(raw);
+      deflater.finish();
+      byte[] buffer = new byte[32 * 1024];
+      long compressed = 0;
+      while (!deflater.finished()) {
+        int count = deflater.deflate(buffer);
+        if (count <= 0) break;
+        compressed += count;
+      }
+      return compressed > 0 ? compressed / (double) raw.length : 0;
+    } catch (RuntimeException | OutOfMemoryError error) {
+      return 0;
+    } finally {
+      if (deflater != null) deflater.end();
+      if (sample != null && sample != source) Bitmaps.release(sample);
+    }
   }
 
   @Override

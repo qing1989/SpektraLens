@@ -22,6 +22,8 @@ final class GallerySheet extends Dialog {
     void importPhotos(List<GalleryPhotos.Photo> photos);
 
     void permission();
+
+    default void files() {}
   }
 
   private static final int INK = AppStyle.INK, MUTED = AppStyle.MUTED, GOLD = AppStyle.GOLD;
@@ -43,19 +45,30 @@ final class GallerySheet extends Dialog {
   private final LinkedHashSet<String> seenKeys = new LinkedHashSet<>();
   private CancellationSignal querySignal;
   private GalleryPaging paging;
-  private boolean closed, loading, albumPanelOpen, fullScan;
+  private boolean closed, loading, albumPanelOpen, fullScan, rawOnly;
   private String albumId = "", loadError = "";
   private LinearLayout root;
   private GridView grid;
   private ListView albumList;
   private LinearLayout albumPanel;
   private ImageView albumArrow;
-  private TextView title, access, emptyText, selectionSummary, confirmButton;
-  private LinearLayout empty;
-  private int collapsedHeight, expandedHeight, sheetWidth;
-  private float dragY;
-  private int dragHeight;
-  private boolean dragging;
+  private TextView access, emptyText, selectionSummary, confirmButton, allFilter, rawFilter;
+  private ImageView emptyIcon;
+  private LinearLayout empty, albumSourceButton;
+  private int expandedHeight, sheetWidth;
+  private final Runnable enforceOpaque =
+      () -> {
+        if (closed) return;
+        Window window = getWindow();
+        WindowManager.LayoutParams attributes = window.getAttributes();
+        if (attributes.alpha != 1f) {
+          attributes.alpha = 1f;
+          window.setAttributes(attributes);
+        }
+        window.getDecorView().setAlpha(1f);
+        if (root != null) root.setAlpha(1f);
+      };
+
   private final View.OnLayoutChangeListener windowSizeChanged =
       (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
         if (!closed && (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop))
@@ -139,104 +152,121 @@ final class GallerySheet extends Dialog {
     return view;
   }
 
+  private TextView filterChip(String label, Runnable action) {
+    TextView chip = text(label, AppStyle.TYPE_BODY, MUTED);
+    chip.setGravity(Gravity.CENTER);
+    chip.setPadding(dp(18), 0, dp(18), 0);
+    chip.setFocusable(true);
+    chip.setOnClickListener(v -> action.run());
+    chip.setContentDescription(label + "筛选");
+    styleFilter(chip, false);
+    return chip;
+  }
+
+  private void styleFilter(TextView chip, boolean active) {
+    chip.setTextColor(active ? INK : MUTED);
+    chip.setBackground(
+        AppStyle.shape(
+            getContext(), active ? AppStyle.CONTROL : Color.TRANSPARENT, AppStyle.R_SMALL, false));
+  }
+
+  private LinearLayout sourceButton(int iconRes, String label, Runnable action) {
+    LinearLayout button = new LinearLayout(getContext());
+    button.setOrientation(LinearLayout.HORIZONTAL);
+    button.setGravity(Gravity.CENTER);
+    button.setPadding(dp(10), 0, dp(10), 0);
+    button.setBackground(AppStyle.shape(getContext(), AppStyle.CONTROL, AppStyle.R_SMALL, true));
+    button.setClickable(true);
+    button.setFocusable(true);
+    button.setContentDescription(label);
+    ImageView icon = new ImageView(getContext());
+    icon.setImageResource(iconRes);
+    icon.setImageTintList(ColorStateList.valueOf(INK));
+    icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    button.addView(icon, new LinearLayout.LayoutParams(dp(22), dp(22)));
+    TextView name = text(label, AppStyle.TYPE_BODY, INK);
+    name.setGravity(Gravity.CENTER);
+    LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(-2, -2);
+    nameParams.leftMargin = dp(7);
+    button.addView(name, nameParams);
+    ImageView arrow = new ImageView(getContext());
+    arrow.setImageResource(R.drawable.ic_material_keyboard_arrow_down);
+    arrow.setImageTintList(ColorStateList.valueOf(INK));
+    arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    LinearLayout.LayoutParams arrowParams = new LinearLayout.LayoutParams(dp(18), dp(18));
+    arrowParams.leftMargin = dp(4);
+    button.addView(arrow, arrowParams);
+    if (label.equals("从相册选择")) albumArrow = arrow;
+    button.setOnClickListener(v -> action.run());
+    return button;
+  }
+
+  private void setRawOnly(boolean value) {
+    if (rawOnly == value) return;
+    rawOnly = value;
+    styleFilter(allFilter, !rawOnly);
+    styleFilter(rawFilter, rawOnly);
+    filter(false);
+  }
+
+  private static boolean isRaw(GalleryPhotos.Photo photo) {
+    return photo.name != null && photo.name.toLowerCase(Locale.ROOT).endsWith(".dng");
+  }
+
+  private boolean hasRawPhotos() {
+    for (GalleryPhotos.Photo photo : phone) if (isRaw(photo)) return true;
+    return false;
+  }
+
+  private String defaultRawAlbum() {
+    for (GalleryPhotos.Photo photo : phone)
+      if (isRaw(photo) && photo.albumId.isEmpty()) return "";
+    for (GalleryPhotos.Photo photo : phone) if (isRaw(photo)) return photo.albumId;
+    return "";
+  }
+
+
   private void build() {
     root = column();
     AppStyle.surface(root, AppStyle.SURFACE, AppStyle.R_LARGE);
-    PanelHandle grab = new PanelHandle(getContext());
-    grab.setContentDescription("上拉展开图库，下拉收起");
-    grab.setFocusable(true);
-    grab.setClickable(true);
-    View handle = new View(getContext());
-    GradientDrawable pill = new GradientDrawable();
-    pill.setColor(AppStyle.GRIP);
-    pill.setCornerRadius(dp(3));
-    handle.setBackground(pill);
-    FrameLayout.LayoutParams line =
-        new FrameLayout.LayoutParams(dp(34), dp(4), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-    line.topMargin = dp(11);
-    grab.addView(handle, line);
-    grab.setOnClickListener(
-        v -> {
-          boolean expand = getWindow().getAttributes().height < expandedHeight;
-          if (albumPanelOpen) setAlbumPanelOpen(false, false);
-          height(expand ? expandedHeight : collapsedHeight);
-        });
-    grab.setOnTouchListener(
-        (v, event) -> {
-          if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-            dragY = event.getRawY();
-            dragHeight = getWindow().getAttributes().height;
-            dragging = false;
-            return true;
-          }
-          float dy = event.getRawY() - dragY;
-          if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-            if (Math.abs(dy) > dp(5)) dragging = true;
-            if (dragging) {
-              if (albumPanelOpen) setAlbumPanelOpen(false, false);
-              height(Math.max(dp(160), Math.min(expandedHeight, dragHeight - Math.round(dy))));
-            }
-            return true;
-          }
-          if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-            if (!dragging) v.performClick();
-            else if (getWindow().getAttributes().height < collapsedHeight * .72f) dismiss();
-            else
-              height(
-                  getWindow().getAttributes().height > (collapsedHeight + expandedHeight) / 2
-                      ? expandedHeight
-                      : collapsedHeight);
-            return true;
-          }
-          if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-            height(collapsedHeight);
-            return true;
-          }
-          return false;
-        });
-    root.addView(grab, new LinearLayout.LayoutParams(-1, dp(27)));
-
-    LinearLayout header = new LinearLayout(getContext());
-    header.setGravity(Gravity.CENTER_VERTICAL);
-    header.setPadding(dp(20), 0, dp(20), dp(5));
-    LinearLayout albumSelector = column();
-    albumSelector.setOrientation(LinearLayout.HORIZONTAL);
-    albumSelector.setGravity(Gravity.CENTER_VERTICAL);
-    albumSelector.setMinimumHeight(dp(AppStyle.TOUCH_MIN));
-    albumSelector.setPadding(0, dp(4), dp(20), dp(4));
-    albumSelector.setClickable(true);
-    albumSelector.setFocusable(true);
-    albumSelector.setBackground(
-        new RippleDrawable(
-            ColorStateList.valueOf(0x24ffffff),
-            null,
-            AppStyle.shape(getContext(), Color.WHITE, AppStyle.R_SMALL, false)));
-    albumSelector.setContentDescription("最近照片，点击选择其他相册");
-    albumSelector.setOnClickListener(v -> albums());
-    LinearLayout albumLine = new LinearLayout(getContext());
-    albumLine.setOrientation(LinearLayout.HORIZONTAL);
-    albumLine.setGravity(Gravity.CENTER_VERTICAL);
-    title = text("最近照片", AppStyle.TYPE_HEADING, INK);
-    AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
-    title.setSingleLine(true);
-    title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-    title.setMaxWidth(dp(150));
-    title.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-    albumLine.addView(title, new LinearLayout.LayoutParams(-2, dp(30)));
-    albumArrow = new ImageView(getContext());
-    albumArrow.setImageResource(R.drawable.ic_material_keyboard_arrow_down);
-    albumArrow.setImageTintList(ColorStateList.valueOf(Color.WHITE));
-    albumArrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-    LinearLayout.LayoutParams arrowParams = new LinearLayout.LayoutParams(dp(24), dp(24));
-    arrowParams.leftMargin = dp(4);
-    albumLine.addView(albumArrow, arrowParams);
-    albumSelector.addView(albumLine, new LinearLayout.LayoutParams(-2, dp(44)));
-    header.addView(albumSelector, new LinearLayout.LayoutParams(0, dp(58), 1));
+    LinearLayout meta = new LinearLayout(getContext());
+    meta.setOrientation(LinearLayout.HORIZONTAL);
+    meta.setGravity(Gravity.CENTER_VERTICAL);
+    meta.setPadding(dp(20), dp(14), dp(20), dp(6));
+    LinearLayout filters = new LinearLayout(getContext());
+    filters.setOrientation(LinearLayout.HORIZONTAL);
+    allFilter = filterChip("全部", () -> setRawOnly(false));
+    rawFilter = filterChip("RAW", () -> setRawOnly(true));
+    styleFilter(allFilter, true);
+    styleFilter(rawFilter, false);
+    filters.addView(allFilter, new LinearLayout.LayoutParams(-2, dp(36)));
+    LinearLayout.LayoutParams rawParams = new LinearLayout.LayoutParams(-2, dp(36));
+    rawParams.leftMargin = dp(10);
+    filters.addView(rawFilter, rawParams);
+    meta.addView(filters, new LinearLayout.LayoutParams(0, dp(40), 1));
     selectionSummary = text("已选 0 张", AppStyle.TYPE_MICRO, GOLD);
     AppStyle.setNumericTypeface(selectionSummary);
     selectionSummary.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-    header.addView(selectionSummary, new LinearLayout.LayoutParams(dp(86), dp(58)));
-    root.addView(header);
+    meta.addView(selectionSummary, new LinearLayout.LayoutParams(-2, dp(40)));
+    root.addView(meta);
+
+    LinearLayout sources = new LinearLayout(getContext());
+    sources.setOrientation(LinearLayout.HORIZONTAL);
+    sources.setGravity(Gravity.CENTER_VERTICAL);
+    sources.setPadding(dp(14), dp(6), dp(14), dp(10));
+    albumSourceButton =
+        sourceButton(R.drawable.ic_import_album, "从相册选择", this::albums);
+    sources.addView(albumSourceButton, new LinearLayout.LayoutParams(0, dp(56), 1));
+    LinearLayout fileSource =
+        sourceButton(R.drawable.ic_import_folder, "从文件选择", () -> {
+          dismiss();
+          listener.files();
+        });
+    LinearLayout.LayoutParams fileParams = new LinearLayout.LayoutParams(0, dp(56), 1);
+    fileParams.leftMargin = dp(12);
+    sources.addView(fileSource, fileParams);
+    root.addView(sources);
+
 
     access = action("", GOLD, listener::permission);
     access.setTextSize(AppStyle.TYPE_MICRO);
@@ -272,7 +302,16 @@ final class GallerySheet extends Dialog {
     empty = column();
     empty.setGravity(Gravity.CENTER);
     empty.setPadding(dp(24), dp(12), dp(24), dp(12));
-    emptyText = text("正在读取相册…", AppStyle.TYPE_HEADING, MUTED);
+    emptyIcon = new ImageView(getContext());
+    emptyIcon.setImageResource(R.drawable.ic_ui_not_found);
+    emptyIcon.setImageTintList(ColorStateList.valueOf(MUTED));
+    emptyIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+    emptyIcon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    emptyIcon.setVisibility(View.GONE);
+    LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(64), dp(64));
+    iconParams.bottomMargin = dp(16);
+    empty.addView(emptyIcon, iconParams);
+    emptyText = text("正在读取相册…", AppStyle.TYPE_TITLE, MUTED);
     emptyText.setGravity(Gravity.CENTER);
     empty.addView(emptyText, new LinearLayout.LayoutParams(-1, -2));
     body.addView(empty, new FrameLayout.LayoutParams(-1, -1));
@@ -310,7 +349,9 @@ final class GallerySheet extends Dialog {
 
   public void show() {
     Window window = getWindow();
-    window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+    // Keep the window itself opaque as well as the root. Some OPPO window managers
+    // composite a transparent dialog background even when the content View is opaque.
+    window.setBackgroundDrawable(AppStyle.shape(getContext(), AppStyle.SURFACE, AppStyle.R_LARGE, true));
     window.setGravity(Gravity.BOTTOM);
     window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     WindowManager.LayoutParams attributes = window.getAttributes();
@@ -324,23 +365,23 @@ final class GallerySheet extends Dialog {
     window.setWindowAnimations(0);
     resize(true);
     root.setAlpha(1f);
-    root.setTranslationY(getContext().getResources().getDisplayMetrics().heightPixels);
+    root.setTranslationY(0);
     super.show();
-    // Set alpha again after the window is attached; OEM window managers may reset it while
-    // adding the dialog. The content translation is the only entrance motion.
-    WindowManager.LayoutParams shown = window.getAttributes();
-    shown.alpha = 1f;
-    window.setAttributes(shown);
-    window.getDecorView().setAlpha(1f);
-    root.setAlpha(1f);
-    root.post(
-        () -> {
-          if (!closed) {
-            root.animate().translationY(0).setDuration(180).start();
-          }
-        });
+    // Reassert alpha after attach and during the first frames. OPPO can write its own
+    // transition alpha after the dialog is already added.
+    enforceOpaque.run();
+    main.post(enforceOpaque);
+    main.postDelayed(enforceOpaque, 32);
+    main.postDelayed(enforceOpaque, 96);
+    main.postDelayed(enforceOpaque, 240);
     activity.getWindow().getDecorView().addOnLayoutChangeListener(windowSizeChanged);
     refresh();
+  }
+
+  @Override
+  public void onWindowAttributesChanged(WindowManager.LayoutParams params) {
+    if (!closed && params.alpha != 1f) params.alpha = 1f;
+    super.onWindowAttributesChanged(params);
   }
 
   @Override
@@ -361,11 +402,8 @@ final class GallerySheet extends Dialog {
   }
 
   private void resize(boolean initial) {
-    boolean expanded =
-        albumPanelOpen
-            || (!initial
-                && getWindow().getAttributes().height
-                    > (collapsedHeight + expandedHeight) / 2);
+    // The import sheet is intentionally fixed at its expanded height. There is no drag handle
+    // and no collapsed state in the new import flow.
     Rect visible = new Rect();
     activity.getWindow().getDecorView().getWindowVisibleDisplayFrame(visible);
     int available = visible.height() - dp(20);
@@ -376,9 +414,8 @@ final class GallerySheet extends Dialog {
             ? visible.width()
             : activity.getResources().getDisplayMetrics().widthPixels;
     sheetWidth = Math.min(dp(720), Math.max(dp(240), availableWidth - dp(24)));
-    collapsedHeight = Math.min(available, Math.max(dp(250), Math.round(available * .58f)));
-    expandedHeight = Math.max(collapsedHeight, Math.round(available * .94f));
-    getWindow().setLayout(sheetWidth, expanded ? expandedHeight : collapsedHeight);
+    expandedHeight = Math.max(dp(250), Math.round(available * .85f));
+    getWindow().setLayout(sheetWidth, expandedHeight);
   }
 
   private void height(int pixels) {
@@ -463,21 +500,30 @@ final class GallerySheet extends Dialog {
 
   private void filter(boolean scrollToTop) {
     if (closed) return;
-    visible = new ArrayList<>();
-    for (GalleryPhotos.Photo photo : phone)
-      if (albumId.isEmpty() || albumId.equals(photo.albumId)) visible.add(photo);
-    String label = "最近照片";
-    if (!albumId.isEmpty())
+    boolean hasRaw = !rawOnly || hasRawPhotos();
+    if (rawOnly && hasRaw && !loading) {
+      boolean currentHasRaw = false;
       for (GalleryPhotos.Photo photo : phone)
-        if (albumId.equals(photo.albumId)) {
-          label = photo.albumName;
+        if (isRaw(photo)
+            && (albumId.isEmpty() || albumId.equals(photo.albumId))) {
+          currentHasRaw = true;
           break;
         }
-    title.setText(label);
+      if (!currentHasRaw) albumId = defaultRawAlbum();
+    }
+    visible = new ArrayList<>();
+    for (GalleryPhotos.Photo photo : phone)
+      if ((albumId.isEmpty() || albumId.equals(photo.albumId))
+          && (!rawOnly || isRaw(photo))) visible.add(photo);
+    boolean noRaw = rawOnly && !loading && !hasRaw;
+    emptyIcon.setVisibility(noRaw ? View.VISIBLE : View.GONE);
+    albumSourceButton.setEnabled(!noRaw);
+    albumSourceButton.setAlpha(noRaw ? .4f : 1f);
     GalleryPhotos.Access permission = GalleryPhotos.access(activity);
     access.setVisibility(permission == GalleryPhotos.Access.PARTIAL ? View.VISIBLE : View.GONE);
     access.setText("可见部分照片 · 管理");
-    while (empty.getChildCount() > 1) empty.removeViewAt(1);
+    // Keep the icon and the text; only remove a previously added permission button.
+    while (empty.getChildCount() > 2) empty.removeViewAt(2);
     if (loading) emptyText.setText("正在读取相册…");
     else if (permission == GalleryPhotos.Access.NONE) {
       emptyText.setText("允许访问相册后，在这里选择要导入的照片");
@@ -485,7 +531,10 @@ final class GallerySheet extends Dialog {
           new LinearLayout.LayoutParams(-1, dp(AppStyle.TOUCH_MIN));
       button.topMargin = dp(14);
       empty.addView(primaryAction("允许访问相册", listener::permission), button);
-    } else emptyText.setText(loadError.isEmpty() ? "这个相册还没有可用照片" : loadError);
+    } else if (noRaw) emptyText.setText("没有发现可以导入的 RAW 照片");
+    else if (rawOnly)
+      emptyText.setText(loadError.isEmpty() ? "这个相册还没有 RAW 照片" : loadError);
+    else emptyText.setText(loadError.isEmpty() ? "这个相册还没有可用照片" : loadError);
     adapter.notifyDataSetChanged();
     if (albumPanelOpen) populateAlbumRows();
     updateSelectionUi();
@@ -554,7 +603,7 @@ final class GallerySheet extends Dialog {
                 }
               })
           .start();
-      if (resizeSheet) height(collapsedHeight);
+      if (resizeSheet) height(expandedHeight);
     }
   }
 
@@ -562,6 +611,7 @@ final class GallerySheet extends Dialog {
     LinkedHashMap<String, String> albums = new LinkedHashMap<>();
     LinkedHashMap<String, Integer> counts = new LinkedHashMap<>();
     for (GalleryPhotos.Photo photo : phone) {
+      if (rawOnly && !isRaw(photo)) continue;
       albums.put(photo.albumId, photo.albumName);
       counts.put(photo.albumId, counts.getOrDefault(photo.albumId, 0) + 1);
     }
@@ -603,7 +653,10 @@ final class GallerySheet extends Dialog {
             name.setEllipsize(android.text.TextUtils.TruncateAt.END);
             name.setLineSpacing(dp(2), 1);
             row.addView(name, new LinearLayout.LayoutParams(0, -1, 1));
-            int count = id.isEmpty() ? phone.size() : counts.getOrDefault(id, 0);
+            int rawTotal = 0;
+            for (GalleryPhotos.Photo photo : phone)
+              if (!rawOnly || isRaw(photo)) rawTotal++;
+            int count = id.isEmpty() ? rawTotal : counts.getOrDefault(id, 0);
             TextView total = text(String.valueOf(count), AppStyle.TYPE_MICRO, active ? GOLD : MUTED);
             AppStyle.setNumericTypeface(total);
             total.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);

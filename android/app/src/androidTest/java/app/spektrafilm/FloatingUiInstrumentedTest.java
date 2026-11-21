@@ -85,6 +85,19 @@ public final class FloatingUiInstrumentedTest
     return null;
   }
 
+  private View findDescription(View root, String description) {
+    CharSequence content = root.getContentDescription();
+    if (content != null && description.contentEquals(content)) return root;
+    if (root instanceof ViewGroup) {
+      ViewGroup group = (ViewGroup) root;
+      for (int i = 0; i < group.getChildCount(); i++) {
+        View match = findDescription(group.getChildAt(i), description);
+        if (match != null) return match;
+      }
+    }
+    return null;
+  }
+
   public void testPreviewActionsAndMeterSpacing() throws Exception {
     main(
         () -> {
@@ -100,8 +113,10 @@ public final class FloatingUiInstrumentedTest
           try {
             View root = (View) value("editorScreen");
             assertNull("Preview action bar no longer contains the photo picker", findText(root, "照片"));
-            assertNotNull(findText(root, "适应画面"));
-            assertNotNull(findText(root, "对比原图"));
+            View fit = findDescription(root, "适应画面");
+            assertNotNull(fit);
+            assertEquals("Crop-like action stays hidden until crop is supported", View.GONE, fit.getVisibility());
+            assertNotNull(findDescription(root, "对比原图"));
             View title = root.findViewWithTag("editor.meter.label");
             View options = root.findViewWithTag("editor.meter.options");
             View format = findText(root, "胶片画幅");

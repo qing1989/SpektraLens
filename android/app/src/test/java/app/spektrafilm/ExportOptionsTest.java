@@ -65,6 +65,12 @@ public final class ExportOptionsTest {
     check(reduced[0] < original[0] && reduced[1] < original[1], "Smaller sample reduces estimate");
     long[] huge = ExportOptions.estimateJpegBytes(200000, 768, 512, 100000, 100000);
     check(huge[0] > 0 && huge[1] > huge[0], "Pixel area cannot overflow int");
+    long tiff = ExportOptions.estimateTiffBytes(6000, 4000);
+    check(tiff == 6000L * 4000 * 6 + 32L * 1024, "TIFF is exact uncompressed 16-bit RGB");
+    check(ExportOptions.estimateTiffBytes(0, 4000) == 0, "Invalid TIFF size unknown");
+    long[] png = ExportOptions.estimatePngBytes(.5, 6000, 4000);
+    check(png != null && png[0] > 0 && png[1] > png[0], "PNG range is positive");
+    check(ExportOptions.estimatePngBytes(0, 6000, 4000) == null, "Invalid PNG ratio unknown");
     check(ExportOptions.estimateJpegBytes(0, 600, 400, 6000, 4000) == null, "Empty sample unknown");
     check(ExportOptions.estimateJpegBytes(120000, 0, 400, 6000, 4000) == null, "Invalid sample unknown");
     check(ExportOptions.estimateJpegBytes(120000, 600, 400, 0, 4000) == null, "Unknown output unknown");

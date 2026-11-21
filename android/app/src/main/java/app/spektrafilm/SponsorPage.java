@@ -14,6 +14,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -174,13 +175,10 @@ final class SponsorPage extends FrameLayout {
     LinearLayout header = new LinearLayout(activity);
     header.setGravity(Gravity.CENTER_VERTICAL);
     header.setPadding(dp(16), dp(8), dp(16), dp(8));
-    TextView back = action("返回", AppStyle.INK, AppStyle.CONTROL);
-    back.setSingleLine(true);
-    back.setPadding(dp(12), dp(10), dp(12), dp(10));
-    int backWidth = Math.max(dp(64), (int) Math.ceil(back.getPaint().measureText("返回")) + dp(24));
-    back.setContentDescription("返回赞助说明");
+    ImageButton back =
+        AppStyle.iconButton(activity, R.drawable.ic_ui_back, "返回赞助说明", Color.WHITE);
     back.setOnClickListener(view -> showIntro());
-    header.addView(back, new LinearLayout.LayoutParams(backWidth, -2));
+    header.addView(back, new LinearLayout.LayoutParams(dp(44), dp(44)));
 
     page.addView(header, new LinearLayout.LayoutParams(-1, -2));
 

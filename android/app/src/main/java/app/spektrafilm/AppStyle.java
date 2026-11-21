@@ -199,6 +199,21 @@ final class AppStyle {
     }
   }
 
+  static ImageButton iconButton(Context context, int drawable, String description, int tint) {
+    ImageButton view = new ImageButton(context);
+    view.setImageResource(drawable);
+    view.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+    view.setPadding(dp(context, 8), dp(context, 8), dp(context, 8), dp(context, 8));
+    view.setBackground(
+        new RippleDrawable(
+            ColorStateList.valueOf(0x24ffffff), null, pill(context, Color.WHITE, false)));
+    view.setImageTintList(ColorStateList.valueOf(tint));
+    view.setContentDescription(description);
+    view.setMinimumWidth(0);
+    view.setMinimumHeight(0);
+    return view;
+  }
+
   static void surface(View view, int color, float radius) {
     surface(view, color, radius, true);
   }

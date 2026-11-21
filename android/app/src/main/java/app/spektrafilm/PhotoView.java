@@ -128,10 +128,25 @@ public final class PhotoView extends View {
     finishHeldOriginal();
   }
 
+  /** Keeps the current zoom/pan for a quick photo switch; only clamps it into the new image. */
+  void retainView() {
+    if (zoom <= 1) {
+      zoom = 1;
+      offsetX = offsetY = 0;
+    } else {
+      clampOffsets();
+    }
+    invalidate();
+  }
+
   public void resetZoom() {
     zoom = 1;
     offsetX = offsetY = 0;
     invalidate();
+  }
+
+  static float framePadDp() {
+    return FRAME_PAD_DP;
   }
 
   private float density() {

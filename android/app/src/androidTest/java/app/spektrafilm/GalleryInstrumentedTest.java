@@ -274,7 +274,7 @@ public final class GalleryInstrumentedTest extends ActivityInstrumentationTestCa
       getInstrumentation().waitForIdleSync();
       View selector =
           findByDescription(
-              sheet[0].getWindow().getDecorView(), "最近照片，点击选择其他相册");
+              sheet[0].getWindow().getDecorView(), "从相册选择");
       assertNotNull(selector);
       getInstrumentation().runOnMainSync(selector::performClick);
       getInstrumentation().waitForIdleSync();

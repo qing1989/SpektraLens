@@ -17,6 +17,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -231,10 +232,21 @@ final class LibraryActionSheet extends Dialog {
       noteParams.topMargin = dp(3);
       copy.addView(note, noteParams);
     }
+    int icon = iconFor(item);
+    if (icon != 0) {
+      ImageView iconView = new ImageView(getContext());
+      iconView.setImageResource(icon);
+      iconView.setImageTintList(ColorStateList.valueOf(labelColor));
+      iconView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+      LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+      iconParams.rightMargin = dp(12);
+      content.addView(iconView, iconParams);
+    }
     content.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
     if (!item.state.isEmpty()) {
       TextView state =
           text(item.state, AppStyle.TYPE_MICRO, item.enabled ? AppStyle.GOLD : AppStyle.DISABLED);
+      state.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
       AppStyle.setTypeface(state, AppStyle.FONT_MEDIUM);
       state.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
       LinearLayout.LayoutParams stateParams = new LinearLayout.LayoutParams(-2, -2);
@@ -243,8 +255,6 @@ final class LibraryActionSheet extends Dialog {
     }
     // TalkBack reads the whole row once, including its availability and current-source state.
     copy.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
-    if (content.getChildCount() > 1)
-      content.getChildAt(1).setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
     content.setContentDescription(
         item.label
             + (item.note.isEmpty() ? "" : "，" + item.note)
@@ -261,6 +271,29 @@ final class LibraryActionSheet extends Dialog {
     content.setEnabled(item.enabled);
     content.setFocusable(item.enabled);
     return content;
+  }
+
+  private int iconFor(ActionItem item) {
+    switch (item.action) {
+      case EDIT:
+        return R.drawable.ic_ui_reedit;
+      case COPY:
+        return R.drawable.ic_ui_copy_settings;
+      case PASTE:
+        return R.drawable.ic_ui_paste_settings;
+      case BATCH_PASTE:
+        return R.drawable.ic_ui_batch_paste_settings;
+      case FAVORITE:
+        return item.label.contains("取消")
+            ? R.drawable.ic_ui_favorite_remove
+            : R.drawable.ic_ui_favorite_add;
+      case EXPORT:
+        return R.drawable.ic_ui_export_photo;
+      case DELETE:
+        return R.drawable.ic_ui_delete_photo;
+      default:
+        return 0;
+    }
   }
 
   private void buttonSemantics(View view) {

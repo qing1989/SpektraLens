@@ -872,7 +872,7 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
     assertTrue(((ArrayDeque<?>) field("redoStack")).isEmpty());
     assertFalse(
         "Original comparison is not active on a new photo",
-        ((TextView) field("compareButton")).isSelected());
+        ((View) field("compareButton")).isSelected());
   }
 
   public void testOrdinaryImportsResetAndExplicitCarryDoesNotLeakToNextImport() throws Exception {
@@ -893,7 +893,7 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
             state.put("grain_amount", 1.7);
             state.put("auto_exposure", true);
             state.put("auto_exposure_method", "balanced");
-            ((TextView) field("compareButton")).performClick();
+            ((View) field("compareButton")).performClick();
             call("saveActiveFrame", new Class<?>[] {});
           } catch (Exception ex) {
             throw new RuntimeException(ex);
