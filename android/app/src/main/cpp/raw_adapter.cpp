@@ -27,6 +27,7 @@ spk::Json inspect_raw(const std::string &path) {
     j.set("aperture", spk::Json(double(raw.imgdata.other.aperture)));
     j.set("shutter", spk::Json(double(raw.imgdata.other.shutter)));
     j.set("focal_mm", spk::Json(double(raw.imgdata.other.focal_len)));
+    j.set("focal_35mm", spk::Json(double(raw.imgdata.lens.FocalLengthIn35mmFormat)));
     j.set("decoder", spk::Json(std::string(LibRaw::version())));
     return j;
 }

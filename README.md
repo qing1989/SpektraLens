@@ -2,8 +2,8 @@
 
 **把一间光谱胶片实验室装进口袋。**
 
-[![版本](https://img.shields.io/badge/version-0.5.5-e0b47a?style=flat-square)](CHANGELOG.md)
-[![下载](https://img.shields.io/badge/download-APK%20v0.5.5-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
+[![版本](https://img.shields.io/badge/version-0.5.6-e0b47a?style=flat-square)](CHANGELOG.md)
+[![下载](https://img.shields.io/badge/download-APK%20v0.5.6-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
 [![平台](https://img.shields.io/badge/Android-10%2B-3ddc84?style=flat-square&logo=android&logoColor=white)](#兼容性)
 [![渲染](https://img.shields.io/badge/Vulkan-GPU%20%2B%20CPU%20%E5%9B%9E%E9%80%80-4a90d9?style=flat-square)](#工作原理)
 [![离线](https://img.shields.io/badge/100%25-%E6%9C%AC%E5%9C%B0%E6%98%BE%E5%BD%B1-8a8a8a?style=flat-square)](#为什么不是滤镜)
@@ -99,7 +99,8 @@ RAW 解码、光谱显影、相纸印相、调色、颗粒与光晕合成、编�
 
 - 银盐颗粒、高光光晕、光晕曝光增益、乳剂散射、防光晕层、显影耦合、密度曲线、镜头 / 扫描柔化、相纸炫光与预闪
 - 物理画幅（135 / 120 等）、自动测光（默认关闭，可手动开启）
-- 片边：135 黑色 / 暖色齿孔、白边、即时相纸，编号与英文题注；日期位置 / 颜色 / 字号 / 亮度可调
+- 「彩光」与「开卷」漏光支持调节强度和更换分布，可延伸到两款 135 边框的片基
+- 支持 135 黑色与暖色齿孔边框、白边和即时相纸，可显示编号与英文题注。七段数字日期水印的位置、颜色、字号和亮度可调
 
 **输入与输出**
 

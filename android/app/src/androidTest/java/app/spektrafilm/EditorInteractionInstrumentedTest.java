@@ -199,6 +199,117 @@ public final class EditorInteractionInstrumentedTest
     return null;
   }
 
+  public void testLightLeakStrengthShuffleAndUndo() throws Exception {
+    String amount = "light_leak_amount", seed = "light_leak_seed";
+    page(5, "基础");
+    main(
+        () -> {
+          AdjustmentSeekBar strength = bar(amount);
+          assertEquals(0, strength.getProgress());
+          assertFalse(settings().has(seed));
+          String initial = settings().toString();
+          float y = strength.getHeight() / 2f;
+          float left = strength.getPaddingLeft();
+          float right = strength.getWidth() - strength.getPaddingRight();
+          event(strength, MotionEvent.ACTION_DOWN, left, y);
+          event(strength, MotionEvent.ACTION_MOVE, right, y);
+          assertEquals(100, strength.getProgress());
+          event(strength, MotionEvent.ACTION_MOVE, left, y);
+          event(strength, MotionEvent.ACTION_UP, left, y);
+          assertEquals(initial, settings().toString());
+          assertTrue(history("undoStack").isEmpty());
+          change(strength);
+          assertEquals(100, settings().getInt(amount));
+          assertTrue(settings().getInt(seed) > 0);
+          assertEquals(1, history("undoStack").size());
+          historyStep(false);
+          assertEquals(0, bar(amount).getProgress());
+          assertFalse(settings().has(seed));
+        });
+    main(
+        () -> {
+          View shuffle = tagged("editor.light_leak.shuffle");
+          assertNotNull(shuffle);
+          View strengthRow = (View) bar(amount).getParent();
+          assertEquals(strengthRow.getLeft(), shuffle.getLeft());
+          assertEquals(strengthRow.getRight(), shuffle.getRight());
+          assertTrue(shuffle.performClick());
+          int first = settings().getInt(seed);
+          assertEquals(25, bar(amount).getProgress());
+          assertEquals(25, settings().getInt(amount));
+          assertEquals(1, history("undoStack").size());
+          change(bar(amount));
+          assertEquals(100, settings().getInt(amount));
+          assertEquals(first, settings().getInt(seed));
+          assertTrue(shuffle.performClick());
+          int second = settings().getInt(seed);
+          assertTrue(first != second);
+          assertEquals(100, settings().getInt(amount));
+          assertEquals(3, history("undoStack").size());
+          assertFalse(renderParameters().has(seed));
+          historyStep(false);
+          assertEquals(first, settings().getInt(seed));
+          historyStep(true);
+          assertEquals(second, settings().getInt(seed));
+          assertEquals(100, bar(amount).getProgress());
+        });
+    main(
+        () -> {
+          int current = settings().getInt(seed);
+          doubleTap(bar(amount), bar(amount).getWidth() / 2f);
+          assertEquals(0, settings().getInt(amount));
+          assertEquals(current, settings().getInt(seed));
+        });
+  }
+
+  public void testLightLeakModePreservesStrengthAndCanBeUndone() throws Exception {
+    page(5, "基础");
+    main(
+        () -> {
+          assertTrue(tagged("editor.light_leak.color").isSelected());
+          assertTrue(tagged("editor.light_leak.first_roll").performClick());
+          assertEquals(0, bar("light_leak_amount").getProgress());
+          assertTrue(tagged("editor.light_leak.shuffle").performClick());
+          assertEquals(25, bar("light_leak_amount").getProgress());
+          assertEquals("first_roll", settings().getString("light_leak_mode"));
+          int seed = settings().getInt("light_leak_seed");
+          assertTrue(tagged("editor.light_leak.color").performClick());
+          assertEquals(25, bar("light_leak_amount").getProgress());
+          assertEquals(seed, settings().getInt("light_leak_seed"));
+          historyStep(false);
+          assertTrue(tagged("editor.light_leak.first_roll").isSelected());
+          assertEquals(25, bar("light_leak_amount").getProgress());
+          assertEquals(seed, settings().getInt("light_leak_seed"));
+        });
+  }
+
+  public void testMalformedCaptureDateDoesNotDropFocalLengths() throws Exception {
+    java.io.File file = java.io.File.createTempFile("focal-exif-", ".jpg", activity.getCacheDir());
+    Bitmap bitmap = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888);
+    try {
+      try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+        assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out));
+      }
+      androidx.exifinterface.media.ExifInterface exif =
+          new androidx.exifinterface.media.ExifInterface(file);
+      exif.setAttribute("DateTimeOriginal", "not a capture date");
+      exif.setAttribute("FocalLength", "92/10");
+      exif.setAttribute("FocalLengthIn35mmFilm", "70");
+      exif.saveAttributes();
+      Method reader = MainActivity.class.getDeclaredMethod("readRasterMetadata",
+          java.io.File.class, JSONObject.class);
+      reader.setAccessible(true);
+      JSONObject metadata = new JSONObject();
+      reader.invoke(activity, file, metadata);
+      assertFalse(metadata.has("timestamp"));
+      assertEquals(9.2, metadata.getDouble("focal_mm"), .0001);
+      assertEquals(70, metadata.getInt("focal_35mm"));
+    } finally {
+      bitmap.recycle();
+      file.delete();
+    }
+  }
+
   public void testBlackWhitePaperPairingAndUndoRestoreColorEdits() throws Exception {
     main(
         () -> {

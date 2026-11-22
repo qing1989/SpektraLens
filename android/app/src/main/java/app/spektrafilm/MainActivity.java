@@ -58,6 +58,11 @@ public final class MainActivity extends Activity {
   private static final int GALLERY_SOURCE_MIN_EDGE = 384;
   private static final int GALLERY_WARM_COUNT = 3;
   private static final long GALLERY_CACHE_BYTES = 16L * 1024 * 1024;
+  private static final String LIGHT_LEAK_AMOUNT = "light_leak_amount";
+  private static final String LIGHT_LEAK_SEED = "light_leak_seed";
+  private static final String LIGHT_LEAK_MODE = "light_leak_mode";
+  private static final String FIRST_ROLL_LEAK = "first_roll";
+  private static final int LIGHT_LEAK_START_AMOUNT = 25;
   private UpdateController updates;
   private UpdateBadge homeAbout;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -583,7 +588,7 @@ public final class MainActivity extends Activity {
     putDefault("geo_w", 1);
     putDefault("geo_h", 1);
     putDefault("edge_style", "none");
-    putDefault("date_text", new SimpleDateFormat("yyyy.MM.dd", Locale.US).format(new Date()));
+    putDefault("date_text", dateImprintText(new Date()));
     putDefault("date_corner", "bottom_right");
     putDefault("date_color", "orange");
     normalizePaper();
@@ -603,6 +608,10 @@ public final class MainActivity extends Activity {
       case "edge_frame_number" -> 36;
       default -> 0;
     };
+  }
+
+  private static String dateImprintText(Date date) {
+    return "'" + new SimpleDateFormat("yy MM dd", Locale.US).format(date);
   }
 
   private void set(String k, Object v) {
@@ -2018,6 +2027,7 @@ public final class MainActivity extends Activity {
           "以物理画幅缩放颗粒与光晕，保留各胶片的特性。");
       slider("grain_amount", "银盐颗粒", 0, 2, .05, " ×");
       slider("halation_amount", "高光光晕", 0, 4, .1, " ×");
+      lightLeakControls();
       if (FilmStockPolicy.cinestill800t(settings.optString("film_stock")))
         slider("halation_headroom_ev", "高光余量", 0, 8, .1, " EV");
       slider("halation_boost_ev", "光晕增强", 0, 8, .1, " EV");
@@ -2662,6 +2672,7 @@ public final class MainActivity extends Activity {
                 .setOnClickListener(
                     w -> {
                       String value = input.getText().toString().toUpperCase(Locale.US);
+                      if (key.equals("date_text")) value = value.replace('’', '\'').replace(',', '.');
                       if (!value.matches("[A-Z0-9 ./'-]*")) {
                         input.setError("请使用英文字母、数字、空格或 - . / 符号");
                         return;
@@ -2699,7 +2710,7 @@ public final class MainActivity extends Activity {
     add(editor, date, -1, 39);
     gap(editor, 8);
     date.setOnClickListener(
-        v -> editTextValue("date_text", "日期文字", 24, "支持英文、数字、空格及 - . /，最多 24 字符"));
+        v -> editTextValue("date_text", "日期文字", 24, "支持数字、空格、撇号、句点和逗号，最多 24 字符"));
     if (sourceMetadata.optLong("timestamp") > 0) {
       TextView shot = button("使用原片拍摄日期", GOLD, AppStyle.CONTROL);
       add(editor, shot, -1, 36);
@@ -2708,8 +2719,7 @@ public final class MainActivity extends Activity {
           v -> {
             set(
                 "date_text",
-                new SimpleDateFormat("yyyy.MM.dd", Locale.US)
-                    .format(new Date(sourceMetadata.optLong("timestamp"))));
+                dateImprintText(new Date(sourceMetadata.optLong("timestamp"))));
             scheduleRender();
             buildPanel();
           });
@@ -2808,6 +2818,94 @@ public final class MainActivity extends Activity {
     return mm == 60 ? "60 mm" : mm == 18 ? "18 mm" : "36 mm";
   }
 
+  private void lightLeakControls() {
+    LinearLayout header = horizontal();
+    TextView title = text("漏光", AppStyle.TYPE_BODY, INK);
+    AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
+    header.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
+    LinearLayout modes = horizontal();
+    GradientDrawable outline = AppStyle.pill(this, BG, false);
+    outline.setStroke(Math.max(1, dp(.6f)), LINE);
+    modes.setBackground(outline);
+    modes.setPadding(dp(3), dp(3), dp(3), dp(3));
+    TextView color = button("彩光", MUTED, BG);
+    TextView firstRoll = button("开卷", MUTED, BG);
+    color.setTag("editor.light_leak.color");
+    firstRoll.setTag("editor.light_leak.first_roll");
+    for (TextView mode : new TextView[] {color, firstRoll}) {
+      mode.setTextSize(AppStyle.TYPE_LABEL);
+      mode.setMinHeight(0);
+      modes.addView(mode, new LinearLayout.LayoutParams(0, -1, 1));
+    }
+    add(header, modes, 144, 40);
+    add(editor, header, -1, AppStyle.TOUCH_MIN);
+    updateLightLeakModes(color, firstRoll);
+    color.setOnClickListener(v -> selectLightLeakMode(false, color, firstRoll));
+    firstRoll.setOnClickListener(v -> selectLightLeakMode(true, color, firstRoll));
+
+    slider(LIGHT_LEAK_AMOUNT, "强度", 0, 100, 1, "%");
+    SeekBar strength = sliders.get(LIGHT_LEAK_AMOUNT);
+    strength.setContentDescription("漏光强度");
+    TextView value = values.get(LIGHT_LEAK_AMOUNT);
+    TextView shuffle = button("换一个", INK, AppStyle.CONTROL);
+    shuffle.setTag("editor.light_leak.shuffle");
+    shuffle.setContentDescription("换一个漏光效果");
+    shuffle.setTextSize(AppStyle.TYPE_LABEL);
+    shuffle.setMinHeight(0);
+    shuffle.setPadding(0, 0, 0, 0);
+    shuffle.setSingleLine(true);
+    shuffle.setBackground(new android.graphics.drawable.InsetDrawable(
+        shuffle.getBackground(), 0, dp(5), 0, dp(5)));
+    shuffle.setOnClickListener(
+        v -> {
+          if (exporting || activeImport != null || destroyed) return;
+          rollLightLeakSeed();
+          if (settings.optInt(LIGHT_LEAK_AMOUNT) == 0) {
+            set(LIGHT_LEAK_AMOUNT, LIGHT_LEAK_START_AMOUNT);
+            strength.setProgress(LIGHT_LEAK_START_AMOUNT);
+            refreshSliderValue(LIGHT_LEAK_AMOUNT, LIGHT_LEAK_START_AMOUNT, "%", strength, value);
+          }
+          scheduleRender();
+        });
+    add(editor, shuffle, -1, AppStyle.TOUCH_MIN);
+  }
+
+  private void selectLightLeakMode(boolean first, TextView color, TextView firstRoll) {
+    if (exporting || activeImport != null || destroyed || first == firstRoll.isSelected()) return;
+    if (first) set(LIGHT_LEAK_MODE, FIRST_ROLL_LEAK);
+    else settings.remove(LIGHT_LEAK_MODE);
+    updateLightLeakModes(color, firstRoll);
+    scheduleRender();
+  }
+
+  private void updateLightLeakModes(TextView color, TextView firstRoll) {
+    boolean first = FIRST_ROLL_LEAK.equals(settings.optString(LIGHT_LEAK_MODE));
+    color.setSelected(!first);
+    firstRoll.setSelected(first);
+    for (TextView mode : new TextView[] {color, firstRoll}) {
+      boolean selected = mode.isSelected();
+      AppStyle.pillAction(mode, selected ? GOLD : MUTED,
+          selected ? AppStyle.SELECTED : Color.TRANSPARENT);
+      AppStyle.setTypeface(mode, selected ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
+      mode.setPadding(0, 0, 0, 0);
+    }
+  }
+
+  private void rollLightLeakSeed() {
+    int previous = settings.optInt(LIGHT_LEAK_SEED);
+    int seed;
+    do {
+      seed = ThreadLocalRandom.current().nextInt(1, Integer.MAX_VALUE);
+    } while (seed == previous);
+    set(LIGHT_LEAK_SEED, seed);
+  }
+
+  private void commitSliderChange(String key) {
+    if (LIGHT_LEAK_AMOUNT.equals(key) && settings.optInt(LIGHT_LEAK_AMOUNT) > 0
+        && settings.optInt(LIGHT_LEAK_SEED) == 0) rollLightLeakSeed();
+    scheduleRender();
+  }
+
   private void slider(
       String key, String label, double min, double max, double step, String suffix) {
     LinearLayout line = horizontal();
@@ -2865,10 +2963,13 @@ public final class MainActivity extends Activity {
           public void onProgressChanged(SeekBar b, int pos, boolean user) {
             if (user && !destroyed && !exporting && activeImport == null) {
               double v = Math.round((min + pos * step) * 10000) / 10000.0;
-              set(key, v);
+              // Keep an untouched recipe identical if the first leak drag returns to zero.
+              if (LIGHT_LEAK_AMOUNT.equals(key) && v == 0 && !settings.has(LIGHT_LEAK_SEED))
+                settings.remove(key);
+              else set(key, v);
               refreshSliderValue(key, v, suffix, b, value);
               // 键盘/无障碍调值没有拖动结束事件，也需要提交编辑。
-              if (!tracking) scheduleRender();
+              if (!tracking) commitSliderChange(key);
             }
           }
 
@@ -2881,7 +2982,7 @@ public final class MainActivity extends Activity {
             tracking = false;
             if (!destroyed && !exporting && activeImport == null
                 && Math.abs(settings.optDouble(key, defaultValue) - before) > .00001)
-              scheduleRender();
+              commitSliderChange(key);
           }
         });
   }
@@ -2964,6 +3065,7 @@ public final class MainActivity extends Activity {
   }
 
   private String number(double value, String suffix) {
+    if ("%".equals(suffix)) return Math.round(value) + suffix;
     return String.format(
         Locale.US, "%s%.2f%s", value > 0 && !suffix.contains("×") ? "+" : "", value, suffix);
   }
@@ -3180,14 +3282,17 @@ public final class MainActivity extends Activity {
     try {
       JSONObject j = new JSONObject(recipe.toString());
       Stock stock = find(films, recipe.optString("film_stock"));
+      if (recipe.optInt(LIGHT_LEAK_AMOUNT) > 0)
+        j.put("light_leak_monochrome", FilmStockPolicy.monochrome(recipe.optString("film_stock")));
       j.put("film_label", stock == null ? "" : shortName(stock.name));
       JSONObject source = metadata == null ? new JSONObject() : metadata;
       j.put("source_make", source.optString("make"));
       j.put("source_model", source.optString("model"));
-      j.put("source_iso", source.optDouble("iso"));
-      j.put("source_aperture", source.optDouble("aperture"));
-      j.put("source_shutter", source.optDouble("shutter"));
-      j.put("source_focal_mm", source.optDouble("focal_mm"));
+      j.put("source_iso", source.optDouble("iso", 0));
+      j.put("source_aperture", source.optDouble("aperture", 0));
+      j.put("source_shutter", source.optDouble("shutter", 0));
+      j.put("source_focal_mm", source.optDouble("focal_mm", 0));
+      j.put("source_focal_35mm", source.optInt("focal_35mm", 0));
       long date = source.optLong("timestamp");
       if (date > 0)
         j.put(
@@ -3644,6 +3749,7 @@ public final class MainActivity extends Activity {
                   JSONObject comparison = new JSONObject(edits);
                   comparison.put("grade_enabled", false);
                   comparison.put("date_enabled", false);
+                  comparison.remove(LIGHT_LEAK_AMOUNT);
                   Bitmap before = renderer.editBitmap(input, comparison.toString());
                   double sec = (System.nanoTime() - start) / 1e9;
                   ui(
@@ -3821,10 +3927,15 @@ public final class MainActivity extends Activity {
           "model", exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_MODEL));
       String date =
           exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_DATETIME_ORIGINAL);
-      if (date != null)
-        meta.put(
-            "timestamp",
-            new SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).parse(date).getTime());
+      if (date != null) {
+        try {
+          meta.put(
+              "timestamp",
+              new SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).parse(date).getTime());
+        } catch (java.text.ParseException ignored) {
+          // A malformed date does not invalidate the other EXIF fields.
+        }
+      }
       meta.put(
           "iso",
           exif.getAttributeDouble(
@@ -3840,6 +3951,10 @@ public final class MainActivity extends Activity {
           "focal_mm",
           exif.getAttributeDouble(
               androidx.exifinterface.media.ExifInterface.TAG_FOCAL_LENGTH, 0));
+      meta.put(
+          "focal_35mm",
+          exif.getAttributeInt(
+              androidx.exifinterface.media.ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, 0));
     } catch (Exception ignored) {
       // 单条 EXIF 缺失不影响导入，按默认值继续
     }

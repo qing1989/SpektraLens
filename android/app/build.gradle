@@ -42,8 +42,8 @@ android {
         // Keep the production identity untouched. Give side-by-side builds their own increasing
         // code so OEM installers actually replace an older UI Test APK instead of treating it as
         // the same version.
-        versionCode sideBySideTest ? 2502 : 31
-        versionName sideBySideTest ? '0.4.6-uitest3' : '0.5.5'
+        versionCode sideBySideTest ? 2502 : 32
+        versionName sideBySideTest ? '0.4.6-uitest3' : '0.5.6'
         if (testBuild) versionNameSuffix '-test'
         manifestPlaceholders = [
             appLabel: testBuild ? 'SpektraLens Test' : (sideBySideTest ? 'SpektraLens UI Test' : '@string/app_name')

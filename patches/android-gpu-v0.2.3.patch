@@ -3953,3 +3953,17 @@ new file mode 100644
 +    output_data.value[base + 1u] = v.y * gain;
 +    output_data.value[base + 2u] = v.z * gain;
 +}
+diff --git a/engine/host/output.hpp b/engine/host/output.hpp
+--- a/engine/host/output.hpp
++++ b/engine/host/output.hpp
+@@ -64,2 +64,3 @@
+     double iso = 0, shutter_s = 0, aperture = 0, focal_mm = 0;   // 0 = absent
++    uint16_t focal_35mm = 0;  // EXIF 35 mm equivalent, 0 = absent
+ };
+diff --git a/engine/host/output.cpp b/engine/host/output.cpp
+--- a/engine/host/output.cpp
++++ b/engine/host/output.cpp
+@@ -498,2 +498,3 @@
+     rational_value(exif, 0x920A, e.focal_mm, false);
++    if (e.focal_35mm > 0) exif.shorts(0xA405, {e.focal_35mm});
+     exif.ascii(0xA434, e.lens);

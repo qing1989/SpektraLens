@@ -7,11 +7,10 @@ import os
 import platform
 import subprocess
 import tempfile
+from prepare_engine import prepare
 
 root = Path(__file__).resolve().parent.parent
-engine = root / ".tooling/android-engine-source/engine"
-if not engine.is_dir():
-    engine = root / "SpektraLab/engine"
+engine = prepare()
 native = root / "android/app/src/main/cpp"
 with tempfile.TemporaryDirectory(prefix="spektra-export-tests-") as temporary:
     output = Path(temporary)
