@@ -42,9 +42,9 @@ public final class EditorLayoutInstrumentedTest
     method.invoke(activity);
   }
 
-  /** 面板的屏幕上限（dp）：面板高度就是 min(PANEL_MAX_DP, 这个值)。 */
-  private int panelLimit() throws Exception {
-    Method method = MainActivity.class.getDeclaredMethod("panelLimit");
+  /** 当前面板目标高度（dp）：有缩略图条时 min(320, 屏幕上限)，隐藏缩略图条时 min(376, 屏幕上限)。 */
+  private int expectedPanelHeightDp() throws Exception {
+    Method method = MainActivity.class.getDeclaredMethod("panelHeight");
     method.setAccessible(true);
     return (Integer) method.invoke(activity);
   }
@@ -79,8 +79,23 @@ public final class EditorLayoutInstrumentedTest
                 Map<String, SeekBar> bars = (Map<String, SeekBar>) field("sliders").get(activity);
                 Map<String, TextView> numbers =
                     (Map<String, TextView>) field("values").get(activity);
+                LinearLayout editor = (LinearLayout) field("editor").get(activity);
+                int touchHeight = AppStyle.dp(activity, AppStyle.TOUCH_PRIMARY);
                 for (Map.Entry<String, SeekBar> item : bars.entrySet()) {
                   SeekBar bar = item.getValue();
+                  LinearLayout row = (LinearLayout) bar.getParent();
+                  TextView number = numbers.get(item.getKey());
+                  View header = (View) number.getParent();
+                  assertSame(editor, row.getParent());
+                  assertSame(row, header.getParent());
+                  int contentWidth =
+                      editor.getWidth() - editor.getPaddingLeft() - editor.getPaddingRight();
+                  assertEquals("Track aligns inside panel content: " + item.getKey(),
+                      contentWidth, bar.getWidth());
+                  assertEquals(editor.getPaddingLeft(), row.getLeft() + bar.getLeft());
+                  assertEquals(touchHeight, bar.getHeight());
+                  assertTrue("Value sits above the track: " + item.getKey(),
+                      header.getTop() + number.getBottom() <= bar.getTop());
                   assertTrue("Measured " + item.getKey(), bar.getWidth() > 0);
                   Bitmap pixels =
                       Bitmap.createBitmap(bar.getWidth(), bar.getHeight(), Bitmap.Config.ARGB_8888);
@@ -98,7 +113,6 @@ public final class EditorLayoutInstrumentedTest
                   }
                   bar.setProgress(previous);
                   pixels.recycle();
-                  TextView number = numbers.get(item.getKey());
                   assertTrue(
                       "Full value and unit fit: " + item.getKey(),
                       number.getPaint().measureText(number.getText().toString())
@@ -183,9 +197,8 @@ public final class EditorLayoutInstrumentedTest
                         + Math.round(panel.getHeight() / density)
                         + "dp 能滚 "
                         + (scrolls ? "是" : "否"));
-                // 面板高度只跟屏幕有关：等于 min(PANEL_MAX_DP, 屏幕上限)。
-                int expected =
-                    Math.round(Math.min(MainActivity.PANEL_MAX_DP, panelLimit()) * density);
+                // 面板高度只跟屏幕及缩略图条是否显示有关，不随 9 个调节页内容跳动。
+                int expected = Math.round(expectedPanelHeightDp() * density);
                 assertTrue(
                     page + " 面板必须固定为 " + Math.round(expected / density) + "dp，实际 "
                         + Math.round(panel.getHeight() / density) + "dp",

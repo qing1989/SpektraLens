@@ -107,18 +107,27 @@ final class AppNotice {
       super(context);
       setTag(TAG);
       setText(message);
-      setTextSize(AppStyle.TYPE_BODY);
-      setTextColor(AppStyle.INK);
-      AppStyle.setTypeface(this, AppStyle.FONT_REGULAR);
+      setTextSize(AppStyle.TYPE_LABEL);
+      setTextColor(AppStyle.NOTICE_INK);
+      AppStyle.setTypeface(this, AppStyle.FONT_SEMIBOLD);
       setIncludeFontPadding(false);
-      setGravity(Gravity.CENTER);
+      setGravity(Gravity.CENTER_VERTICAL);
       setMaxWidth(AppStyle.dp(context, 320));
       setMaxLines(4);
       setEllipsize(TextUtils.TruncateAt.END);
-      int horizontal = AppStyle.dp(context, 18), vertical = AppStyle.dp(context, 11);
+      int dotSize = AppStyle.dp(context, 6);
+      android.graphics.drawable.GradientDrawable dot = new android.graphics.drawable.GradientDrawable();
+      dot.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+      dot.setColor(AppStyle.GOLD);
+      dot.setBounds(0, 0, dotSize, dotSize);
+      setCompoundDrawablesRelative(dot, null, null, null);
+      setCompoundDrawablePadding(AppStyle.dp(context, 7));
+      int horizontal = AppStyle.dp(context, 14), vertical = AppStyle.dp(context, 9);
       setPadding(horizontal, vertical, horizontal, vertical);
-      setBackground(
-          AppStyle.pill(context, AppStyle.withAlpha(AppStyle.CONTROL, .95f), true));
+      android.graphics.drawable.GradientDrawable bg =
+          AppStyle.shape(context, AppStyle.NOTICE_BG, 10f, false);
+      bg.setStroke(Math.max(1, AppStyle.dp(context, .75f)), 0x20ffffff);
+      setBackground(bg);
       setElevation(AppStyle.dp(context, 18));
       setClickable(false);
       setFocusable(false);

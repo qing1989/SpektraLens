@@ -2,8 +2,8 @@
 
 **把一间光谱胶片实验室装进口袋。**
 
-[![版本](https://img.shields.io/badge/version-0.5.6-e0b47a?style=flat-square)](CHANGELOG.md)
-[![下载](https://img.shields.io/badge/download-APK%20v0.5.6-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
+[![版本](https://img.shields.io/badge/version-0.6.0-e0b47a?style=flat-square)](CHANGELOG.md)
+[![下载](https://img.shields.io/badge/download-APK%20v0.6.0-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
 [![平台](https://img.shields.io/badge/Android-10%2B-3ddc84?style=flat-square&logo=android&logoColor=white)](#兼容性)
 [![渲染](https://img.shields.io/badge/Vulkan-GPU%20%2B%20CPU%20%E5%9B%9E%E9%80%80-4a90d9?style=flat-square)](#工作原理)
 [![离线](https://img.shields.io/badge/100%25-%E6%9C%AC%E5%9C%B0%E6%98%BE%E5%BD%B1-8a8a8a?style=flat-square)](#为什么不是滤镜)
@@ -225,10 +225,10 @@ design/           启动图标与视觉设计稿
 - [SAINTTaiYi/SpektraLab-Android](https://github.com/SAINTTaiYi/SpektraLab-Android) — 移动 GPU 移植参考
 - LibRaw — RAW 解码（LGPL-2.1）
 
-程序与界面的 Android 适配层、扫描后处理、胶卷图标绘制代码按 **GPL-3.0-or-later** 发布。胶片与相纸测量数据沿用上游署名与许可（CC BY-SA 4.0），未作修改。
+程序与界面的 Android 适配层、扫描后处理、胶卷图标绘制代码按 **GPL-3.0-or-later** 发布。原始 spektrafilm 胶片与相纸测量数据沿用上游署名与 **CC BY-SA 4.0** 许可（仅作用于 profiles / LUT 本身，用户拍摄与导出的成品照片不受 CC BY-SA 4.0 约束）；SpektraLab 黑白胶片、相纸与 CineStill 800T alias 产品数据原样复制并保留原始 NOTICE。所有上游数据均未作修改。
 
-固定版本、完整署名与第三方许可见 [UPSTREAMS.md](UPSTREAMS.md)、[NOTICE](NOTICE)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+固定版本、完整署名与第三方许可见 [UPSTREAMS.md](UPSTREAMS.md)、[NOTICE](NOTICE)、[CITATION.cff](CITATION.cff)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ---
 
-<sub>SpektraLens 是独立第三方项目，与 Kodak、Fujifilm 及其他商标持有人无隶属关系。胶片与相纸名称仅用于说明所模拟的材料。</sub>
+<sub>SpektraLens 是独立第三方项目，并非 spektrafilm、SpektraLab 或胶片厂商的官方版本，与 Kodak、Fujifilm、Ilford 及其他商标持有人无隶属或联名关系。胶片与相纸名称仅用于说明所模拟的材料。</sub>

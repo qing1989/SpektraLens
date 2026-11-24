@@ -82,21 +82,23 @@ final class SponsorPage extends FrameLayout {
     qrStage = false;
     saveButton = null;
     removeAllViews();
-    setBackgroundColor(0xb8000000);
+    setBackgroundColor(AppStyle.isLight() ? 0x66000000 : 0xb0000000);
     setAccessibilityPaneTitle("赞助开发者");
     setClickable(true);
 
+    FrameLayout sheetWrap = new FrameLayout(activity);
+    sheetWrap.setBackground(AppStyle.shape(activity, AppStyle.SURFACE, AppStyle.R_LARGE, true));
+    sheetWrap.setClipToOutline(true);
     MaxHeightScrollView sheet = new MaxHeightScrollView(activity, dp(620));
     sheet.setFillViewport(false);
-    sheet.setClipToOutline(true);
     sheet.setVerticalScrollBarEnabled(false);
     sheet.setOverScrollMode(View.OVER_SCROLL_NEVER);
-    sheet.setBackground(
-        AppStyle.shape(activity, AppStyle.SURFACE, AppStyle.R_LARGE, false));
 
     LinearLayout content = vertical();
     content.setPadding(dp(22), dp(18), dp(22), dp(28));
     sheet.addView(content, new ScrollView.LayoutParams(-1, -2));
+    sheetWrap.addView(sheet, new FrameLayout.LayoutParams(-1, -2));
+    AppStyle.attachScrollFade(sheetWrap, sheet, AppStyle.SURFACE, 28, 28);
 
     FrameLayout grabberBox = new FrameLayout(activity);
     View grabber = new View(activity);
@@ -120,7 +122,7 @@ final class SponsorPage extends FrameLayout {
 
     LinearLayout facts = vertical();
     facts.setPadding(dp(16), dp(3), dp(16), dp(3));
-    AppStyle.surface(facts, AppStyle.CONTROL, AppStyle.R_MEDIUM, false);
+    AppStyle.surface(facts, AppStyle.CONTROL, AppStyle.R_MEDIUM, true);
     fact(facts, "完全自愿", "不影响功能，也不解锁内容");
     divider(facts);
     fact(facts, "隐私优先", "App 不读取、保存或上传付款信息");
@@ -133,8 +135,8 @@ final class SponsorPage extends FrameLayout {
         text(
             "请仅从 SpektraLens 官方签名的 Release 获取本应用。"
                 + "付款过程完全离线，不依赖网页或 GitHub Pages；实际付款由微信处理。",
-            AppStyle.TYPE_LABEL,
-            AppStyle.VALUE);
+            AppStyle.TYPE_MICRO,
+            AppStyle.MUTED);
     signature.setLineSpacing(dp(4), 1);
     content.addView(signature, new LinearLayout.LayoutParams(-1, -2));
     gap(content, 20);
@@ -158,7 +160,7 @@ final class SponsorPage extends FrameLayout {
             -2,
             Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
     sheetLayout.setMargins(dp(12), 0, dp(12), dp(10));
-    addView(sheet, sheetLayout);
+    addView(sheetWrap, sheetLayout);
   }
 
   private void showQr() {
@@ -176,7 +178,7 @@ final class SponsorPage extends FrameLayout {
     header.setGravity(Gravity.CENTER_VERTICAL);
     header.setPadding(dp(16), dp(8), dp(16), dp(8));
     ImageButton back =
-        AppStyle.iconButton(activity, R.drawable.ic_ui_back, "返回赞助说明", Color.WHITE);
+        AppStyle.iconButton(activity, R.drawable.ic_ui_back, "返回赞助说明", AppStyle.INK);
     back.setOnClickListener(view -> showIntro());
     header.addView(back, new LinearLayout.LayoutParams(dp(44), dp(44)));
 
@@ -186,7 +188,6 @@ final class SponsorPage extends FrameLayout {
     scroll.setFillViewport(true);
     scroll.setClipToPadding(false);
     scroll.setVerticalScrollBarEnabled(false);
-    page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
     FrameLayout centered =
         new FrameLayout(activity) {
@@ -199,6 +200,9 @@ final class SponsorPage extends FrameLayout {
           }
         };
     scroll.addView(centered, new ScrollView.LayoutParams(-1, -2));
+    page.addView(
+        AppStyle.wrapScrollFade(activity, scroll, AppStyle.BG, 32, 28, false),
+        new LinearLayout.LayoutParams(-1, 0, 1));
 
     LinearLayout content = vertical();
     content.setGravity(Gravity.CENTER_HORIZONTAL);

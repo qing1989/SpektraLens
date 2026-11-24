@@ -2,4 +2,5 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <resources>
     <item name="reset_adjustment" type="id" />
+    <item name="haptic_on_click" type="id" />
 </resources>

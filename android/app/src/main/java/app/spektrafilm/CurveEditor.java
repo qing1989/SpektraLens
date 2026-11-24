@@ -67,7 +67,7 @@ final class CurveEditor extends View {
     area.set(20 * d, 12 * d, getWidth() - 20 * d, getHeight() - 24 * d);
     p.setStyle(Paint.Style.FILL);
     p.setColor(AppStyle.FIELD);
-    c.drawRoundRect(area, 14 * d, 14 * d, p);
+    c.drawRoundRect(area, 12 * d, 12 * d, p);
     p.setStrokeWidth(d);
     p.setColor(AppStyle.OUTLINE);
     for (int i = 0; i <= 4; i++) {
@@ -77,7 +77,7 @@ final class CurveEditor extends View {
       c.drawLine(
           area.left, area.top + t * area.height(), area.right, area.top + t * area.height(), p);
     }
-    p.setColor(0xff555555);
+    p.setColor(AppStyle.MUTED);
     c.drawLine(area.left, area.bottom, area.right, area.top, p);
     int n = points.size();
     for (int i = 0; i < n - 1; i++)

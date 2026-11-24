@@ -57,6 +57,9 @@ public final class ExportOptionsTest {
         "Large memory must not upscale");
     check(ExportOptions.safeLongEdge(8192, 6144, 64L * 1024 * 1024) == 0,
         "Impossible memory must not propose an unusable edge");
+    long slideBytes = ExportOptions.estimateBytes(8192, 6144, 11682, 11682);
+    int slideEdge = ExportOptions.safeLongEdge(8192, 6144, available, slideBytes);
+    check(slideEdge >= 1024 && slideEdge < edge, "A square mount must budget its additional pixels");
     long[] original = ExportOptions.estimateJpegBytes(120000, 600, 400, 6000, 4000);
     long[] portrait = ExportOptions.estimateJpegBytes(120000, 400, 600, 4000, 6000);
     check(original != null && original[0] > 0 && original[1] > original[0], "Positive size range");

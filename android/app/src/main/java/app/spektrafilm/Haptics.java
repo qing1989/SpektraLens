@@ -12,6 +12,9 @@ import java.lang.reflect.*;
 
 /** System-defined touch feedback: no custom waveform, amplitude, permission or setting override. */
 final class Haptics implements InvocationHandler {
+  /** App-level switch in Settings; platform-defined feedback stays otherwise untouched. */
+  static boolean enabled = true;
+
   private final Window window;
   private final Window.Callback delegate;
   private final int slop;
@@ -48,6 +51,7 @@ final class Haptics implements InvocationHandler {
   }
 
   private void touch(MotionEvent event) {
+    if (!enabled) return;
     if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
       x = event.getRawX();
       y = event.getRawY();
@@ -58,10 +62,11 @@ final class Haptics implements InvocationHandler {
         target = null;
     } else if (event.getActionMasked() == MotionEvent.ACTION_UP) {
       if (target != null
+          && target.getTag(R.id.haptic_on_click) == null
           && target.isShown()
           && target.isEnabled()
           && event.getEventTime() - down < ViewConfiguration.getLongPressTimeout())
-        target.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+        click(target);
       target = null;
     } else if (event.getActionMasked() == MotionEvent.ACTION_CANCEL || event.getPointerCount() > 1)
       target = null;
@@ -90,6 +95,14 @@ final class Haptics implements InvocationHandler {
             || view instanceof CropEditor
         ? view
         : null;
+  }
+
+  static void click(View view) {
+    if (enabled) view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+  }
+
+  static void longPress(View view) {
+    if (enabled && view != null) view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
   }
 
   static final class DialogBuilder extends AlertDialog.Builder {

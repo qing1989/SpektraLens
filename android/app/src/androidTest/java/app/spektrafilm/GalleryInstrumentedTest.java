@@ -5,6 +5,7 @@ package app.spektrafilm;
 import android.Manifest;
 import android.content.*;
 import android.content.pm.PackageManager;
+import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
 import android.test.ActivityInstrumentationTestCase2;
 import android.view.*;
@@ -282,26 +283,38 @@ public final class GalleryInstrumentedTest extends ActivityInstrumentationTestCa
       assertNotNull(albums);
       assertTrue(albums.isShown());
       assertEquals(1, albums.getAdapter().getCount());
-      View gridView =
-          findByDescription(
-              sheet[0].getWindow().getDecorView(), "照片网格，三列，点击选择或取消选择");
+      GridView gridView = grid(sheet[0].getWindow().getDecorView());
       assertNotNull(gridView);
-      assertEquals("相册列表直接切换网格区域", View.GONE, gridView.getVisibility());
+      View photosPanel = (View) gridView.getParent();
+      View empty = gridView.getEmptyView();
+      assertSame(photosPanel, empty.getParent());
+      assertEquals("相册列表直接切换网格区域", View.GONE, photosPanel.getVisibility());
       View panel = (View) albums.getParent();
+      assertEquals(AppStyle.SURFACE, ((ColorDrawable) panel.getBackground()).getColor());
+      assertEquals(1f, panel.getAlpha(), 0f);
       assertEquals(0f, panel.getElevation(), 0f);
       FrameLayout.LayoutParams panelParams = (FrameLayout.LayoutParams) panel.getLayoutParams();
       assertEquals(0, panelParams.leftMargin);
       assertEquals(0, panelParams.rightMargin);
       assertEquals(0, panelParams.topMargin);
+      getInstrumentation().runOnMainSync(
+          () -> {
+            // Drive the same filter and adapter notification used by a metadata refresh.
+            sheet[0].setPhotosForTest(Collections.emptyList());
+            assertFalse(empty.isShown());
+            sheet[0].setPhotosForTest(photos);
+            assertFalse(gridView.isShown());
+            assertTrue(albums.isShown());
+          });
+      getInstrumentation().waitForIdleSync();
       getInstrumentation()
           .runOnMainSync(
               () ->
                   albums.performItemClick(
                       albums.getChildAt(0), 0, albums.getAdapter().getItemId(0)));
-      Thread.sleep(220);
       getInstrumentation().waitForIdleSync();
       assertFalse(albums.isShown());
-      assertEquals(View.VISIBLE, gridView.getVisibility());
+      assertTrue(gridView.isShown());
       assertNotNull(find(sheet[0].getWindow().getDecorView(), "已导入"));
     } finally {
       getInstrumentation().runOnMainSync(() -> sheet[0].dismiss());

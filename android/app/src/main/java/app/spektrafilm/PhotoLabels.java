@@ -35,7 +35,13 @@ final class PhotoLabels {
             || header.contains("heix")
             || header.contains("hevc")
             || header.contains("hevx")) return "HEIC";
-        if (header.contains("mif1") || header.contains("msf1")) return "HEIF";
+        if (header.contains("heif")
+            || header.contains("heis")
+            || header.contains("heim")
+            || header.contains("hevm")
+            || header.contains("hevs")
+            || header.contains("mif1")
+            || header.contains("msf1")) return "HEIF";
       }
       if (!EXT.matcher(name).find()
           && (header.startsWith("II*\u0000") || header.startsWith("MM\u0000*"))) return "TIFF";

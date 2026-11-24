@@ -54,7 +54,7 @@ final class EditorPhotoStrip extends HorizontalScrollView {
     }
   }
 
-  private static final int MAX_THUMB_DP = 64, MIN_THUMB_DP = 52, GAP_DP = 8, PAD_DP = 14, RADIUS_DP = 14;
+  private static final int MAX_THUMB_DP = 54, MIN_THUMB_DP = 46, GAP_DP = 6, PAD_DP = 12, RADIUS_DP = 7;
   private static final int CACHE_BYTES = 12 * 1024 * 1024;
   private static final int PRELOAD_RADIUS = 4;
 
@@ -91,12 +91,11 @@ final class EditorPhotoStrip extends HorizontalScrollView {
     super(context);
     this.context = context;
     this.listener = listener;
-    setHorizontalScrollBarEnabled(false);
-    setVerticalScrollBarEnabled(false);
+    AppStyle.hideScrollBars(this);
     setOverScrollMode(OVER_SCROLL_NEVER);
     setFillViewport(false);
     setClipToPadding(false);
-    setPadding(dp(PAD_DP), dp(9), dp(PAD_DP), dp(9));
+    setPadding(dp(PAD_DP), dp(6), dp(PAD_DP), dp(4));
     row = new LinearLayout(context);
     row.setOrientation(LinearLayout.HORIZONTAL);
     row.setGravity(Gravity.CENTER_VERTICAL);
@@ -256,18 +255,18 @@ final class EditorPhotoStrip extends HorizontalScrollView {
   }
 
   private void style(Thumb thumb, boolean selected) {
-    int stroke = dp(selected ? 2 : 1.5f);
+    int stroke = dp(selected ? 1.75f : 0f);
     GradientDrawable border = AppStyle.shape(context, Color.TRANSPARENT, RADIUS_DP, false);
-    border.setStroke(stroke, selected ? AppStyle.GOLD : 0xdcffffff);
-    // The photo is inset by 2dp. Keep the border's inner edge on that same 2dp ring so both
-    // white and gold borders sit outside the photo; selected gold no longer overlays the image.
+    if (selected) border.setStroke(stroke, AppStyle.GOLD);
+    // Keep the selected accent ring outside the inset image; unselected tiles stay borderless.
     int ring = dp(2);
-    int offset = ring - Math.round(stroke / 2f);
+    int offset = selected ? Math.max(0, ring - Math.round(stroke / 2f)) : 0;
     LayerDrawable inset = new LayerDrawable(new android.graphics.drawable.Drawable[] {border});
     inset.setLayerInset(0, offset, offset, offset, offset);
     GradientDrawable mask = AppStyle.shape(context, Color.WHITE, RADIUS_DP, false);
     thumb.view.setForeground(
-        new RippleDrawable(ColorStateList.valueOf(0x24ffffff), inset, mask));
+        new RippleDrawable(
+            ColorStateList.valueOf(AppStyle.RIPPLE), selected ? inset : null, mask));
     thumb.view.setSelected(selected);
     thumb.view.setContentDescription(
         selected ? "当前照片，" + thumb.photo.label : "切换到 " + thumb.photo.label);

@@ -50,14 +50,14 @@ final class UpdateBadge extends FrameLayout {
     badge = new TextView(getContext());
     badge.setText(label);
     badge.setTextSize(AppStyle.TYPE_MICRO);
-    badge.setTextColor(AppStyle.ON_PRIMARY);
+    badge.setTextColor(AppStyle.ON_ACCENT);
     AppStyle.setTypeface(badge, AppStyle.FONT_SEMIBOLD);
     badge.setIncludeFontPadding(false);
     badge.setSingleLine(true);
     badge.setGravity(Gravity.CENTER);
     badge.setPadding(dp(7), dp(3), dp(7), dp(3));
     GradientDrawable fill =
-        AppStyle.pill(getContext(), AppStyle.GOLD, false);
+        AppStyle.shape(getContext(), AppStyle.GOLD, 6f, false);
     fill.setStroke(dp(2), AppStyle.BG);
     badge.setBackground(fill);
     badge.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);

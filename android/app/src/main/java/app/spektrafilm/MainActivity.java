@@ -29,29 +29,28 @@ import java.util.concurrent.*;
 import org.json.*;
 
 public final class MainActivity extends Activity {
-  static final int BG = AppStyle.BG,
+  static int BG = AppStyle.BG,
       INK = AppStyle.INK,
       MUTED = AppStyle.MUTED,
       GOLD = AppStyle.GOLD,
       LINE = AppStyle.OUTLINE,
-      DISABLED_ICON = 0xff555555;
+      DISABLED_ICON = AppStyle.DISABLED;
   /** 面板下沿的渐隐高度（dp）：提示「下面还有」，滚到底就淡出。 */
   static final int FADE_ROW_DP = 24;
-  /** 面板的最大高度（dp）。预览区按这个值预留，所以它也决定照片能有多大。 */
+  /** 面板的最大高度（dp）：有缩略图条时 320dp；隐藏缩略图条时顺势拉高至 376dp。 */
   static final int PANEL_MAX_DP = 320;
-  private static final ColorStateList ICON_TINT =
-      new ColorStateList(
-          new int[][] {new int[] {-android.R.attr.state_enabled}, new int[] {}},
-          new int[] {DISABLED_ICON, Color.WHITE});
-  private static final ColorStateList COMPARE_TINT =
-      new ColorStateList(
-          new int[][] {
-            new int[] {-android.R.attr.state_enabled},
-            new int[] {android.R.attr.state_selected},
-            new int[] {}
-          },
-          new int[] {DISABLED_ICON, GOLD, Color.WHITE});
-  private static final long PANEL_MOTION_MS = 200, TOOL_MOTION_MS = 140;
+  static final int PANEL_MAX_EXPANDED_DP = 376;
+  private static final int EDITOR_STRIP_DP = 64;
+  private static final long PANEL_MOTION_MS = 135, TOOL_MOTION_MS = 100;
+
+  private static void syncStyleAliases() {
+    BG = AppStyle.BG;
+    INK = AppStyle.INK;
+    MUTED = AppStyle.MUTED;
+    GOLD = AppStyle.GOLD;
+    LINE = AppStyle.OUTLINE;
+    DISABLED_ICON = AppStyle.DISABLED;
+  }
   private static final int MAX_BATCH_IMPORT = 20;
   private static final int REQUEST_IMPORT_FILES = 42;
   private static final PathInterpolator EDITOR_EASING = new PathInterpolator(.2f, 0f, 0f, 1f);
@@ -62,9 +61,43 @@ public final class MainActivity extends Activity {
   private static final String LIGHT_LEAK_SEED = "light_leak_seed";
   private static final String LIGHT_LEAK_MODE = "light_leak_mode";
   private static final String FIRST_ROLL_LEAK = "first_roll";
-  private static final int LIGHT_LEAK_START_AMOUNT = 25;
+  private static final int LIGHT_LEAK_START_AMOUNT = 50;
   private UpdateController updates;
-  private UpdateBadge homeAbout;
+  private final Set<String> favoriteFilms = new LinkedHashSet<>();
+  private final Map<String, ImageView> filmBadges = new HashMap<>();
+  private final Map<String, FrameLayout> filmFrames = new HashMap<>();
+  private String favoriteMenuId;
+  private View favoriteMenuOverlay;
+  private enum HomeTab {
+    HOME,
+    LIGHT_TABLE,
+    SETTINGS
+  }
+
+  private static final class NavTabSlot {
+    final LinearLayout container;
+    final ImageView icon;
+    final TextView label;
+
+    NavTabSlot(LinearLayout container, ImageView icon, TextView label) {
+      this.container = container;
+      this.icon = icon;
+      this.label = label;
+    }
+  }
+
+  private SettingsPage settingsPage;
+  private LightTablePage lightTablePage;
+  private ScrollView homeScroll;
+  private FrameLayout homeScrollWrap;
+  private FrameLayout homeTabHost;
+  private FrameLayout homeNav;
+  private View homeNavIndicator;
+  private int homeNavSlotWidth;
+  private View settingsNavDot;
+  private final NavTabSlot[] homeNavSlots = new NavTabSlot[HomeTab.values().length];
+  private HomeTab activeHomeTab = HomeTab.HOME;
+  private boolean homeNavSuppressedByTab;
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService exportIo =
       Executors.newFixedThreadPool(
@@ -100,13 +133,13 @@ public final class MainActivity extends Activity {
   private JSONObject settings = new JSONObject();
   private SharedPreferences prefs;
   private LinearLayout root, editor, header, editorBody, previewColumn, toolsColumn;
-  private FrameLayout statusRow;
+  private LinearLayout statusRow;
   private FrameLayout photoStage;
   private EditorPhotoStrip editorStrip;
   private OnBackInvokedCallback backCallback;
   private boolean curveHintShown;
   private ScrollView panelScroll;
-  private View panelFade;
+  private View panelFade, panelTopFade;
   /** 预览区与工具列之间的弹性间隔：把工具列（面板 + 导航）推到底，贴住屏幕下沿。 */
   private View panelSpacer;
   private TextView status,
@@ -117,7 +150,7 @@ public final class MainActivity extends Activity {
       fileLabel,
       exportButton;
   private PhotoView photo;
-  private ProgressBar progress;
+  private View progress;
   private Bitmap source, developed, compared;
   private File sourceFile;
   private JSONObject sourceMetadata = new JSONObject();
@@ -183,10 +216,14 @@ public final class MainActivity extends Activity {
   private AboutPage aboutPage;
   private SponsorPage sponsorPage;
   private LinearLayout homeScreen, editorScreen, panel, tabRow, filmCards, historyList;
-  private FrameLayout homeStage;
-  private LinearLayout homeContent;
+  private FrameLayout homeStage, homeHeroBox;
+  private FrameLayout homeEmptyImportHost, homePopulatedImportHost;
+  private LinearLayout homeContent, homeTopActions, homeEmptyWelcome, homePopulatedSection;
+  private LinearLayout homeFilterBar, homeSelectionHeader;
   private ImageView homeHero;
-  private TextView homeImportCancel;
+  private TextView homeLogo, homeSlogan, homeTopImportButton;
+  private TextView homeFilterAll, homeFilterFavorites;
+  private TextView homeImportCancel, homePrivacyView;
   private ImportButtonLayout homeImportSlot;
   private ImportProgressDrawable homeImportProgress;
   private HomePhotoImages homeImages;
@@ -196,6 +233,10 @@ public final class MainActivity extends Activity {
   private LinearLayout manageHeaderActions;
   private final LinkedHashSet<String> manageSelection = new LinkedHashSet<>();
   private boolean manageMode;
+  private boolean homeFavoritesOnly;
+  private boolean homeImportProgressVisible;
+  private boolean importStartedFromEmpty;
+  private ValueAnimator homeImportHostAnimator;
   private FrameLayout batchPasteShell;
   private final Map<String, BatchCardViews> batchCardViews = new HashMap<>();
   private GallerySheet gallerySheet;
@@ -212,7 +253,9 @@ public final class MainActivity extends Activity {
   private String editorPhotoId = "";
   private final ArrayDeque<String> undoStack = new ArrayDeque<>(), redoStack = new ArrayDeque<>();
   private String committed;
-  private ImageButton undoButton, redoButton, compareButton;
+  private ImageButton undoButton, redoButton, cropButton, compareButton;
+  private View cropActiveDot;
+  private CropPage cropPage;
   private TextView resetButton;
   private TextView recentCount;
   /** 上一次渲染历史列表时的内容指纹，用来跳过无意义的重建。 */
@@ -228,16 +271,53 @@ public final class MainActivity extends Activity {
   private static final class Frame {
     String id, name, path, params;
     boolean favorite;
-    long sourceTimestamp, importedAt;
+    long sourceTimestamp, importedAt, lastSavedAt;
     String sourceMediaId = "";
     boolean edited;
+    String formatLabel = "";
+    long fileSize = -1;
+    private String cachedStockParams;
+    private String cachedStockId = "";
 
     Frame(String i, String n, String p, String s) {
       id = i;
       name = n;
       path = p;
       params = s;
-      importedAt = System.currentTimeMillis();
+    }
+
+    long recentTimestamp() {
+      return Math.max(importedAt, lastSavedAt);
+    }
+
+    String filmStockId() {
+      if (params == null || params.isEmpty()) return "";
+      if (params.equals(cachedStockParams)) return cachedStockId;
+      cachedStockParams = params;
+      try {
+        cachedStockId = new JSONObject(params).optString("film_stock", "");
+      } catch (Exception ignored) {
+        cachedStockId = "";
+      }
+      return cachedStockId;
+    }
+
+    boolean hasCachedMetadata() {
+      return formatLabel != null && !formatLabel.isEmpty() && fileSize >= 0;
+    }
+
+    String formatLabel() {
+      if (formatLabel == null || formatLabel.isEmpty()) {
+        formatLabel = PhotoLabels.format(new File(path), name);
+      }
+      return formatLabel;
+    }
+
+    long fileSizeBytes() {
+      if (fileSize < 0) {
+        fileSize = new File(path).length();
+      }
+      return fileSize;
     }
   }
 
@@ -260,31 +340,43 @@ public final class MainActivity extends Activity {
 
   private static final class BatchCardViews {
     final View photoBox, scrim;
+    final GradientDrawable cardBg;
     final ImageView check;
     final FrameLayout.LayoutParams favoriteParams;
 
     BatchCardViews(
         View photoBox,
         View scrim,
+        GradientDrawable cardBg,
         FrameLayout.LayoutParams favoriteParams,
         ImageView check) {
       this.photoBox = photoBox;
       this.scrim = scrim;
+      this.cardBg = cardBg;
       this.favoriteParams = favoriteParams;
       this.check = check;
     }
   }
 
   private static final class PendingImport {
-    final String id, name, path;
-    final long sourceTimestamp, mediaId;
+    final String id, name, path, formatLabel;
+    final long sourceTimestamp, mediaId, fileSize;
 
-    PendingImport(String id, String name, String path, long sourceTimestamp, long mediaId) {
+    PendingImport(
+        String id,
+        String name,
+        String path,
+        long sourceTimestamp,
+        long mediaId,
+        String formatLabel,
+        long fileSize) {
       this.id = id;
       this.name = name;
       this.path = path;
       this.sourceTimestamp = sourceTimestamp;
       this.mediaId = mediaId;
+      this.formatLabel = formatLabel;
+      this.fileSize = fileSize;
     }
   }
 
@@ -311,6 +403,10 @@ public final class MainActivity extends Activity {
     thumbnailIo.execute(filmDiskCache::sweepPending);
     updates = new UpdateController(this);
     prefs = getSharedPreferences("darkroom", MODE_PRIVATE);
+    AppStyle.loadTheme(this);
+    syncStyleAliases();
+    Haptics.enabled = prefs.getBoolean("haptics_enabled", true);
+    loadFavoriteFilms();
     try {
       settings = new JSONObject(prefs.getString("settings", "{}"));
       loadCatalog();
@@ -321,6 +417,7 @@ public final class MainActivity extends Activity {
     committed = settings.toString();
     loadLibrary();
     buildUI();
+    AppStyle.applyWindowTheme(this);
     updates.setAvailabilityListener(this::refreshUpdateNotice);
     installBackHandler();
     updateStockLabels();
@@ -625,6 +722,12 @@ public final class MainActivity extends Activity {
       }
       if (k.equals("print_stock")
           && !FilmStockPolicy.canPrint(settings.optString("film_stock"), String.valueOf(v))) return;
+      if ((k.startsWith("grade_") || k.startsWith("curve_") || k.startsWith("balance_")
+              || k.startsWith("hsl_"))
+          && !k.equals("grade_enabled")
+          && !settings.optBoolean("grade_enabled", true)) {
+        settings.put("grade_enabled", true);
+      }
       settings.put(k, v);
       if (k.equals("film_stock") || k.equals("print_stock")) normalizePaper();
     } catch (JSONException ex) {
@@ -685,8 +788,8 @@ public final class MainActivity extends Activity {
   }
 
   private ImageButton iconButton(int drawable, String description, Runnable action) {
-    ImageButton v = AppStyle.iconButton(this, drawable, description, Color.WHITE);
-    v.setImageTintList(ICON_TINT);
+    ImageButton v = AppStyle.iconButton(this, drawable, description, AppStyle.INK);
+    v.setImageTintList(AppStyle.iconTint());
     v.setOnClickListener(view -> action.run());
     return v;
   }
@@ -752,6 +855,7 @@ public final class MainActivity extends Activity {
                 insets.getSystemWindowInsetBottom());
           return insets;
         });
+    root.requestApplyInsets();
     screens = new FrameLayout(this);
     add(root, screens, -1, -1);
     screens.addOnLayoutChangeListener(
@@ -809,28 +913,33 @@ public final class MainActivity extends Activity {
     photo = new PhotoView(this);
     photo.setOnClickListener(v -> togglePanelFromPreview());
     photoStage.addView(photo, new FrameLayout.LayoutParams(-1, -1));
-    statusRow = new FrameLayout(this);
-    statusRow.setMinimumWidth(dp(120));
-    progress = new ProgressBar(this);
-    FrameLayout.LayoutParams progressParams =
-        new FrameLayout.LayoutParams(dp(12), dp(12), Gravity.START | Gravity.CENTER_VERTICAL);
-    progressParams.leftMargin = dp(14);
+    statusRow = horizontal();
+    statusRow.setGravity(Gravity.CENTER);
+    statusRow.setPadding(dp(12), 0, dp(12), 0);
+    progress = new View(this);
+    GradientDrawable dotBg = new GradientDrawable();
+    dotBg.setShape(GradientDrawable.OVAL);
+    dotBg.setColor(AppStyle.GOLD);
+    progress.setBackground(dotBg);
+    LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(dp(6), dp(6));
+    progressParams.rightMargin = dp(6);
     statusRow.addView(progress, progressParams);
-    status = text("准备中", AppStyle.TYPE_MICRO, INK);
+    status = text("准备中", AppStyle.TYPE_MICRO, AppStyle.NOTICE_INK);
     AppStyle.setNumericTypeface(status);
+    AppStyle.setTypeface(status, AppStyle.FONT_MEDIUM);
     status.setGravity(Gravity.CENTER);
     status.setSingleLine(true);
     status.setEllipsize(android.text.TextUtils.TruncateAt.END);
-    status.setPadding(dp(34), 0, dp(34), 0);
-    status.setMaxWidth(dp(280));
+    status.setMaxWidth(dp(248));
     status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-    statusRow.addView(status, new FrameLayout.LayoutParams(-2, dp(30), Gravity.CENTER));
-    statusRow.setBackground(
-        AppStyle.pill(this, AppStyle.withAlpha(AppStyle.SURFACE, .80f), false));
+    statusRow.addView(status, new LinearLayout.LayoutParams(-2, -2));
+    GradientDrawable statusBg = AppStyle.shape(this, AppStyle.NOTICE_BG, AppStyle.R_SMALL, false);
+    statusBg.setStroke(Math.max(1, dp(.75f)), 0x20ffffff);
+    statusRow.setBackground(statusBg);
     statusRow.setClipToOutline(true);
     FrameLayout.LayoutParams feedback =
-        new FrameLayout.LayoutParams(-2, dp(30), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-    feedback.setMargins(dp(12), 0, dp(12), dp(20));
+        new FrameLayout.LayoutParams(-2, dp(26), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+    feedback.setMargins(dp(12), 0, dp(12), dp(16));
     photoStage.addView(statusRow, feedback);
     statusRow.setVisibility(View.GONE);
     editorStrip =
@@ -841,7 +950,7 @@ public final class MainActivity extends Activity {
               Frame target = findFrame(id);
               if (target != null && !target.id.equals(activeId)) openFrame(target, null, true);
             });
-    previewColumn.addView(editorStrip, new LinearLayout.LayoutParams(-1, dp(82)));
+    previewColumn.addView(editorStrip, new LinearLayout.LayoutParams(-1, dp(64)));
     editorStrip.setVisibility(View.GONE);
     FrameLayout meta = new FrameLayout(this);
     meta.setPadding(dp(12), 0, dp(12), 0);
@@ -863,36 +972,51 @@ public final class MainActivity extends Activity {
     meta.addView(
         historyActions,
         new FrameLayout.LayoutParams(-2, dp(40), Gravity.START | Gravity.CENTER_VERTICAL));
-    resetButton = button("重置", Color.WHITE, BG);
+    resetButton = button("重置", AppStyle.INK, BG);
     resetButton.setTextSize(AppStyle.TYPE_LABEL);
     resetButton.setMinHeight(0);
-    resetButton.setMinWidth(dp(76));
-    resetButton.setPadding(dp(20), 0, dp(20), 0);
+    resetButton.setMinWidth(dp(72));
+    resetButton.setPadding(dp(18), 0, dp(18), 0);
     resetButton.setBackground(
         new android.graphics.drawable.RippleDrawable(
-            ColorStateList.valueOf(0x24ffffff),
-            AppStyle.pill(this, Color.TRANSPARENT, true),
-            AppStyle.pill(this, Color.WHITE, false)));
+            ColorStateList.valueOf(AppStyle.RIPPLE),
+            AppStyle.shape(this, Color.TRANSPARENT, AppStyle.R_SMALL, true),
+            AppStyle.shape(this, Color.WHITE, AppStyle.R_SMALL, false)));
     resetButton.setTextColor(
         new ColorStateList(
             new int[][] {new int[] {-android.R.attr.state_enabled}, new int[] {}},
-            new int[] {0xff555555, Color.WHITE}));
+            new int[] {AppStyle.DISABLED, AppStyle.INK}));
+    AppStyle.setTypeface(resetButton, AppStyle.FONT_SEMIBOLD);
     resetButton.setContentDescription("重置显影参数");
     resetButton.setOnClickListener(
         v -> {
           if (editorHasChanges()) reset();
         });
     resetButton.setVisibility(View.GONE);
+    // Strictly centered on the 50% screen axis regardless of flanking button widths.
     meta.addView(
-        resetButton, new FrameLayout.LayoutParams(-2, dp(34), Gravity.CENTER));
+        resetButton, new FrameLayout.LayoutParams(-2, dp(32), Gravity.CENTER));
     LinearLayout viewActions = horizontal();
     viewActions.setGravity(Gravity.CENTER_VERTICAL);
-    ImageButton fitButton =
-        iconButton(R.drawable.ic_editor_fit, "适应画面", () -> photo.resetZoom());
-    // 裁切尚未支持，先隐藏这个容易被理解为裁切入口的图标；双击预览仍可复位缩放。
-    fitButton.setVisibility(View.GONE);
-    controls.add(fitButton);
-    viewActions.addView(fitButton, new LinearLayout.LayoutParams(dp(40), dp(40)));
+    FrameLayout cropSlot = new FrameLayout(this);
+    cropButton = iconButton(R.drawable.ic_editor_crop, "裁切", this::openCropPage);
+    cropButton.setTag("editor.crop");
+    cropButton.setImageTintList(AppStyle.accentToggleTint());
+    controls.add(cropButton);
+    cropSlot.addView(cropButton, new FrameLayout.LayoutParams(-1, -1));
+    cropActiveDot = new View(this);
+    GradientDrawable cropDotBg = new GradientDrawable();
+    cropDotBg.setShape(GradientDrawable.OVAL);
+    cropDotBg.setColor(AppStyle.GOLD);
+    cropActiveDot.setBackground(cropDotBg);
+    cropActiveDot.setVisibility(View.GONE);
+    cropActiveDot.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    FrameLayout.LayoutParams cropDotParams =
+        new FrameLayout.LayoutParams(dp(5), dp(5), Gravity.TOP | Gravity.END);
+    cropDotParams.topMargin = dp(6);
+    cropDotParams.rightMargin = dp(6);
+    cropSlot.addView(cropActiveDot, cropDotParams);
+    viewActions.addView(cropSlot, new LinearLayout.LayoutParams(dp(40), dp(40)));
     compareButton =
         iconButton(
             R.drawable.ic_editor_compare,
@@ -901,7 +1025,7 @@ public final class MainActivity extends Activity {
               comparing = !comparing;
               updateComparison();
             });
-    compareButton.setImageTintList(COMPARE_TINT);
+    compareButton.setImageTintList(AppStyle.accentToggleTint());
     controls.add(compareButton);
     LinearLayout.LayoutParams compareParams = new LinearLayout.LayoutParams(dp(40), dp(40));
     compareParams.leftMargin = dp(6);
@@ -914,18 +1038,18 @@ public final class MainActivity extends Activity {
     metaLayout.bottomMargin = dp(12);
     previewColumn.addView(meta, metaLayout);
     tabRow = horizontal();
-    tabRow.setPadding(dp(5), dp(4), dp(5), dp(4));
-    tabRow.setBackground(AppStyle.pill(this, AppStyle.SURFACE, false));
+    tabRow.setPadding(dp(4), dp(4), dp(4), dp(4));
+    tabRow.setBackground(AppStyle.shape(this, AppStyle.EDITOR_TABS_BG, 14f, true));
     tabRow.setClipToOutline(true);
     panel = vertical();
-    AppStyle.surface(panel, AppStyle.SURFACE, AppStyle.R_LARGE, false);
+    AppStyle.surface(panel, AppStyle.SURFACE, AppStyle.R_PANEL, true);
     panel.setElevation(0);
     LinearLayout.LayoutParams panelLayout = new LinearLayout.LayoutParams(-1, dp(panelHeight()));
     panelLayout.setMargins(dp(12), dp(4), dp(12), 0);
     toolsColumn.addView(panel, panelLayout);
     buildPanel();
-    LinearLayout.LayoutParams navigation = new LinearLayout.LayoutParams(-1, dp(58));
-    navigation.setMargins(dp(12), dp(10), dp(12), dp(10));
+    LinearLayout.LayoutParams navigation = new LinearLayout.LayoutParams(-1, dp(52));
+    navigation.setMargins(dp(12), dp(9), dp(12), dp(14));
     toolsColumn.addView(tabRow, navigation);
     updateEditorLayout();
     buildHome();
@@ -938,35 +1062,36 @@ public final class MainActivity extends Activity {
     return configuration.screenWidthDp >= 600 && configuration.screenHeightDp < 500;
   }
 
-  private boolean narrowControls() {
-    int width = getResources().getConfiguration().screenWidthDp;
-    if (wideEditor()) width = Math.round(width / 2.1f);
-    return width < 360;
-  }
+  private boolean updatingEditorLayout;
 
   private void updateEditorLayout() {
     if (editorBody == null || panel == null) return;
-    cancelPanelAnimation();
-    finishToolAnimations();
-    panel.setAlpha(1f);
-    panel.setTranslationY(0f);
-    fixPanelContentHeight(false);
-    boolean wide = wideEditor() && !panelCollapsed;
-    editorBody.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
-    panelSpacer.setVisibility(wide ? View.GONE : View.VISIBLE);
-    panel.setVisibility(panelCollapsed ? View.GONE : View.VISIBLE);
-    if (wide) {
-      // 横屏平板：预览和工具列左右分栏，各占一份权重。
-      previewColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1.1f));
-      toolsColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1));
-    } else {
-      // 收起时横屏也切为上下布局：照片使用全宽，导航仍在底部。
-      previewColumn.setLayoutParams(new LinearLayout.LayoutParams(-1, previewHeightPx()));
-      toolsColumn.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+    updatingEditorLayout = true;
+    try {
+      cancelPanelAnimation();
+      finishToolAnimations();
+      panel.setAlpha(1f);
+      panel.setTranslationY(0f);
+      fixPanelContentHeight(false);
+      boolean wide = wideEditor() && !panelCollapsed;
+      editorBody.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+      panelSpacer.setVisibility(wide ? View.GONE : View.VISIBLE);
+      panel.setVisibility(panelCollapsed ? View.GONE : View.VISIBLE);
+      if (wide) {
+        // 横屏平板：预览和工具列左右分栏，各占一份权重。
+        previewColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1.1f));
+        toolsColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1));
+      } else {
+        // 收起时横屏也切为上下布局：照片使用全宽，导航仍在底部。
+        previewColumn.setLayoutParams(new LinearLayout.LayoutParams(-1, previewHeightPx()));
+        toolsColumn.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+      }
+      updatePanelHeight();
+      refreshEditorStrip(false);
+      updatePhotoStageHeight();
+    } finally {
+      updatingEditorLayout = false;
     }
-    updatePanelHeight();
-    refreshEditorStrip(false);
-    updatePhotoStageHeight();
   }
 
   /** 只取消时间轴，保留当前帧尺寸和透明度，供快速反向点击接着播放。 */
@@ -1017,11 +1142,28 @@ public final class MainActivity extends Activity {
     fixPanelContentHeight(true);
     panel.setVisibility(View.VISIBLE);
     layout.weight = 0;
+    final LinearLayout.LayoutParams stageParams =
+        photoStage != null ? (LinearLayout.LayoutParams) photoStage.getLayoutParams() : null;
+    final boolean animateStageFixed = stageParams != null && stageParams.weight == 0;
+    final int fromStageH = animateStageFixed ? photoStage.getHeight() : 0;
+    final int strip = editorStrip != null && editorStrip.getVisibility() == View.VISIBLE ? dp(64) : 0;
+    final int toPreviewH = Math.max(0, editorBody.getHeight() - dp(52) - dp(23) - toHeight - toMargin);
+    final int toStageAvail = Math.max(0, toPreviewH - strip - dp(40) - dp(12));
+    int targetStageH = toStageAvail;
+    if (animateStageFixed && !panelCollapsed && strip > 0 && fullWidth > 0 && fullHeight > 0) {
+      int width = previewColumn.getWidth();
+      if (width <= 0) width = getResources().getDisplayMetrics().widthPixels;
+      float pad = dp(PhotoView.framePadDp());
+      float imageWidth = Math.max(1, width - pad * 2);
+      int desired = Math.round(imageWidth * fullHeight / (float) fullWidth + pad * 2);
+      targetStageH = Math.min(toStageAvail, Math.max(dp(120), desired));
+    }
+    final int toStageH = targetStageH;
     ValueAnimator animation = ValueAnimator.ofFloat(0f, 1f);
     panelAnimator = animation;
-    // 反向接续只走剩余路程，不再让短短几像素花满 200ms。
+    // 反向接续只走剩余路程，不再让短短几像素花满整段时长。
     animation.setDuration(
-        Math.max(80, PANEL_MOTION_MS * Math.abs(toHeight - fromHeight) / dp(panelHeight())));
+        Math.max(55, PANEL_MOTION_MS * Math.abs(toHeight - fromHeight) / dp(panelHeight())));
     animation.setInterpolator(EDITOR_EASING);
     animation.addUpdateListener(
         value -> {
@@ -1033,9 +1175,13 @@ public final class MainActivity extends Activity {
               (LinearLayout.LayoutParams) previewColumn.getLayoutParams();
           // 共用一次空间预算，连 4dp 顶距也一起收放，底部导航不会上下浮动。
           preview.height =
-              Math.max(0, editorBody.getHeight() - dp(58) - dp(20)
+              Math.max(0, editorBody.getHeight() - dp(52) - dp(23)
                   - layout.height - layout.topMargin);
           previewColumn.setLayoutParams(preview);
+          if (animateStageFixed) {
+            stageParams.height = Math.round(fromStageH + (toStageH - fromStageH) * fraction);
+            photoStage.setLayoutParams(stageParams);
+          }
           panel.setAlpha(fromAlpha + (toAlpha - fromAlpha) * fraction);
           panel.setTranslationY(fromShift + (toShift - fromShift) * fraction);
         });
@@ -1095,7 +1241,7 @@ public final class MainActivity extends Activity {
    */
   private int previewHeightPx() {
     if (editorBody == null || editorBody.getHeight() <= 0) return 0;
-    int tools = dp(58) + dp(20);
+    int tools = dp(52) + dp(23);
     if (!panelCollapsed) tools += dp(4) + dp(panelMaxHeight());
     // 不设下限：极小窗口（分屏、悬浮窗）里面板本身已经按 panelLimit 缩过，再把这里垫高
     // 会把工具列顶出编辑区。宁可让照片区先让位——这和之前 weight=1 时的行为一致。
@@ -1109,20 +1255,40 @@ public final class MainActivity extends Activity {
         : getResources().getConfiguration().screenHeightDp;
   }
 
-  /** 面板的绝对上限（dp）：屏高扣掉顶栏、状态条、工具行、导航，照片只剩 92dp 的极端值。 */
+  /** 判断当前是否应展示大图下方的横向照片缩略图条（按带条时的预算判高，避免与面板拉高产生循环依赖）。 */
+  private boolean shouldShowEditorStrip() {
+    if (!prefs.getBoolean(
+        SettingsPage.PREF_SHOW_EDITOR_STRIP, SettingsPage.DEFAULT_SHOW_EDITOR_STRIP))
+      return false;
+    if (library.size() <= 1 || findFrame(activeId) == null) return false;
+    if (editorBody == null || editorBody.getHeight() <= 0) return true;
+    int tools = dp(52) + dp(23);
+    if (!panelCollapsed) tools += dp(4) + dp(panelMaxHeightForStrip(true));
+    return Math.max(0, editorBody.getHeight() - tools) >= dp(226);
+  }
+
+  private int panelLimitForStrip(boolean withStrip) {
+    // 带缩略图条时预留 366dp（含缩略图条与照片保底高度）；无缩略图条时释放 64dp 给调节面板。
+    return Math.max(96, editorHeightDp() - (withStrip ? 366 : 366 - EDITOR_STRIP_DP));
+  }
+
+  private int panelMaxHeightForStrip(boolean withStrip) {
+    return Math.min(withStrip ? PANEL_MAX_DP : PANEL_MAX_EXPANDED_DP, panelLimitForStrip(withStrip));
+  }
+
+  /** 面板的绝对上限（dp）：屏高扣掉顶栏、状态条、工具行、导航（及可见缩略图条），保底照片高度。 */
   private int panelLimit() {
-    // 额外预留 72dp 给大图下方的最近照片缩略图条；极小窗口仍保证照片至少约 92dp。
-    return Math.max(96, editorHeightDp() - 366);
+    return panelLimitForStrip(shouldShowEditorStrip());
   }
 
   /**
-   * 面板的最大高度（dp）：320，但不超过屏幕能给的绝对上限。
+   * 面板的最大高度（dp）：有缩略图条时 320dp、无缩略图条时 376dp，均不超过屏幕能给的绝对上限。
    *
-   * <p>这个值同时决定预览区能有多大（见 {@link #previewHeightPx()}），所以它一变，照片就
-   * 跟着变——它只跟屏幕有关，不跟页面内容有关。
+   * <p>这个值同时决定预览区能有多大（见 {@link #previewHeightPx()}），只与屏幕和缩略图条显示与否有关，
+   * 不随 9 个调节页的内容跳动。
    */
   private int panelMaxHeight() {
-    return Math.min(PANEL_MAX_DP, panelLimit());
+    return panelMaxHeightForStrip(shouldShowEditorStrip());
   }
 
   /**
@@ -1136,12 +1302,11 @@ public final class MainActivity extends Activity {
   }
 
   /**
-   * 曲线页的图表高度（dp）：面板预算扣掉图表以外的行，剩下的全给图表。
-   * 曲线页正文 = 顶部内边距 10 + 分类 38 + 间距 8 + 启用开关 46 + 通道行 36 + 图表
-   * + 底部内边距 10，图表 = 320 − 150 − 2 = 168（2dp 是逐项 dp→px 取整的余量）。
+   * 曲线页的图表高度（dp）：面板预算扣掉顶/底内边距 30 + 子页签 30 + 间距 16 + 通道行 36 + 间距 12
+   * 及取整余量，有/无缩略图条时图表都能完整落在可视区内不滚动。
    */
   private int curveChartHeight() {
-    return Math.min(215, Math.max(150, panelMaxHeight() - 150));
+    return Math.min(240, Math.max(150, panelMaxHeight() - 134));
   }
 
   /**
@@ -1181,6 +1346,12 @@ public final class MainActivity extends Activity {
   private void updatePanelFade() {
     if (panelFade == null || panelScroll == null) return;
     panelFade.setAlpha(panelScroll.canScrollVertically(1) ? 1f : 0f);
+    if (panelTopFade != null) {
+      int sy = panelScroll.getScrollY();
+      float t = sy <= 0 ? 0f : Math.min(1f, sy / (float) Math.max(1, dp(32)));
+      float topAlpha = t * t * (3f - 2f * t);
+      if (Math.abs(panelTopFade.getAlpha() - topAlpha) > .008f) panelTopFade.setAlpha(topAlpha);
+    }
   }
 
   private void updatePanelHeight() {
@@ -1197,100 +1368,201 @@ public final class MainActivity extends Activity {
 
   private void buildHome() {
     if (homeImages != null) homeImages.close();
+    detachLightTable();
+    settingsPage = null;
+    activeHomeTab = HomeTab.HOME;
+    homeNavSuppressedByTab = false;
     if (homeScreen != null) screens.removeView(homeScreen);
     homeScreen = vertical();
     screens.addView(homeScreen, new FrameLayout.LayoutParams(-1, -1));
     homeStage = new FrameLayout(this);
     homeScreen.addView(homeStage, new LinearLayout.LayoutParams(-1, 0, 1));
-    ScrollView scroll = new ScrollView(this);
-    homeStage.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+    ScrollView scroll = homeScroll = new ScrollView(this);
+    scroll.setFillViewport(true);
+    scroll.setVerticalScrollBarEnabled(false);
+    LinearLayout content = homeContent = vertical();
+    content.setPadding(dp(18), dp(18), dp(18), dp(96));
+    scroll.addView(content);
+    homeScrollWrap = AppStyle.wrapScrollFade(this, scroll, AppStyle.BG, 32, 0, false);
+    homeStage.addView(homeScrollWrap, new FrameLayout.LayoutParams(-1, -1));
+    homeTabHost = new FrameLayout(this);
+    homeTabHost.setVisibility(View.GONE);
+    homeStage.addView(homeTabHost, new FrameLayout.LayoutParams(-1, -1));
     homeImages = new HomePhotoImages(this, main, scroll, worker);
     homeImages.setRenderDemandListener(this::pumpHomeThumbnails);
+    homeImages.setDevelopedListener(id -> {
+      if (lightTablePage != null) lightTablePage.developedLookChanged(id);
+    });
     if (ready) homeImages.setRenderer(renderer);
-    LinearLayout content = homeContent = vertical();
-    content.setPadding(dp(20), dp(20), dp(20), dp(28));
-    scroll.setVerticalScrollBarEnabled(false);
-    scroll.addView(content);
+
+    // 1. Top bar: brand (+ slogan only in empty state) on left; compact 管理 / + 导入 when populated.
     LinearLayout head = horizontal();
+    head.setGravity(Gravity.CENTER_VERTICAL);
     LinearLayout branding = vertical();
-    TextView logo = text(getString(R.string.app_name), AppStyle.TYPE_BRAND, INK);
-    AppStyle.setTypeface(logo, AppStyle.FONT_SEMIBOLD);
-    logo.setLetterSpacing(-.035f);
-    add(branding, logo, -1, 44);
-    TextView cn = text("暗房里没有过去，只有正在发生的影像", AppStyle.TYPE_LABEL, MUTED);
-    cn.setLineSpacing(dp(2), 1);
-    add(branding, cn, -1, -2);
+    homeLogo = text(getString(R.string.app_name), 24, INK);
+    AppStyle.setTypeface(homeLogo, AppStyle.FONT_BOLD);
+    homeLogo.setLetterSpacing(-.035f);
+    add(branding, homeLogo, -1, -2);
+    homeSlogan = text("暗房里没有过去，只有正在发生的影像", AppStyle.TYPE_LABEL, MUTED);
+    homeSlogan.setLineSpacing(dp(2), 1);
+    LinearLayout.LayoutParams sloganParams = new LinearLayout.LayoutParams(-1, -2);
+    sloganParams.topMargin = dp(4);
+    branding.addView(homeSlogan, sloganParams);
     head.addView(branding, new LinearLayout.LayoutParams(0, -2, 1));
-    TextView help = button("关于", MUTED, BG);
-    help.setTextSize(AppStyle.TYPE_LABEL);
-    help.setPadding(0, 0, 0, 0);
-    help.setSingleLine(true);
-    help.setMinWidth(dp(42));
-    help.setContentDescription("关于、许可与支持范围");
-    help.setOnClickListener(
-        v -> {
-          if (!manageMode) about();
-        });
-    homeAbout = new UpdateBadge(help, "new");
-    controls.remove(help);
-    controls.add(homeAbout);
-    homeAbout.setTag("home.about");
-    homeAbout.setAvailable(updates.hasAvailableUpdate());
-    add(head, homeAbout, -2, -2);
+
+    homeTopActions = horizontal();
+    homeTopActions.setGravity(Gravity.CENTER_VERTICAL);
+    homeTopActions.setBaselineAligned(false);
+    homeManage = text("管理", AppStyle.TYPE_LABEL, AppStyle.INK);
+    styleHomeTopButton(homeManage, false);
+    homeManage.setContentDescription("照片管理，选择并删除照片");
+    homeManage.setOnClickListener(v -> enterManageMode());
+    homeTopActions.addView(homeManage, new LinearLayout.LayoutParams(-2, dp(AppStyle.TOUCH_MIN)));
+
+    homeTopImportButton = text("导入", AppStyle.TYPE_LABEL, AppStyle.ON_PRIMARY);
+    styleHomeTopButton(homeTopImportButton, true);
+    homeTopImportButton.setContentDescription("导入照片");
+    homeTopImportButton.setOnClickListener(v -> importPhoto());
+    LinearLayout.LayoutParams topImpLp = new LinearLayout.LayoutParams(-2, dp(AppStyle.TOUCH_MIN));
+    topImpLp.leftMargin = dp(8);
+    homeTopActions.addView(homeTopImportButton, topImpLp);
+    head.addView(homeTopActions, new LinearLayout.LayoutParams(-2, -2));
     add(content, head, -1, -2);
-    gap(content, 24);
-    FrameLayout hero = new FrameLayout(this);
-    AppStyle.surface(hero, AppStyle.SURFACE, AppStyle.R_MEDIUM);
-    hero.setClipToOutline(true);
-    homeHero = new ImageView(this);
-    homeHero.setScaleType(ImageView.ScaleType.CENTER_CROP);
-    homeHero.setAdjustViewBounds(false);
-    homeHero.setContentDescription("最近导入的照片预览");
-    if (source != null && library.isEmpty()) homeHero.setImageBitmap(source);
-    hero.addView(homeHero, new FrameLayout.LayoutParams(-1, -1));
-    bindHomeHeroToRecent();
-    add(content, hero, -1, 240);
-    gap(content, 16);
+
+    // Shared import button & vernier progress slot (moves seamlessly between empty card & top banner).
     homeImportButton = button("开始导入照片", AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
     homeImportButton.setTextSize(AppStyle.TYPE_TITLE);
     AppStyle.setTypeface(homeImportButton, AppStyle.FONT_BOLD);
     homeImportButton.setOnClickListener(v -> importPhoto());
     homeImportProgress = new ImportProgressDrawable(this);
-    homeImportCancel = button("取消", INK, BG);
-    homeImportCancel.setTextSize(AppStyle.TYPE_MICRO);
-    AppStyle.setTypeface(homeImportCancel, AppStyle.FONT_MEDIUM);
-    homeImportCancel.setPadding(dp(4), 0, dp(4), 0);
+    homeImportCancel = text("取消", AppStyle.TYPE_MICRO, AppStyle.isLight() ? 0xff4a4a52 : 0xffc4c4cc);
+    AppStyle.setTypeface(homeImportCancel, AppStyle.FONT_SEMIBOLD);
+    homeImportCancel.setGravity(Gravity.CENTER);
+    homeImportCancel.setSingleLine(true);
+    homeImportCancel.setMinHeight(dp(AppStyle.TOUCH_MIN));
+    homeImportCancel.setPadding(dp(11), 0, dp(11), 0);
+    homeImportCancel.setFocusable(true);
+    homeImportCancel.setClickable(true);
+    styleHomeImportCancel(homeImportCancel);
     homeImportCancel.setContentDescription("取消照片导入");
     homeImportCancel.setOnClickListener(v -> cancelBatchImport());
     homeImportCancel.setVisibility(View.GONE);
     homeImportSlot = new ImportButtonLayout(this, homeImportButton, homeImportCancel);
-    add(content, homeImportSlot, -1, -2);
-    gap(content, 12);
-    TextView privacy =
-        text("JPG / PNG / HEIC / HEIF / DNG\n本机处理 · 自动保存调整 · 保留原照片", AppStyle.TYPE_MICRO, MUTED);
-    privacy.setLineSpacing(dp(4), 1);
-    add(content, privacy, -1, 54);
+
+    // 2. Populated-state top import progress host (shown only while importing with photos present).
+    homePopulatedImportHost = new FrameLayout(this);
+    homePopulatedImportHost.setVisibility(View.GONE);
+    LinearLayout.LayoutParams popImpLp = new LinearLayout.LayoutParams(-1, -2);
+    popImpLp.topMargin = dp(10);
+    popImpLp.bottomMargin = dp(4);
+    content.addView(homePopulatedImportHost, popImpLp);
+
     homeImportHint = text("", AppStyle.TYPE_MICRO, MUTED);
     homeImportHint.setLineSpacing(dp(3), 1);
     homeImportHint.setVisibility(View.GONE);
     LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(-1, -2);
-    hintParams.topMargin = dp(7);
+    hintParams.topMargin = dp(6);
     content.addView(homeImportHint, hintParams);
-    gap(content, 24);
-    LinearLayout historyHead = horizontal();
+
+    // 3. Empty state (方案二 · 暗房迎宾卡): single complete hero welcome card centered vertically.
+    homeEmptyWelcome = vertical();
+    homeEmptyWelcome.setGravity(Gravity.CENTER_VERTICAL);
+    homeEmptyWelcome.setPadding(0, dp(18), 0, dp(12));
+    LinearLayout.LayoutParams welcomeWrapLp = new LinearLayout.LayoutParams(-1, -2, 1f);
+    LinearLayout welcomeCard = vertical();
+    GradientDrawable welcomeBg = AppStyle.shape(this, AppStyle.SURFACE, 16f, false);
+    welcomeBg.setStroke(Math.max(1, dp(.9f)), AppStyle.OUTLINE);
+    welcomeCard.setBackground(welcomeBg);
+    welcomeCard.setClipToOutline(true);
+    FrameLayout hero = homeHeroBox = new FrameLayout(this);
+    hero.setBackgroundColor(AppStyle.CONTROL);
+    homeHero = new ImageView(this);
+    homeHero.setScaleType(ImageView.ScaleType.CENTER_CROP);
+    homeHero.setAdjustViewBounds(false);
+    homeHero.setContentDescription("示例照片预览");
+    if (source != null && library.isEmpty()) homeHero.setImageBitmap(source);
+    hero.addView(homeHero, new FrameLayout.LayoutParams(-1, -1));
+    bindHomeHeroToRecent();
+    add(welcomeCard, hero, -1, 224);
+
+    LinearLayout welcomeBody = vertical();
+    welcomeBody.setPadding(dp(16), dp(18), dp(16), dp(16));
+    TextView welcomeTitle = text("暗房已就绪", 17, INK);
+    AppStyle.setTypeface(welcomeTitle, AppStyle.FONT_BOLD);
+    welcomeTitle.setLetterSpacing(-.02f);
+    add(welcomeBody, welcomeTitle, -1, -2);
+    TextView welcomeDesc =
+        text("从相册或文件导入照片，所有调色与导出均在本机离线完成。", AppStyle.TYPE_MICRO, MUTED);
+    welcomeDesc.setLineSpacing(dp(3), 1);
+    LinearLayout.LayoutParams descLp = new LinearLayout.LayoutParams(-1, -2);
+    descLp.topMargin = dp(6);
+    welcomeBody.addView(welcomeDesc, descLp);
+    homeEmptyImportHost = new FrameLayout(this);
+    LinearLayout.LayoutParams emptyImpLp = new LinearLayout.LayoutParams(-1, -2);
+    emptyImpLp.topMargin = dp(16);
+    welcomeBody.addView(homeEmptyImportHost, emptyImpLp);
+    add(welcomeCard, welcomeBody, -1, -2);
+    add(homeEmptyWelcome, welcomeCard, -1, -2);
+
+    TextView privacy =
+        homePrivacyView =
+            text("JPG · PNG · HEIC · HEIF · DNG", AppStyle.TYPE_MICRO, MUTED);
+    privacy.setGravity(Gravity.CENTER);
+    LinearLayout.LayoutParams privLp = new LinearLayout.LayoutParams(-1, -2);
+    privLp.topMargin = dp(14);
+    homeEmptyWelcome.addView(privacy, privLp);
+    content.addView(homeEmptyWelcome, welcomeWrapLp);
+
+    // 4. Populated state (方案一 · 极简画廊): 全部/收藏 filter bar + tall 2-col photo wall.
+    homePopulatedSection = vertical();
+    LinearLayout.LayoutParams popSecLp = new LinearLayout.LayoutParams(-1, -2);
+    popSecLp.topMargin = dp(8);
+    homeFilterBar = horizontal();
+    homeFilterBar.setGravity(Gravity.CENTER_VERTICAL);
+    homeFilterAll = text("全部", AppStyle.TYPE_LABEL, INK);
+    AppStyle.setNumericTypeface(homeFilterAll);
+    homeFilterAll.setGravity(Gravity.CENTER);
+    homeFilterAll.setSingleLine(true);
+    homeFilterAll.setMinHeight(dp(34));
+    homeFilterAll.setPadding(dp(12), 0, dp(12), 0);
+    homeFilterAll.setOnClickListener(
+        v -> {
+          if (homeFavoritesOnly) {
+            homeFavoritesOnly = false;
+            historySignature = null;
+            refreshHistory();
+          }
+        });
+    homeFilterBar.addView(homeFilterAll, new LinearLayout.LayoutParams(-2, dp(34)));
+
+    homeFilterFavorites = text("收藏", AppStyle.TYPE_LABEL, MUTED);
+    AppStyle.setNumericTypeface(homeFilterFavorites);
+    homeFilterFavorites.setGravity(Gravity.CENTER);
+    homeFilterFavorites.setSingleLine(true);
+    homeFilterFavorites.setMinHeight(dp(34));
+    homeFilterFavorites.setPadding(dp(12), 0, dp(12), 0);
+    homeFilterFavorites.setOnClickListener(
+        v -> {
+          if (!homeFavoritesOnly) {
+            homeFavoritesOnly = true;
+            historySignature = null;
+            refreshHistory();
+          }
+        });
+    LinearLayout.LayoutParams favFilterLp = new LinearLayout.LayoutParams(-2, dp(34));
+    favFilterLp.leftMargin = dp(8);
+    homeFilterBar.addView(homeFilterFavorites, favFilterLp);
+    LinearLayout.LayoutParams filterBarLp = new LinearLayout.LayoutParams(-1, -2);
+    filterBarLp.bottomMargin = dp(12);
+    homePopulatedSection.addView(homeFilterBar, filterBarLp);
+
+    homeSelectionHeader = horizontal();
+    homeSelectionHeader.setGravity(Gravity.CENTER_VERTICAL);
     historyTitle = text("最近照片", AppStyle.TYPE_HEADING, INK);
     AppStyle.setNumericTypeface(historyTitle);
     AppStyle.setTypeface(historyTitle, AppStyle.FONT_BOLD);
     historyTitle.setMaxLines(1);
-    historyHead.addView(historyTitle, new LinearLayout.LayoutParams(0, dp(40), 1));
-    homeManage = text("照片管理", AppStyle.TYPE_BODY, GOLD);
-    AppStyle.setTypeface(homeManage, AppStyle.FONT_MEDIUM);
-    homeManage.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
-    homeManage.setPadding(dp(14), 0, 0, 0);
-    homeManage.setMinHeight(dp(44));
-    homeManage.setContentDescription("照片管理，选择并删除照片");
-    homeManage.setOnClickListener(v -> enterManageMode());
-    add(historyHead, homeManage, -2, 44);
+    homeSelectionHeader.addView(historyTitle, new LinearLayout.LayoutParams(0, dp(40), 1));
     manageHeaderActions = horizontal();
     manageHeaderActions.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
     homeSelectAll = text("全选", AppStyle.TYPE_BODY, GOLD);
@@ -1301,20 +1573,25 @@ public final class MainActivity extends Activity {
     homeSelectAll.setContentDescription("全选照片");
     homeSelectAll.setOnClickListener(v -> selectAllPhotos());
     manageHeaderActions.addView(homeSelectAll, new LinearLayout.LayoutParams(-2, dp(44)));
-    homeClearSelection = text("取消选择", AppStyle.TYPE_BODY, GOLD);
+    homeClearSelection = text("取消选择", AppStyle.TYPE_BODY, MUTED);
     AppStyle.setTypeface(homeClearSelection, AppStyle.FONT_MEDIUM);
     homeClearSelection.setGravity(Gravity.CENTER);
-    homeClearSelection.setPadding(dp(18), 0, 0, 0);
+    homeClearSelection.setPadding(dp(16), 0, 0, 0);
     homeClearSelection.setMinHeight(dp(44));
     homeClearSelection.setContentDescription("取消选择全部照片");
     homeClearSelection.setOnClickListener(v -> clearManageSelection());
     manageHeaderActions.addView(homeClearSelection, new LinearLayout.LayoutParams(-2, dp(44)));
     manageHeaderActions.setVisibility(View.GONE);
-    add(historyHead, manageHeaderActions, -2, 44);
-    add(content, historyHead, -1, -2);
-    gap(content, 9);
+    homeSelectionHeader.addView(manageHeaderActions, new LinearLayout.LayoutParams(-2, dp(44)));
+    homeSelectionHeader.setVisibility(View.GONE);
+    LinearLayout.LayoutParams selHdrLp = new LinearLayout.LayoutParams(-1, -2);
+    selHdrLp.bottomMargin = dp(10);
+    homePopulatedSection.addView(homeSelectionHeader, selHdrLp);
+
     historyList = vertical();
-    add(content, historyList, -1, -2);
+    add(homePopulatedSection, historyList, -1, -2);
+    content.addView(homePopulatedSection, popSecLp);
+    syncHomeModeChrome();
     batchPasteBar = button(EditClipboardPolicy.batchButtonLabel(0), AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
     batchPasteBar.setTextSize(AppStyle.TYPE_BODY);
     AppStyle.setTypeface(batchPasteBar, AppStyle.FONT_BOLD);
@@ -1326,13 +1603,16 @@ public final class MainActivity extends Activity {
     manageDeleteBar.setEnabled(false);
     manageDeleteBar.setOnClickListener(v -> confirmManageDelete());
     batchPasteShell = new FrameLayout(this);
-    AppStyle.surface(
-        batchPasteShell, AppStyle.withAlpha(AppStyle.SURFACE, .96f), AppStyle.R_MEDIUM);
+    batchPasteShell.setBackgroundColor(AppStyle.SURFACE);
+    View topDivider = new View(this);
+    topDivider.setBackgroundColor(AppStyle.OUTLINE);
+    batchPasteShell.addView(
+        topDivider, new FrameLayout.LayoutParams(-1, Math.max(1, dp(.75f)), Gravity.TOP));
     FrameLayout barStack = new FrameLayout(this);
     LinearLayout batchActions = new LinearLayout(this);
     batchActions.setOrientation(LinearLayout.HORIZONTAL);
     batchActions.setGravity(Gravity.CENTER_VERTICAL);
-    batchActions.setPadding(dp(14), dp(8), dp(14), dp(14));
+    batchActions.setPadding(dp(18), dp(12), dp(18), dp(18));
     TextView batchCancel = button("取消", INK, AppStyle.CONTROL);
     batchCancel.setGravity(Gravity.CENTER);
     batchCancel.setPadding(dp(12), 0, dp(12), 0);
@@ -1347,7 +1627,7 @@ public final class MainActivity extends Activity {
     LinearLayout manageActions = new LinearLayout(this);
     manageActions.setOrientation(LinearLayout.HORIZONTAL);
     manageActions.setGravity(Gravity.CENTER_VERTICAL);
-    manageActions.setPadding(dp(14), dp(8), dp(14), dp(14));
+    manageActions.setPadding(dp(18), dp(12), dp(18), dp(18));
     TextView manageCancel = button("取消", INK, AppStyle.CONTROL);
     manageCancel.setGravity(Gravity.CENTER);
     manageCancel.setPadding(dp(12), 0, dp(12), 0);
@@ -1370,26 +1650,266 @@ public final class MainActivity extends Activity {
         });
     FrameLayout.LayoutParams batchParams =
         new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
-    batchParams.setMargins(dp(10), 0, dp(10), dp(10));
     homeStage.addView(batchPasteShell, batchParams);
     updateBatchPasteBar(false);
+    buildHomeNav();
     refreshHistory();
   }
 
+  private void buildHomeNav() {
+    homeNav = new FrameLayout(this);
+    homeNav.setTag("home.nav");
+    homeNav.setBackground(AppStyle.easedScrim(AppStyle.BG, false, .98f));
+    FrameLayout pill = new FrameLayout(this);
+    pill.setPadding(dp(4), dp(4), dp(4), dp(4));
+    GradientDrawable navBg =
+        AppStyle.shape(this, AppStyle.withAlpha(AppStyle.SURFACE, .96f), AppStyle.R_DOCK, true);
+    pill.setBackground(navBg);
+    pill.setClipToOutline(true);
+    pill.setElevation(dp(8));
+    pill.setClickable(true);
+    HomeTab[] tabs = HomeTab.values();
+    int maxNavDp = tabs.length <= 3 ? 276 : 336;
+    int navWidth =
+        Math.min(dp(maxNavDp), getResources().getDisplayMetrics().widthPixels - dp(32));
+    int innerWidth = Math.max(1, navWidth - dp(8));
+    homeNavSlotWidth = innerWidth / tabs.length;
+
+    homeNavIndicator = new View(this);
+    homeNavIndicator.setBackground(AppStyle.selectedShape(this, AppStyle.R_DOCK_INNER));
+    homeNavIndicator.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    pill.addView(
+        homeNavIndicator,
+        new FrameLayout.LayoutParams(homeNavSlotWidth, dp(50), Gravity.START | Gravity.CENTER_VERTICAL));
+
+    LinearLayout tabsRow = horizontal();
+    String[] labels = {"首页", "观片台", "设置"};
+    String[] tags = {"home.nav.home", "home.nav.lighttable", "home.nav.settings"};
+    int[] icons = {
+      R.drawable.ic_ui_nav_home,
+      R.drawable.ic_ui_nav_lighttable,
+      R.drawable.ic_ui_nav_settings
+    };
+    for (int i = 0; i < tabs.length; i++) {
+      final HomeTab target = tabs[i];
+      LinearLayout item = vertical();
+      item.setGravity(Gravity.CENTER);
+      item.setClickable(true);
+      item.setFocusable(true);
+      item.setContentDescription(labels[i]);
+      item.setTag(tags[i]);
+      // Trigger feedback from the accepted click, including keyboard and accessibility clicks.
+      item.setTag(R.id.haptic_on_click, Boolean.TRUE);
+      item.setBackground(
+          new android.graphics.drawable.RippleDrawable(
+              ColorStateList.valueOf(AppStyle.RIPPLE),
+              null,
+              AppStyle.shape(this, Color.WHITE, AppStyle.R_DOCK_INNER, false)));
+      FrameLayout iconBox = new FrameLayout(this);
+      ImageView icon = new ImageView(this);
+      icon.setImageResource(icons[i]);
+      icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+      icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+      iconBox.addView(icon, new FrameLayout.LayoutParams(dp(19), dp(19), Gravity.CENTER));
+      if (target == HomeTab.SETTINGS) {
+        settingsNavDot = navDot();
+        settingsNavDot.setTag("home.nav.dot");
+        FrameLayout.LayoutParams dotParams =
+            new FrameLayout.LayoutParams(dp(6), dp(6), Gravity.TOP | Gravity.END);
+        dotParams.rightMargin = dp(2);
+        iconBox.addView(settingsNavDot, dotParams);
+      }
+      item.addView(iconBox, new LinearLayout.LayoutParams(dp(32), dp(22)));
+      TextView label = text(labels[i], AppStyle.TYPE_MICRO, MUTED);
+      label.setGravity(Gravity.CENTER);
+      label.setSingleLine(true);
+      label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+      label.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+      LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(-2, -2);
+      labelParams.topMargin = dp(2);
+      item.addView(label, labelParams);
+      item.setOnClickListener(
+          v -> {
+            if (exporting || activeImport != null || batchImportRunning || selectionActive())
+              return;
+            Haptics.click(v);
+            selectHomeTab(target);
+          });
+      homeNavSlots[i] = new NavTabSlot(item, icon, label);
+      tabsRow.addView(item, new LinearLayout.LayoutParams(0, dp(50), 1));
+    }
+    pill.addView(tabsRow, new FrameLayout.LayoutParams(-1, dp(50)));
+    tabsRow.addOnLayoutChangeListener(
+        (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+          int w = right - left;
+          if (w <= 0 || homeNavIndicator == null) return;
+          int slotW = w / tabs.length;
+          if (slotW != homeNavSlotWidth) {
+            homeNavSlotWidth = slotW;
+            ViewGroup.LayoutParams lp = homeNavIndicator.getLayoutParams();
+            lp.width = slotW;
+            homeNavIndicator.setLayoutParams(lp);
+            positionHomeNavIndicator(activeHomeTab.ordinal(), false);
+          }
+        });
+    FrameLayout.LayoutParams pillParams =
+        new FrameLayout.LayoutParams(
+            navWidth, dp(58), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+    pillParams.bottomMargin = dp(16);
+    homeNav.addView(pill, pillParams);
+    homeStage.addView(
+        homeNav, new FrameLayout.LayoutParams(-1, dp(96), Gravity.BOTTOM));
+    updateHomeNavSelection(false);
+    syncHomeNavVisibility();
+    if (settingsNavDot != null)
+      settingsNavDot.setVisibility(updates.hasAvailableUpdate() ? View.VISIBLE : View.GONE);
+  }
+
+  private void positionHomeNavIndicator(int index, boolean animate) {
+    if (homeNavIndicator == null) return;
+    float targetX = index * homeNavSlotWidth;
+    homeNavIndicator.animate().cancel();
+    if (animate && ValueAnimator.areAnimatorsEnabled()) {
+      homeNavIndicator
+          .animate()
+          .translationX(targetX)
+          .setDuration(240)
+          .setInterpolator(new android.view.animation.PathInterpolator(.22f, 1f, .36f, 1f))
+          .start();
+    } else {
+      homeNavIndicator.setTranslationX(targetX);
+    }
+  }
+
+  private void updateHomeNavSelection(boolean animate) {
+    HomeTab[] tabs = HomeTab.values();
+    positionHomeNavIndicator(activeHomeTab.ordinal(), animate);
+    for (int i = 0; i < tabs.length && i < homeNavSlots.length; i++) {
+      NavTabSlot slot = homeNavSlots[i];
+      if (slot == null) continue;
+      boolean selected = tabs[i] == activeHomeTab;
+      slot.container.setSelected(selected);
+      slot.icon.setImageTintList(ColorStateList.valueOf(selected ? GOLD : MUTED));
+      slot.label.setTextColor(selected ? INK : MUTED);
+      AppStyle.setTypeface(slot.label, selected ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_MEDIUM);
+      slot.icon.animate().cancel();
+      if (animate && selected && ValueAnimator.areAnimatorsEnabled()) {
+        slot.icon.setScaleX(.84f);
+        slot.icon.setScaleY(.84f);
+        slot.icon
+            .animate()
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(220)
+            .setInterpolator(new android.view.animation.OvershootInterpolator(2.0f))
+            .start();
+      } else {
+        slot.icon.setScaleX(1f);
+        slot.icon.setScaleY(1f);
+      }
+    }
+  }
+
+  private void setHomeNavSuppressed(boolean suppressed) {
+    if (homeNavSuppressedByTab == suppressed) return;
+    homeNavSuppressedByTab = suppressed;
+    syncHomeNavVisibility();
+  }
+
+  private void syncHomeNavVisibility() {
+    if (homeNav == null) return;
+    boolean visible = !selectionActive() && !homeNavSuppressedByTab;
+    homeNav.setVisibility(visible ? View.VISIBLE : View.GONE);
+  }
+
+  private void selectHomeTab(HomeTab target) {
+    if (target == null || homeTabHost == null || homeScroll == null) return;
+    if (target == activeHomeTab) {
+      if (target == HomeTab.HOME) homeScroll.smoothScrollTo(0, 0);
+      return;
+    }
+    if (activeHomeTab == HomeTab.LIGHT_TABLE) detachLightTable();
+    if (activeHomeTab == HomeTab.SETTINGS && settingsPage != null)
+      settingsPage.setVisibility(View.GONE);
+
+    activeHomeTab = target;
+    homeNavSuppressedByTab = false;
+
+    View homeContainer = homeScrollWrap != null ? homeScrollWrap : homeScroll;
+    View incoming;
+    if (target == HomeTab.HOME) {
+      homeTabHost.setVisibility(View.GONE);
+      homeContainer.setVisibility(View.VISIBLE);
+      if (homeImages != null) homeImages.loadVisible();
+      incoming = homeContainer;
+    } else if (target == HomeTab.LIGHT_TABLE) {
+      homeContainer.setVisibility(View.GONE);
+      homeTabHost.setVisibility(View.VISIBLE);
+      attachLightTable();
+      incoming = homeTabHost;
+    } else {
+      homeContainer.setVisibility(View.GONE);
+      homeTabHost.setVisibility(View.VISIBLE);
+      attachSettings();
+      incoming = homeTabHost;
+    }
+    incoming.animate().cancel();
+    if (ValueAnimator.areAnimatorsEnabled()) {
+      incoming.setAlpha(.88f);
+      incoming.setTranslationY(dp(5));
+      incoming
+          .animate()
+          .alpha(1f)
+          .translationY(0f)
+          .setDuration(150)
+          .setInterpolator(new android.view.animation.DecelerateInterpolator())
+          .start();
+    } else {
+      incoming.setAlpha(1f);
+      incoming.setTranslationY(0f);
+    }
+    updateHomeNavSelection(true);
+    syncHomeNavVisibility();
+  }
+
+  private View navDot() {
+    View dot = new View(this);
+    GradientDrawable fill = new GradientDrawable();
+    fill.setShape(GradientDrawable.OVAL);
+    fill.setColor(GOLD);
+    dot.setBackground(fill);
+    dot.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    return dot;
+  }
+
   private void showHome() {
-    clearEditorBaseline();
+    showHome(false);
+  }
+
+  private void showHome(boolean keepEdits) {
+    closeCropPage();
+    if (photo != null) photo.cancelPendingSingleTap();
+    finishPendingSliderTaps();
     // 多张照片切换后回首页，当前照片的参数也要落盘。
     saveActiveFrame();
+    Frame edited = keepEdits && editorHasChanges() ? findFrame(editorBaselineId) : null;
+    boolean savedEdit = edited != null && activeId.equals(edited.id);
+    if (savedEdit && !saveRecentEdit(edited)) return;
+    clearEditorBaseline();
     if (homeScreen != null) {
-      if (photo != null) photo.cancelPendingSingleTap();
-      finishPendingSliderTaps();
       updateEditorLayout();
       homeThumbPaused = false;
       homeScreen.setVisibility(View.VISIBLE);
       editorScreen.setVisibility(View.GONE);
       saveDevelopedLook();
       if (!batchImportRunning && !selectionActive()) setHomeImportHint(idleHomeHint());
+      if (activeHomeTab != HomeTab.HOME) selectHomeTab(HomeTab.HOME);
+      else syncHomeNavVisibility();
       refreshHistory();
+      if (savedEdit) {
+        syncHeroLook();
+        homeScroll.scrollTo(0, 0);
+      }
       homeImages.loadVisible();
       queueMissingHomeThumbnails();
     }
@@ -1445,6 +1965,20 @@ public final class MainActivity extends Activity {
     return id == null ? null : new File(new File(getFilesDir(), "developed"), id + ".jpg");
   }
 
+  private boolean hasDevelopedLook(Frame frame) {
+    File jpeg = developedLook(frame.id);
+    FrameStyle style = FrameStyle.NONE;
+    if (frame.params != null) {
+      try {
+        style = FrameStyle.fromId(new JSONObject(frame.params).optString("edge_style"));
+      } catch (JSONException ignored) {
+        // A legacy recipe can still use its existing developed look.
+        return HomePhotoImages.alphaLook(jpeg).isFile() || jpeg.isFile();
+      }
+    }
+    return style.film() ? HomePhotoImages.alphaLook(jpeg).isFile() : jpeg.isFile();
+  }
+
   /**
    * The photo stage follows the image's fitted height instead of keeping a tall letterbox. This
    * brings the recent-photo strip close to the photo and keeps the developing pill inside the
@@ -1452,22 +1986,33 @@ public final class MainActivity extends Activity {
    */
   private void updatePhotoStageHeight() {
     if (photoStage == null || previewColumn == null) return;
+    int strip = editorStrip != null && editorStrip.getVisibility() == View.VISIBLE ? dp(64) : 0;
+    LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) photoStage.getLayoutParams();
+    if (panelCollapsed || strip == 0 || wideEditor()) {
+      // Without the filmstrip (or in focus/wide mode), expand the display stage to fill the full
+      // vertical budget between the fixed top bar and the action row, centering the photo inside it.
+      if (params.height == 0 && params.weight == 1f && params.topMargin == 0) return;
+      params.height = 0;
+      params.weight = 1f;
+      params.topMargin = 0;
+      photoStage.setLayoutParams(params);
+      return;
+    }
     int width = previewColumn.getWidth();
     if (width <= 0) width = getResources().getDisplayMetrics().widthPixels;
-    int strip = editorStrip != null && editorStrip.getVisibility() == View.VISIBLE ? dp(82) : 0;
     int available = previewHeightPx() - strip - dp(40) - dp(12);
     if (available <= 0) return;
     int height = available;
-    if (!panelCollapsed && fullWidth > 0 && fullHeight > 0) {
+    if (fullWidth > 0 && fullHeight > 0) {
       float pad = dp(PhotoView.framePadDp());
       float imageWidth = Math.max(1, width - pad * 2);
       int desired = Math.round(imageWidth * fullHeight / (float) fullWidth + pad * 2);
       height = Math.min(available, Math.max(dp(120), desired));
     }
-    LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) photoStage.getLayoutParams();
-    if (params.height == height && params.weight == 0) return;
+    if (params.height == height && params.weight == 0f && params.topMargin == 0) return;
     params.height = height;
-    params.weight = 0;
+    params.weight = 0f;
+    params.topMargin = 0;
     photoStage.setLayoutParams(params);
   }
 
@@ -1480,12 +2025,15 @@ public final class MainActivity extends Activity {
           new EditorPhotoStrip.Photo(frame.id, PhotoLabels.title(frame.name), thumbnail, new File(frame.path)));
     }
     boolean wasVisible = editorStrip.getVisibility() == View.VISIBLE;
-    boolean tallEnough = editorBody == null || editorBody.getHeight() <= 0
-        || previewHeightPx() >= dp(226);
-    boolean show = photos.size() > 1 && findFrame(activeId) != null && tallEnough;
+    boolean show = shouldShowEditorStrip();
     int visibility = show ? View.VISIBLE : View.GONE;
-    if (editorStrip.getVisibility() != visibility) editorStrip.setVisibility(visibility);
+    boolean visibilityChanged = editorStrip.getVisibility() != visibility;
+    if (visibilityChanged) editorStrip.setVisibility(visibility);
     if (show) editorStrip.setPhotos(photos, activeId, scrollToActive || !wasVisible);
+    if (visibilityChanged && !updatingEditorLayout) {
+      updateEditorLayout();
+      return;
+    }
     updatePhotoStageHeight();
   }
 
@@ -1511,11 +2059,11 @@ public final class MainActivity extends Activity {
 
   private void leaveEditor() {
     if (editorExitDialog != null) return;
+    finishPendingSliderTaps();
     if (editorHasChanges()) {
       showExitConfirm();
       return;
     }
-    clearEditorBaseline();
     showHome();
   }
 
@@ -1538,28 +2086,53 @@ public final class MainActivity extends Activity {
     dialog.setCanceledOnTouchOutside(true);
 
     LinearLayout card = vertical();
-    AppStyle.surface(card, AppStyle.SURFACE, AppStyle.R_LARGE);
+    AppStyle.surface(card, AppStyle.SURFACE, AppStyle.R_LARGE, true);
     card.setPadding(dp(20), dp(20), dp(20), dp(16));
-    TextView title = text("要放弃当前修改吗？", AppStyle.TYPE_HEADING, INK);
+    boolean inLibrary = findFrame(editorBaselineId) != null;
+    TextView title =
+        text(inLibrary ? "保留这次编辑？" : "要放弃当前修改吗？", AppStyle.TYPE_HEADING, AppStyle.INK);
     title.setGravity(Gravity.CENTER);
-    AppStyle.setTypeface(title, AppStyle.FONT_SEMIBOLD);
+    AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
     card.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
-    LinearLayout actions = horizontal();
-    actions.setPadding(0, dp(18), 0, 0);
-    TextView cancel = dialogAction("取消", Color.WHITE, dialog::dismiss);
+    if (inLibrary) {
+      TextView sub = text("保存后可在观片台与最近照片中直接使用本次效果", AppStyle.TYPE_MICRO, AppStyle.MUTED);
+      sub.setGravity(Gravity.CENTER);
+      LinearLayout.LayoutParams subP = new LinearLayout.LayoutParams(-1, -2);
+      subP.topMargin = dp(6);
+      card.addView(sub, subP);
+
+      TextView save = dialogAction("保存并返回", AppStyle.ON_PRIMARY, () -> {
+        dialog.dismiss();
+        showHome(true);
+      });
+      AppStyle.pillAction(save, AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
+      AppStyle.setTypeface(save, AppStyle.FONT_BOLD);
+      LinearLayout.LayoutParams saveP = new LinearLayout.LayoutParams(-1, dp(AppStyle.TOUCH_PRIMARY));
+      saveP.topMargin = dp(16);
+      card.addView(save, saveP);
+    }
+
+    AdaptiveActionRow actions = new AdaptiveActionRow(this, true, 12, true);
+    actions.setPadding(0, dp(inLibrary ? 10 : 18), 0, 0);
+    TextView cancel = dialogAction("取消", AppStyle.INK, dialog::dismiss);
     TextView discard =
         dialogAction(
             "放弃修改",
-            Color.WHITE,
+            AppStyle.DANGER,
             () -> {
               dialog.dismiss();
               discardEditorSession();
             });
-    actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(48), 1));
-    LinearLayout.LayoutParams discardParams = new LinearLayout.LayoutParams(0, dp(48), 1);
-    discardParams.leftMargin = dp(10);
-    actions.addView(discard, discardParams);
+    GradientDrawable discardBg = AppStyle.shape(this, AppStyle.CONTROL, AppStyle.R_BUTTON, false);
+    discardBg.setStroke(Math.max(1, dp(.85f)), AppStyle.ACCENT_BORDER);
+    discard.setBackground(
+        new android.graphics.drawable.RippleDrawable(
+            ColorStateList.valueOf(AppStyle.RIPPLE),
+            discardBg,
+            AppStyle.shape(this, Color.WHITE, AppStyle.R_BUTTON, false)));
+    actions.addAction(cancel, cancel, 84);
+    actions.addAction(discard, discard, 84);
     card.addView(actions, new LinearLayout.LayoutParams(-1, -2));
 
     FrameLayout inset = new FrameLayout(this);
@@ -1571,7 +2144,7 @@ public final class MainActivity extends Activity {
     window.setGravity(Gravity.BOTTOM);
     window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     WindowManager.LayoutParams attributes = window.getAttributes();
-    attributes.dimAmount = .58f;
+    attributes.dimAmount = AppStyle.DIM_AMOUNT;
     attributes.y = dp(10);
     attributes.alpha = 1f;
     window.setAttributes(attributes);
@@ -1591,19 +2164,41 @@ public final class MainActivity extends Activity {
   private void discardEditorSession() {
     String baseline = editorBaselineParams;
     Frame frame = findFrame(editorBaselineId);
-    if (frame != null) {
-      frame.params = baseline == null ? "{}" : baseline;
-      frame.edited = editorBaselineEdited;
-    }
     try {
       settings = new JSONObject(baseline == null ? "{}" : baseline);
     } catch (JSONException ignored) {
       settings = new JSONObject();
     }
+    if (editorBaselineEdited) defaults();
+    if (frame != null) {
+      frame.params = settings.toString();
+      frame.edited = editorBaselineEdited;
+    }
+    filmCategory = category(find(films, settings.optString("film_stock")));
     committed = settings.toString();
+    prefs.edit().putString("settings", committed).apply();
     undoStack.clear();
     redoStack.clear();
     editorPhotoId = "";
+    editorNeedsSync = true;
+    if (pending != null) {
+      main.removeCallbacks(pending);
+      pending = null;
+    }
+    ++revision;
+    mainPreviewRevision = -1;
+    previewWorkTicket = -1;
+    if (photo != null) photo.images(source, null);
+    if (storedHomeLook == developed) {
+      storedHomeLook = null;
+      storedHomeLookId = null;
+    }
+    Bitmaps.release(developed);
+    developed = null;
+    Bitmaps.release(compared);
+    compared = null;
+    developedPhotoId = null;
+    developedRecipe = null;
     scheduleLibraryWrite();
     showHome();
   }
@@ -1706,13 +2301,87 @@ public final class MainActivity extends Activity {
           tab, selected ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
       tab.setContentDescription(
           labels[i] + (selected ? "，收起参数面板" : "，展开参数面板"));
-      // 导航本身已有 4dp 上下内边距，只再缩 1dp，避免选中胶囊被双重内缩压扁。
-      if (selected)
+      if (selected) {
+        GradientDrawable tabBg = AppStyle.selectedShape(this, 10f);
         tab.setBackground(
             new android.graphics.drawable.InsetDrawable(
-                tab.getBackground(), 0, dp(1), 0, dp(1)));
+                new android.graphics.drawable.RippleDrawable(
+                    ColorStateList.valueOf(AppStyle.RIPPLE),
+                    tabBg,
+                    AppStyle.shape(this, Color.WHITE, 10f, false)),
+                0,
+                dp(1),
+                0,
+                dp(1)));
+      }
       tab.setOnClickListener(v -> selectEditorTool(tool));
       tabRow.addView(tab, new LinearLayout.LayoutParams(0, -1, 1));
+    }
+  }
+
+  private ImageView favoriteBadgeView() {
+    ImageView badge = new ImageView(this);
+    badge.setImageResource(R.drawable.ic_ui_film_favorite_remove);
+    badge.setImageTintList(ColorStateList.valueOf(GOLD));
+    badge.setScaleType(ImageView.ScaleType.FIT_CENTER);
+    badge.setClickable(false);
+    badge.setFocusable(false);
+    badge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    return badge;
+  }
+
+  private void openFavoriteMenu(String stockId, FrameLayout frame) {
+    if (stockId == null || frame == null) return;
+    if (stockId.equals(favoriteMenuId) && favoriteMenuOverlay != null) return;
+    clearFavoriteMenu();
+    boolean saved = isFavoriteFilm(stockId);
+    FrameLayout overlay = new FrameLayout(this);
+    overlay.setBackground(AppStyle.shape(this, 0x73000000, AppStyle.R_MEDIUM, false));
+    overlay.setClickable(true);
+    overlay.setFocusable(true);
+    ImageButton star = new ImageButton(this);
+    star.setImageResource(
+        saved ? R.drawable.ic_ui_film_favorite_remove : R.drawable.ic_ui_film_favorite_add);
+    star.setImageTintList(ColorStateList.valueOf(saved ? GOLD : Color.WHITE));
+    star.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+    star.setPadding(dp(10), dp(10), dp(10), dp(10));
+    star.setBackgroundColor(Color.TRANSPARENT);
+    star.setContentDescription(saved ? "取消收藏" : "收藏");
+    overlay.addView(
+        star, new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER));
+    star.setOnClickListener(
+        v -> {
+          boolean now = !isFavoriteFilm(stockId);
+          toggleFavoriteFilm(stockId);
+          clearFavoriteMenu();
+          if (filmCategory.equals("收藏")) {
+            pendingFilmScrollX = filmScrollRef == null ? 0 : filmScrollRef.getScrollX();
+            buildPanel();
+          } else {
+            setFilmBadge(stockId, now);
+          }
+        });
+    overlay.setOnClickListener(v -> clearFavoriteMenu());
+    frame.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+    favoriteMenuOverlay = overlay;
+    favoriteMenuId = stockId;
+  }
+
+  private void setFilmBadge(String stockId, boolean favorite) {
+    FrameLayout frame = filmFrames.get(stockId);
+    if (frame == null) return;
+    ImageView badge = filmBadges.get(stockId);
+    if (favorite && badge == null) {
+      badge = favoriteBadgeView();
+      FrameLayout.LayoutParams params =
+          new FrameLayout.LayoutParams(dp(16), dp(16), Gravity.TOP | Gravity.END);
+      params.topMargin = dp(6);
+      params.rightMargin = dp(6);
+      frame.addView(badge, params);
+      filmBadges.put(stockId, badge);
+    } else if (!favorite && badge != null) {
+      frame.removeView(badge);
+      filmBadges.remove(stockId);
     }
   }
 
@@ -1739,6 +2408,7 @@ public final class MainActivity extends Activity {
       pendingFilmScrollX = 0;
     }
     controls.removeIf(v -> descendant(v, panel));
+    clearFavoriteMenu();
     panel.removeAllViews();
     filmScrollRef = null;
     thumbTargets.clear();
@@ -1750,26 +2420,32 @@ public final class MainActivity extends Activity {
     ScrollView scroll = new ScrollView(this);
     panelScroll = scroll;
     scroll.setFillViewport(true);
-    scroll.setVerticalScrollBarEnabled(false);
+    AppStyle.hideScrollBars(scroll);
     // 面板底部原来是一条硬切口：内容滚到一半时最后一行被齐着切掉，看起来像「被裁」而不是
     // 「还能往下滚」——曲线页当初被当成 bug 报上来，就是这个观感。盖一层从透明到面板色的
     // 渐隐，只在下面确实还有内容时出现，滚到底就消失。它不吃触摸，只是提示层。
     FrameLayout body = new FrameLayout(this);
     body.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
     panelFade = new View(this);
-    panelFade.setBackground(
-        new GradientDrawable(
-            GradientDrawable.Orientation.TOP_BOTTOM,
-            new int[] {AppStyle.withAlpha(AppStyle.SURFACE, 0f), AppStyle.SURFACE}));
+    panelFade.setBackground(AppStyle.easedScrim(AppStyle.SURFACE, false));
     panelFade.setClickable(false);
     panelFade.setFocusable(false);
+    panelFade.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
     panelFade.setAlpha(0f);
-    body.addView(panelFade, new FrameLayout.LayoutParams(-1, dp(FADE_ROW_DP), Gravity.BOTTOM));
+    body.addView(panelFade, new FrameLayout.LayoutParams(-1, dp(FADE_ROW_DP + 6), Gravity.BOTTOM));
+    panelTopFade = new View(this);
+    panelTopFade.setBackground(AppStyle.easedScrim(AppStyle.SURFACE, true));
+    panelTopFade.setClickable(false);
+    panelTopFade.setFocusable(false);
+    panelTopFade.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    panelTopFade.setAlpha(0f);
+    body.addView(panelTopFade, new FrameLayout.LayoutParams(-1, dp(26), Gravity.TOP));
     scroll.setOnScrollChangeListener((v, x, y, oldX, oldY) -> updatePanelFade());
     panel.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
     editor = vertical();
-    // 面板顶上不再有把手那一行，正文直接贴着圆角顶边，所以自己留 10dp 呼吸。
-    editor.setPadding(dp(14), dp(10), dp(14), dp(10));
+    // 外层面板顶圆角 20dp，顶部和左右留 16dp 同心呼吸空间，避免首行控件撞圆角或顶边发挤。
+    editor.setPadding(dp(16), dp(16), dp(16), dp(14));
+    editor.setClipToPadding(false);
     // 内容增减会改变「能不能滚」，渐隐跟着重判一次。
     editor.addOnLayoutChangeListener(
         (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
@@ -1778,188 +2454,278 @@ public final class MainActivity extends Activity {
     if (!preserveTransition) updateEditorLayout();
     if (selectedTab <= 1) {
       LinearLayout modes = horizontal();
+      modes.setPadding(dp(3), dp(3), dp(3), dp(3));
+      modes.setBackground(AppStyle.shape(this, AppStyle.CONTROL, 11f, false));
       for (int i = 0; i < 2; i++) {
         final int mode = i;
+        boolean on = selectedTab == i;
         TextView tab =
             button(
                 i == 0 ? "胶片型号" : "相纸与印相",
-                selectedTab == i ? GOLD : MUTED,
-                selectedTab == i ? AppStyle.SELECTED : BG);
+                on ? AppStyle.INK : MUTED,
+                on ? AppStyle.SELECTED : BG);
         tab.setTextSize(AppStyle.TYPE_LABEL);
         tab.setPadding(0, 0, 0, 0);
         tab.setMinHeight(0);
-        tab.setSelected(selectedTab == i);
+        tab.setSelected(on);
+        if (on) {
+          tab.setBackground(
+              new android.graphics.drawable.RippleDrawable(
+                  ColorStateList.valueOf(AppStyle.RIPPLE),
+                  AppStyle.selectedShape(this, AppStyle.R_SMALL),
+                  AppStyle.shape(this, Color.WHITE, AppStyle.R_SMALL, false)));
+          int dotSize = dp(5);
+          GradientDrawable dot = new GradientDrawable();
+          dot.setShape(GradientDrawable.OVAL);
+          dot.setColor(GOLD);
+          dot.setBounds(0, 0, dotSize, dotSize);
+          android.text.SpannableStringBuilder label =
+              new android.text.SpannableStringBuilder("  " + tab.getText());
+          label.setSpan(
+              new android.text.style.ImageSpan(
+                  dot, android.text.style.DynamicDrawableSpan.ALIGN_CENTER),
+              0,
+              1,
+              android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+          tab.setText(label);
+        }
         AppStyle.setTypeface(
-            tab, selectedTab == i ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
+            tab, on ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_MEDIUM);
         tab.setOnClickListener(
             v -> {
               selectedTab = mode;
               buildPanel();
             });
-        modes.addView(tab, new LinearLayout.LayoutParams(0, dp(42), 1));
+        modes.addView(tab, new LinearLayout.LayoutParams(0, -1, 1));
       }
-      add(editor, modes, -1, 42);
-      gap(editor, 8);
+      add(editor, modes, -1, 38);
+      gap(editor, 12);
     }
     if (selectedTab == 0) {
-      LinearLayout filters = horizontal();
-      String[] categories = {"全部", "彩色负片", "电影胶片", "反转片", "黑白"};
+      HorizontalScrollView categoryScroll = new HorizontalScrollView(this);
+      AppStyle.hideScrollBars(categoryScroll);
+      categoryScroll.setClipToPadding(false);
+      LinearLayout categoryRow = horizontal();
+      categoryRow.setPadding(0, 0, dp(4), 0);
+      String[] categories = {"全部", "收藏", "彩色负片", "电影胶片", "反转片", "黑白"};
+      TextView selectedChip = null;
       for (String category : categories) {
+        boolean picked = category.equals(filmCategory);
         TextView chip =
             button(
                 category,
-                category.equals(filmCategory) ? GOLD : MUTED,
-                category.equals(filmCategory) ? AppStyle.CONTROL : BG);
+                picked ? GOLD : MUTED,
+                picked ? AppStyle.ACCENT_SOFT : Color.TRANSPARENT);
         chip.setTextSize(AppStyle.TYPE_MICRO);
-        chip.setSelected(category.equals(filmCategory));
         chip.setPadding(dp(10), 0, dp(10), 0);
-        chip.setSingleLine(true);
-        chip.setHorizontallyScrolling(false);
-        chip.setAutoSizeTextTypeUniformWithConfiguration(
-            10, 12, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
         chip.setMinHeight(0);
+        chip.setSingleLine(true);
+        chip.setAutoSizeTextTypeUniformWithConfiguration(
+            9, 11, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
+        chip.setSelected(picked);
+        GradientDrawable chipBg =
+            AppStyle.shape(
+                this,
+                picked ? AppStyle.ACCENT_SOFT : Color.TRANSPARENT,
+                AppStyle.R_SMALL,
+                false);
+        if (picked) chipBg.setStroke(Math.max(1, dp(.85f)), GOLD);
+        chip.setBackground(
+            new android.graphics.drawable.RippleDrawable(
+                ColorStateList.valueOf(AppStyle.RIPPLE),
+                chipBg,
+                AppStyle.shape(this, Color.WHITE, AppStyle.R_SMALL, false)));
         AppStyle.setTypeface(
-            chip,
-            category.equals(filmCategory) ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
+            chip, picked ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_MEDIUM);
         chip.setOnClickListener(
             v -> {
+              clearFavoriteMenu();
               filmCategory = category;
-              // 该分类动过手就回到上次停留的位置，没动过就从第一张开始。
               pendingFilmScrollX = categoryScrollX.getOrDefault(category, 0);
               buildPanel();
             });
-        LinearLayout.LayoutParams chipLayout = new LinearLayout.LayoutParams(0, dp(40), 1);
-        chipLayout.rightMargin = dp(3);
-        filters.addView(chip, chipLayout);
+        LinearLayout.LayoutParams chipLayout = new LinearLayout.LayoutParams(-2, dp(30));
+        chipLayout.rightMargin = dp(5);
+        categoryRow.addView(chip, chipLayout);
+        if (picked) selectedChip = chip;
       }
-      add(editor, filters, -1, 40);
-      gap(editor, 8);
+      categoryScroll.addView(categoryRow);
+      add(editor, categoryScroll, -1, 30);
+      gap(editor, 12);
+      final TextView keepSelectedChip = selectedChip;
+      categoryScroll.post(
+          () -> {
+            if (keepSelectedChip != null)
+              categoryScroll.scrollTo(Math.max(0, keepSelectedChip.getLeft() - dp(6)), 0);
+          });
+
       // 画廊式胶片选择：方形缩略图就是「当前这张照片用这卷胶片显影后的样子」，标签在下方，
-      // 选中用 2dp 白色描边。缩略图仍逐卷独立 open，但显影进程只解码一次 1024px 源图；
-      // 引擎完成规定的 800px 显影后，再把返回值和缓存压到卡片尺寸。
+      // 选中用 2dp 金色描边。缩略图仍逐卷独立 open，显影进程只解码一次源图。
       final int thumbSize = 88, thumbGap = 10, labelHeight = 22;
       final int stride = thumbSize + thumbGap;
       final int cardHeight = thumbSize + 7 + labelHeight + 4;
       syncThumbCache();
-
-      HorizontalScrollView filmScroll = new HorizontalScrollView(this);
-      filmScroll.setHorizontalScrollBarEnabled(false);
-      filmScroll.setClipToPadding(false);
-      filmCards = horizontal();
-      filmCards.setPadding(0, 0, dp(12), 0);
-      filmScroll.addView(filmCards);
-
       thumbTargets.clear();
+      filmBadges.clear();
+      filmFrames.clear();
       final List<ImageView> thumbViews = new ArrayList<>();
       final List<String> thumbStocks = new ArrayList<>();
-      int position = 0;
-      for (Stock stock : films) {
-        String category = category(stock);
-        if (!filmCategory.equals("全部") && !filmCategory.equals(category)) continue;
-        boolean selected = stock.id.equals(settings.optString("film_stock"));
-        final int index = position;
-        LinearLayout card = vertical();
-        card.setSelected(selected);
-        card.setFocusable(true);
-
-        FrameLayout frame = new FrameLayout(this);
-        GradientDrawable ring = box(Color.TRANSPARENT, AppStyle.R_MEDIUM);
-        if (selected) ring.setStroke(dp(2), GOLD);
-        // The image and its inset stroke share the same bounds/radius (no fourth corner size).
-        frame.setForeground(ring);
-        ImageView thumb = new ImageView(this);
-        thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        thumb.setTag(stock.id);
-        thumb.setBackground(box(AppStyle.CONTROL, AppStyle.R_MEDIUM));
-        thumb.setClipToOutline(true);
-        frame.addView(thumb, new FrameLayout.LayoutParams(-1, -1));
-        add(card, frame, thumbSize, thumbSize);
-
-        // 标签保持原来的样子：选中用强调色、未选中用正文色，不加底。
-        TextView name =
-            text(shortName(stock.name), AppStyle.TYPE_MICRO, selected ? GOLD : INK);
-        AppStyle.setTypeface(
-            name, selected ? AppStyle.FONT_MEDIUM : AppStyle.FONT_REGULAR);
-        name.setSingleLine(true);
-        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        name.setGravity(Gravity.CENTER);
-        name.setPadding(dp(6), 0, dp(6), 0);
-        LinearLayout.LayoutParams nameLayout = new LinearLayout.LayoutParams(-1, dp(labelHeight));
-        nameLayout.topMargin = dp(7);
-        card.addView(name, nameLayout);
-
-        card.setContentDescription("胶片 " + stock.name + (selected ? "，已选" : ""));
-        card.setOnClickListener(
-            v -> {
-              // 点中间那张一律不动；只有点当前视口最左 / 最右那张、且外侧还有胶片时，
-              // 才跟着滑一格，把外面的胶片带进来。
-              int base = filmScroll.getScrollX();
-              int target = base;
-              int total = filmCards.getChildCount();
-              int first = 0, last = total - 1;
-              for (int i = 0; i < total; i++) {
-                if (filmCards.getChildAt(i).getRight() > base + 1) {
-                  first = i;
-                  break;
-                }
-              }
-              int rightEdge = base + filmScroll.getWidth();
-              for (int i = total - 1; i >= 0; i--) {
-                if (filmCards.getChildAt(i).getLeft() < rightEdge - 1) {
-                  last = i;
-                  break;
-                }
-              }
-              int step = dp(stride);
-              if (index == first && index > 0) target = Math.max(0, base - step);
-              else if (index == last && index < total - 1) target = base + step;
-
-              String keepCategory = filmCategory;
-              set("film_stock", stock.id);
-              // 选胶片不跟着切分类，否则在「全部」下点一张卡，列表会突然变短。
-              filmCategory = keepCategory;
-              categoryScrollX.put(keepCategory, target);
-              pendingFilmScrollX = target;
-              scheduleRender();
-              buildPanel();
-            });
-        controls.add(card);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(thumbSize), dp(cardHeight));
-        lp.rightMargin = dp(thumbGap);
-        filmCards.addView(card, lp);
-        thumbViews.add(thumb);
-        thumbStocks.add(stock.id);
-        thumbTargets.put(stock.id, thumb);
-        position++;
+      List<Stock> visibleStocks = new ArrayList<>();
+      if (filmCategory.equals("收藏")) {
+        for (String group : new String[] {"彩色负片", "电影胶片", "反转片", "黑白"})
+          for (Stock stock : films)
+            if (group.equals(category(stock)) && isFavoriteFilm(stock.id)) visibleStocks.add(stock);
+      } else {
+        for (Stock stock : films)
+          if (filmCategory.equals("全部") || filmCategory.equals(category(stock)))
+            visibleStocks.add(stock);
       }
-      add(editor, filmScroll, -1, cardHeight);
-      final int targetScroll =
-          pendingFilmScrollX >= 0
-              ? pendingFilmScrollX
-              : Math.max(0, categoryScrollX.getOrDefault(filmCategory, 0));
-      pendingFilmScrollX = -1;
-      filmScroll
-          .getViewTreeObserver()
-          .addOnGlobalLayoutListener(
-              new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
-                public void onGlobalLayout() {
-                  if (filmScroll.getWidth() > 0) {
-                    filmScroll.scrollTo(targetScroll, 0);
-                    filmScroll.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                    fillVisibleThumbs(
-                        filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize));
+      if (filmCategory.equals("收藏") && visibleStocks.isEmpty()) {
+        TextView empty = text("长按胶片可收藏", AppStyle.TYPE_BODY, MUTED);
+        empty.setGravity(Gravity.CENTER);
+        empty.setTag("film.favorite.empty");
+        add(editor, empty, -1, Math.max(cardHeight, 160));
+        pendingFilmScrollX = -1;
+        filmScrollRef = null;
+        thumbViewsRef = new ArrayList<>();
+        thumbStocksRef = new ArrayList<>();
+        thumbStridePx = 0;
+        thumbSizePx = dp(thumbSize);
+      } else {
+        HorizontalScrollView filmScroll = new HorizontalScrollView(this);
+        AppStyle.hideScrollBars(filmScroll);
+        filmScroll.setClipToPadding(false);
+        filmCards = horizontal();
+        filmCards.setPadding(0, 0, dp(12), 0);
+        filmScroll.addView(filmCards);
+
+        int position = 0;
+        for (Stock stock : visibleStocks) {
+          boolean selected = stock.id.equals(settings.optString("film_stock"));
+          final int index = position++;
+          LinearLayout card = vertical();
+          card.setSelected(selected);
+          card.setFocusable(true);
+
+          FrameLayout frame = new FrameLayout(this);
+          GradientDrawable ring = box(Color.TRANSPARENT, 9f);
+          if (selected) ring.setStroke(dp(2), GOLD);
+          // The image and its inset stroke share the same bounds/radius.
+          frame.setForeground(ring);
+          ImageView thumb = new ImageView(this);
+          thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
+          thumb.setTag(stock.id);
+          thumb.setBackground(box(AppStyle.CONTROL, 9f));
+          thumb.setClipToOutline(true);
+          frame.addView(thumb, new FrameLayout.LayoutParams(-1, -1));
+          add(card, frame, thumbSize, thumbSize);
+
+          if (isFavoriteFilm(stock.id) && !filmCategory.equals("收藏")) {
+            ImageView badge = favoriteBadgeView();
+            FrameLayout.LayoutParams badgeParams =
+                new FrameLayout.LayoutParams(dp(14), dp(14), Gravity.TOP | Gravity.END);
+            badgeParams.topMargin = dp(5);
+            badgeParams.rightMargin = dp(5);
+            frame.addView(badge, badgeParams);
+            filmBadges.put(stock.id, badge);
+          }
+          filmFrames.put(stock.id, frame);
+
+          TextView name =
+              text(shortName(stock.name), AppStyle.TYPE_MICRO, selected ? GOLD : MUTED);
+          AppStyle.setTypeface(
+              name, selected ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_REGULAR);
+          name.setSingleLine(true);
+          name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+          name.setGravity(Gravity.CENTER);
+          name.setPadding(dp(6), 0, dp(6), 0);
+          LinearLayout.LayoutParams nameLayout = new LinearLayout.LayoutParams(-1, dp(labelHeight));
+          nameLayout.topMargin = dp(7);
+          card.addView(name, nameLayout);
+
+          card.setContentDescription(
+              "胶片 " + stock.name
+                  + (selected ? "，已选" : "")
+                  + (isFavoriteFilm(stock.id) ? "，已收藏" : ""));
+          card.setOnClickListener(
+              v -> {
+                clearFavoriteMenu();
+                // 点中间那张一律不动；只有点当前视口最左 / 最右那张、且外侧还有胶片时，
+                // 才跟着滑一格，把外面的胶片带进来。
+                int base = filmScroll.getScrollX();
+                int target = base;
+                int total = filmCards.getChildCount();
+                int first = 0, last = total - 1;
+                for (int i = 0; i < total; i++) {
+                  if (filmCards.getChildAt(i).getRight() > base + 1) {
+                    first = i;
+                    break;
                   }
                 }
+                int rightEdge = base + filmScroll.getWidth();
+                for (int i = total - 1; i >= 0; i--) {
+                  if (filmCards.getChildAt(i).getLeft() < rightEdge - 1) {
+                    last = i;
+                    break;
+                  }
+                }
+                int step = dp(stride);
+                if (index == first && index > 0) target = Math.max(0, base - step);
+                else if (index == last && index < total - 1) target = base + step;
+
+                String keepCategory = filmCategory;
+                set("film_stock", stock.id);
+                filmCategory = keepCategory;
+                categoryScrollX.put(keepCategory, target);
+                pendingFilmScrollX = target;
+                scheduleRender();
+                buildPanel();
               });
-      filmScroll.setOnScrollChangeListener(
-          (v, x, y, ox, oy) ->
-              fillVisibleThumbs(filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize)));
-      filmScrollRef = filmScroll;
-      thumbViewsRef = thumbViews;
-      thumbStocksRef = thumbStocks;
-      thumbStridePx = dp(stride);
-      thumbSizePx = dp(thumbSize);
-      gap(editor, 6);
+          card.setOnLongClickListener(
+              v -> {
+                Haptics.longPress(card);
+                openFavoriteMenu(stock.id, frame);
+                return true;
+              });
+          controls.add(card);
+          LinearLayout.LayoutParams lp =
+              new LinearLayout.LayoutParams(dp(thumbSize), dp(cardHeight));
+          lp.rightMargin = dp(thumbGap);
+          filmCards.addView(card, lp);
+          thumbViews.add(thumb);
+          thumbStocks.add(stock.id);
+          thumbTargets.put(stock.id, thumb);
+        }
+        add(editor, filmScroll, -1, cardHeight);
+        final int targetScroll =
+            pendingFilmScrollX >= 0
+                ? pendingFilmScrollX
+                : Math.max(0, categoryScrollX.getOrDefault(filmCategory, 0));
+        pendingFilmScrollX = -1;
+        filmScroll
+            .getViewTreeObserver()
+            .addOnGlobalLayoutListener(
+                new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+                  public void onGlobalLayout() {
+                    if (filmScroll.getWidth() > 0) {
+                      filmScroll.scrollTo(targetScroll, 0);
+                      filmScroll.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                      fillVisibleThumbs(
+                          filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize));
+                    }
+                  }
+                });
+        filmScroll.setOnScrollChangeListener(
+            (v, x, y, ox, oy) ->
+                fillVisibleThumbs(filmScroll, thumbViews, thumbStocks, dp(stride), dp(thumbSize)));
+        filmScrollRef = filmScroll;
+        thumbViewsRef = thumbViews;
+        thumbStocksRef = thumbStocks;
+        thumbStridePx = dp(stride);
+        thumbSizePx = dp(thumbSize);
+      }
+
+      gap(editor, 12);
       if (monochromeFilm()) blackWhiteFilterChoice();
       slider("exposure_compensation_ev", "胶片曝光", -3, 3, .1, " EV");
 
@@ -1971,7 +2737,7 @@ public final class MainActivity extends Activity {
       LinearLayout heading = horizontal();
       TextView title = text("印相材料", AppStyle.TYPE_BODY, INK);
       AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
-      heading.addView(title, new LinearLayout.LayoutParams(0, dp(40), 1));
+      heading.addView(title, new LinearLayout.LayoutParams(0, dp(34), 1));
       int paperCount = availablePapers().size();
       TextView pick = button("全部 " + paperCount + " 款", GOLD, AppStyle.CONTROL);
       pick.setPadding(dp(16), 0, dp(16), 0);
@@ -1982,8 +2748,8 @@ public final class MainActivity extends Activity {
       pick.setEllipsize(android.text.TextUtils.TruncateAt.END);
       pick.setOnClickListener(v -> chooseStock(false));
       if (paperCount > 1) add(heading, pick, -2, 32);
-      add(editor, heading, -1, 40);
-      gap(editor, 6);
+      add(editor, heading, -1, 34);
+      gap(editor, 8);
       Stock stock = find(papers, settings.optString("print_stock"));
       LinearLayout material = horizontal();
       material.setPadding(dp(14), dp(10), dp(14), dp(10));
@@ -2003,13 +2769,13 @@ public final class MainActivity extends Activity {
         controls.add(material);
       }
       add(editor, material, -1, 78);
+      gap(editor, 8);
       TextView linkedPaper = text("相纸与已选择的胶片联动，默认无需选择", AppStyle.TYPE_MICRO, MUTED);
       linkedPaper.setMaxLines(2);
-      add(editor, linkedPaper, -1, 40);
+      add(editor, linkedPaper, -1, -2);
+      gap(editor, 14);
       if (FilmStockPolicy.monochrome(settings.optString("film_stock"))) {
         paperGradeChoice();
-        gap(editor, 7);
-      } else {
         gap(editor, 14);
       }
       slider("print_brightness", "印相亮度", -2, 2, .05, " EV");
@@ -2022,9 +2788,6 @@ public final class MainActivity extends Activity {
     } else if (selectedTab == 4) {
       buildFramePanel();
     } else {
-      panelNote(
-          "质感从胶片计算而来",
-          "以物理画幅缩放颗粒与光晕，保留各胶片的特性。");
       slider("grain_amount", "银盐颗粒", 0, 2, .05, " ×");
       slider("halation_amount", "高光光晕", 0, 4, .1, " ×");
       lightLeakControls();
@@ -2043,7 +2806,7 @@ public final class MainActivity extends Activity {
       }
       // 测光：上游把「关闭」也当成一个档位（Custom），所以这里是一排意图而不是开关 + 下拉，
       // 免得开关关着、下面那行还亮着却不起作用。
-      gap(editor, 8);
+      gap(editor, 4);
       TextView meterLabel = text("测光", AppStyle.TYPE_LABEL, MUTED);
       meterLabel.setTag("editor.meter.label");
       add(editor, meterLabel, -1, 22);
@@ -2077,7 +2840,7 @@ public final class MainActivity extends Activity {
         meters.addView(chip, chipLayout);
       }
       add(editor, meters, -1, 38);
-      gap(editor, 14);
+      gap(editor, 16);
       LinearLayout format = horizontal();
       TextView label = text("胶片画幅", AppStyle.TYPE_LABEL, INK);
       format.addView(label, new LinearLayout.LayoutParams(0, dp(40), 1));
@@ -2106,9 +2869,9 @@ public final class MainActivity extends Activity {
       pickLayout.leftMargin = dp(10);
       format.addView(pick, pickLayout);
       add(editor, format, -1, 40);
-      gap(editor, 9);
+      gap(editor, 12);
       rule(editor);
-      gap(editor, 8);
+      gap(editor, 12);
       TextView reset = button("恢复默认显影参数", MUTED, AppStyle.CONTROL);
       reset.setOnClickListener(
           v ->
@@ -2185,7 +2948,7 @@ public final class MainActivity extends Activity {
                 .setNegativeButton("取消", null)
                 .show());
     add(editor, row, -1, 44);
-    gap(editor, 4);
+    gap(editor, 10);
   }
 
   private void paperGradeChoice() {
@@ -2209,11 +2972,11 @@ public final class MainActivity extends Activity {
     description.setSingleLine(false);
     heading.addView(description, new LinearLayout.LayoutParams(-2, dp(36), 0));
     add(editor, heading, -1, 36);
-    gap(editor, 2);
+    gap(editor, 6);
 
     HorizontalScrollView gradeScroll = new HorizontalScrollView(this);
     gradeScroll.setTag("paper_grade_scroll");
-    gradeScroll.setHorizontalScrollBarEnabled(false);
+    AppStyle.hideScrollBars(gradeScroll);
     gradeScroll.setClipToPadding(false);
     LinearLayout grades = horizontal();
     grades.setPadding(0, 0, dp(4), 0);
@@ -2312,6 +3075,7 @@ public final class MainActivity extends Activity {
     sw.setChecked(settings.optBoolean(key, fallback));
     sw.setPadding(0, dp(6), 0, dp(6));
     add(editor, sw, -1, 46);
+    gap(editor, 8);
     controls.add(sw);
     sw.setOnCheckedChangeListener(
         (v, on) -> {
@@ -2328,7 +3092,7 @@ public final class MainActivity extends Activity {
     pick.setTextSize(AppStyle.TYPE_LABEL);
     pick.setMinHeight(0);
     add(editor, pick, -1, 39);
-    gap(editor, 9);
+    gap(editor, 10);
     pick.setOnClickListener(
         v ->
             new Haptics.DialogBuilder(this)
@@ -2347,28 +3111,40 @@ public final class MainActivity extends Activity {
   private void buildGradePanel() {
     LinearLayout groups = horizontal();
     String[] sections = {"基础", "曲线", "颜色分级", "颜色混合", "暗角"};
-    for (String name : sections) {
+    for (int i = 0; i < sections.length; i++) {
+      String name = sections[i];
+      boolean picked = gradeSection.equals(name);
       TextView tab =
           button(
               name.equals("颜色混合") ? "HSL" : name,
-              gradeSection.equals(name) ? GOLD : MUTED,
-              gradeSection.equals(name) ? AppStyle.SELECTED : BG);
+              picked ? GOLD : MUTED,
+              picked ? AppStyle.ACCENT_SOFT : BG);
       tab.setTextSize(AppStyle.TYPE_MICRO);
       tab.setPadding(0, 0, 0, 0);
       tab.setMinHeight(0);
-      tab.setSelected(gradeSection.equals(name));
+      tab.setSelected(picked);
+      if (picked) {
+        GradientDrawable gbg = AppStyle.shape(this, AppStyle.ACCENT_SOFT, AppStyle.R_SMALL, false);
+        gbg.setStroke(Math.max(1, dp(.85f)), GOLD);
+        tab.setBackground(
+            new android.graphics.drawable.RippleDrawable(
+                ColorStateList.valueOf(AppStyle.RIPPLE),
+                gbg,
+                AppStyle.shape(this, Color.WHITE, AppStyle.R_SMALL, false)));
+      }
       AppStyle.setTypeface(
-          tab, gradeSection.equals(name) ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
+          tab, picked ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_MEDIUM);
       tab.setOnClickListener(
           v -> {
             gradeSection = name;
             buildPanel();
           });
-      groups.addView(tab, new LinearLayout.LayoutParams(0, dp(38), 1));
+      LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(0, dp(30), 1);
+      if (i > 0) tabParams.leftMargin = dp(4);
+      groups.addView(tab, tabParams);
     }
-    add(editor, groups, -1, 38);
-    gap(editor, 8);
-    toggle("grade_enabled", "启用调整", true);
+    add(editor, groups, -1, 30);
+    gap(editor, 16);
     if (gradeSection.equals("基础")) {
       slider("grade_temperature", "色温", -100, 100, 1, "");
       slider("grade_tint", "色调", -100, 100, 1, "");
@@ -2421,6 +3197,7 @@ public final class MainActivity extends Activity {
           });
       channelRow.addView(clear, new LinearLayout.LayoutParams(dp(48), dp(36)));
       add(editor, channelRow, -1, 36);
+      gap(editor, 12);
       int color =
           curveChannel.equals("r")
               ? AppStyle.CURVE_R
@@ -2462,7 +3239,7 @@ public final class MainActivity extends Activity {
                         buildPanel();
                       })
                   .show());
-      gap(editor, 12);
+      gap(editor, 14);
       String key = "balance_" + balanceZone;
       slider(key + "_hue", "色相", 0, 360, 1, " °");
       slider(key + "_saturation", "饱和度", 0, 100, 1, "");
@@ -2487,7 +3264,7 @@ public final class MainActivity extends Activity {
                         buildPanel();
                       })
                   .show());
-      gap(editor, 12);
+      gap(editor, 14);
       String key = "hsl_" + hslBand;
       slider(key + "_hue", "色相", -100, 100, 1, "");
       slider(key + "_saturation", "饱和度", -100, 100, 1, "");
@@ -2686,35 +3463,59 @@ public final class MainActivity extends Activity {
   }
 
   private void buildFramePanel() {
-
-    choice(
-        "边框样式",
-        new String[] {"无片边", "135 黑色齿孔", "135 暖色齿孔", "白色留边", "即时相纸"},
-        new String[] {"none", "135_black", "135_warm", "clean_white", "instant"},
-        "edge_style");
-    if (!settings.optString("edge_style", "none").equals("none")) {
+    FrameStyle style = FrameStyle.fromId(settings.optString("edge_style"));
+    LinearLayout header = horizontal();
+    header.setTag("editor.frame.card");
+    TextView title = text("边框样式", AppStyle.TYPE_LABEL, INK);
+    AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
+    add(header, title, -2, -2);
+    TextView currentStyle =
+        text(style.label, AppStyle.TYPE_MICRO, style == FrameStyle.NONE ? MUTED : GOLD);
+    currentStyle.setTag("editor.frame.current_style");
+    AppStyle.setTypeface(
+        currentStyle, style == FrameStyle.NONE ? AppStyle.FONT_REGULAR : AppStyle.FONT_SEMIBOLD);
+    currentStyle.setGravity(Gravity.END);
+    currentStyle.setSingleLine(true);
+    currentStyle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    LinearLayout.LayoutParams familyLayout = new LinearLayout.LayoutParams(0, -2, 1);
+    familyLayout.setMarginStart(dp(8));
+    header.addView(currentStyle, familyLayout);
+    add(editor, header, -1, -2);
+    gap(editor, 12);
+    addFrameStyleCards(editor, style);
+    if (style != FrameStyle.NONE) {
+      gap(editor, 14);
       slider("edge_amount", "边框宽度", 2, 15, .5, " %");
-      if (settings.optString("edge_style").startsWith("135"))
+    }
+    gap(editor, style != FrameStyle.NONE ? 4 : 12);
+    View sep = new View(this);
+    sep.setBackgroundColor(AppStyle.DIVIDER);
+    add(editor, sep, -1, 1);
+    gap(editor, 10);
+    addDateWatermarkRow(editor);
+
+    gap(editor, 12);
+    if (style != FrameStyle.NONE) {
+      if (style.film())
         slider("edge_frame_number", "底片编号", 1, 99, 1, "");
-      if (settings.optString("edge_style").equals("instant")) {
+      if (style == FrameStyle.INSTANT) {
         TextView caption =
             button("相纸文字  " + settings.optString("edge_caption", "添加英文或数字"), INK, AppStyle.CONTROL);
         add(editor, caption, -1, 39);
+        gap(editor, 10);
         caption.setOnClickListener(
             v -> editTextValue("edge_caption", "相纸文字", 42, "支持英文、数字、空格及 - . /，最多 42 字符"));
       }
     }
-    gap(editor, 8);
-    toggle("date_enabled", "显示日期", false);
     TextView date = button("日期文字  " + settings.optString("date_text"), INK, AppStyle.CONTROL);
     add(editor, date, -1, 39);
-    gap(editor, 8);
+    gap(editor, 10);
     date.setOnClickListener(
         v -> editTextValue("date_text", "日期文字", 24, "支持数字、空格、撇号、句点和逗号，最多 24 字符"));
     if (sourceMetadata.optLong("timestamp") > 0) {
       TextView shot = button("使用原片拍摄日期", GOLD, AppStyle.CONTROL);
       add(editor, shot, -1, 36);
-      gap(editor, 8);
+      gap(editor, 10);
       shot.setOnClickListener(
           v -> {
             set(
@@ -2730,8 +3531,142 @@ public final class MainActivity extends Activity {
         new String[] {"bottom_right", "bottom_left", "top_right", "top_left"},
         "date_corner");
     choice("日期颜色", new String[] {"琥珀橙", "暖白"}, new String[] {"orange", "white"}, "date_color");
+    gap(editor, 4);
     slider("date_size", "日期字号", .5, 3, .1, " ×");
     slider("date_intensity", "日期亮度", .1, 2, .05, " ×");
+  }
+
+  private void addFrameStyleCards(LinearLayout parent, FrameStyle selected) {
+    FrameStyle[] styles = {
+      FrameStyle.NONE, FrameStyle.BLACK_135, FrameStyle.SLIDE, FrameStyle.SHEET,
+      FrameStyle.WARM_135, FrameStyle.SILVER_135, FrameStyle.MEDIUM_120,
+      FrameStyle.WHITE, FrameStyle.INSTANT
+    };
+    HorizontalScrollView scroll = new HorizontalScrollView(this);
+    scroll.setTag("editor.frame.styles");
+    AppStyle.hideScrollBars(scroll);
+    LinearLayout row = horizontal();
+    row.setGravity(Gravity.TOP);
+    scroll.addView(row, new FrameLayout.LayoutParams(-2, -2));
+    View checked = null;
+    for (FrameStyle style : styles) {
+      boolean active = style == selected;
+      LinearLayout tile = vertical();
+      tile.setTag("editor.frame.style." + style.id);
+      tile.setGravity(Gravity.CENTER);
+      tile.setMinimumHeight(dp(62));
+      tile.setPadding(dp(3), dp(7), dp(3), dp(6));
+      tile.setFocusable(true);
+      tile.setSelected(active);
+      tile.setContentDescription(style.label);
+      GradientDrawable background =
+          AppStyle.shape(this, active ? AppStyle.ACCENT_SOFT : AppStyle.CONTROL, 9, true);
+      if (active) background.setStroke(Math.max(1, dp(1)), GOLD);
+      tile.setBackground(new android.graphics.drawable.RippleDrawable(
+          ColorStateList.valueOf(AppStyle.RIPPLE), background, null));
+      add(tile, frameStyleGlyph(style), 40, 28);
+      gap(tile, 4);
+      TextView label = text(style.cardLabel, AppStyle.TYPE_MICRO, active ? GOLD : MUTED);
+      AppStyle.setTypeface(label, AppStyle.FONT_SEMIBOLD);
+      label.setGravity(Gravity.CENTER);
+      label.setMaxLines(2);
+      label.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+      add(tile, label, -1, -2);
+      tile.setOnClickListener(v -> {
+        if (style == selected || exporting || activeImport != null) return;
+        set("edge_style", style.id);
+        scheduleRender();
+        buildPanel();
+      });
+      controls.add(tile);
+      LinearLayout.LayoutParams tileLayout = new LinearLayout.LayoutParams(dp(64), -2);
+      if (row.getChildCount() > 0) tileLayout.setMarginStart(dp(7));
+      row.addView(tile, tileLayout);
+      if (active) checked = tile;
+    }
+    View current = checked;
+    scroll.addOnLayoutChangeListener((v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
+      int width = r - l;
+      if (width <= 0 || width == oldR - oldL) return;
+      int gap = dp(7);
+      int minimumWidth = Math.round(dp(58) * Math.max(1f, getResources().getConfiguration().fontScale));
+      int perPage = Math.max(1, Math.min(4, (width + gap) / (minimumWidth + gap)));
+      int available = width - gap * (perPage - 1);
+      for (int index = 0; index < row.getChildCount(); index++) {
+        View child = row.getChildAt(index);
+        ViewGroup.LayoutParams params = child.getLayoutParams();
+        params.width = available / perPage + (index % perPage < available % perPage ? 1 : 0);
+        child.setLayoutParams(params);
+      }
+      if (current != null) scroll.post(() -> {
+        Rect rect = new Rect(0, 0, current.getWidth(), current.getHeight());
+        row.offsetDescendantRectToMyCoords(current, rect);
+        scroll.requestChildRectangleOnScreen(row, rect, true);
+      });
+    });
+    add(parent, scroll, -1, -2);
+  }
+
+  private View frameStyleGlyph(FrameStyle style) {
+    FrameLayout glyph = new FrameLayout(this);
+    int material = switch (style) {
+      case NONE -> AppStyle.SURFACE;
+      case BLACK_135 -> 0xff141312;
+      case WARM_135 -> 0xff573a25;
+      case SILVER_135 -> 0xff4b4b50;
+      case SLIDE -> 0xffe6e1d8;
+      case MEDIUM_120 -> 0xff312d2b;
+      case SHEET -> 0xff18181a;
+      case WHITE, INSTANT -> 0xfff5f0e5;
+    };
+    GradientDrawable outline = AppStyle.shape(this, material, 3, false);
+    int stroke = Math.max(1, dp(1));
+    if (style == FrameStyle.NONE) {
+      outline.setStroke(stroke, AppStyle.OUTLINE, dp(3), dp(2));
+    } else {
+      boolean paper = style == FrameStyle.SLIDE || style == FrameStyle.WHITE || style == FrameStyle.INSTANT;
+      outline.setStroke(stroke, paper ? 0xffb8b0a4 : 0xff45454b);
+      View aperture = new View(this);
+      aperture.setBackgroundColor(0xff5a6674);
+      int width = style == FrameStyle.SLIDE || style == FrameStyle.MEDIUM_120 ? 20
+          : style == FrameStyle.SHEET || style == FrameStyle.WHITE ? 30 : 26;
+      int height = style == FrameStyle.SHEET || style == FrameStyle.WHITE ? 20 : 14;
+      FrameLayout.LayoutParams apertureLayout =
+          new FrameLayout.LayoutParams(dp(width), dp(height), Gravity.CENTER);
+      if (style == FrameStyle.INSTANT) apertureLayout.bottomMargin = dp(5);
+      glyph.addView(aperture, apertureLayout);
+    }
+    glyph.setBackground(outline);
+    glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    return glyph;
+  }
+
+  private void addDateWatermarkRow(LinearLayout parent) {
+    LinearLayout row = horizontal();
+    row.setMinimumHeight(dp(AppStyle.TOUCH_MIN));
+    LinearLayout labels = vertical();
+    TextView title = text("日期水印", AppStyle.TYPE_BODY, INK);
+    AppStyle.setTypeface(title, AppStyle.FONT_SEMIBOLD);
+    add(labels, title, -1, -2);
+    TextView detail = text(settings.optString("date_text") + " · 直立七段数码",
+        AppStyle.TYPE_MICRO, MUTED);
+    AppStyle.setNumericTypeface(detail);
+    add(labels, detail, -1, -2);
+    LinearLayout.LayoutParams labelLayout = new LinearLayout.LayoutParams(0, -2, 1);
+    labelLayout.setMarginEnd(dp(8));
+    row.addView(labels, labelLayout);
+    Switch toggle = new Switch(this);
+    AppStyle.styleSwitch(toggle);
+    toggle.setTag("editor.frame.date");
+    toggle.setContentDescription("日期水印");
+    toggle.setChecked(settings.optBoolean("date_enabled", false));
+    add(row, toggle, -2, -2);
+    controls.add(toggle);
+    toggle.setOnCheckedChangeListener((view, enabled) -> {
+      set("date_enabled", enabled);
+      scheduleRender();
+    });
+    add(parent, row, -1, -2);
   }
 
   private boolean descendant(View child, View parent) {
@@ -2755,6 +3690,10 @@ public final class MainActivity extends Activity {
   }
 
   private void handleBack() {
+    if (cropPage != null) {
+      cropPage.navigateBack();
+      return;
+    }
     if (sponsorPage != null) {
       sponsorPage.navigateBack();
       return;
@@ -2762,6 +3701,14 @@ public final class MainActivity extends Activity {
     if (aboutPage != null) {
       // 免责声明子页先退回概览，再退才关闭整页。
       aboutPage.navigateBack();
+      return;
+    }
+    if (activeHomeTab == HomeTab.LIGHT_TABLE && lightTablePage != null) {
+      lightTablePage.navigateBack();
+      return;
+    }
+    if (activeHomeTab == HomeTab.SETTINGS && settingsPage != null) {
+      settingsPage.navigateBack();
       return;
     }
     if (batchImportRunning) {
@@ -2819,43 +3766,61 @@ public final class MainActivity extends Activity {
   }
 
   private void lightLeakControls() {
+    gap(editor, 4);
+    View sep = new View(this);
+    sep.setBackgroundColor(AppStyle.DIVIDER);
+    add(editor, sep, -1, 1);
+    gap(editor, 12);
     LinearLayout header = horizontal();
     TextView title = text("漏光", AppStyle.TYPE_BODY, INK);
     AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
-    header.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
+    header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
     LinearLayout modes = horizontal();
-    GradientDrawable outline = AppStyle.pill(this, BG, false);
-    outline.setStroke(Math.max(1, dp(.6f)), LINE);
-    modes.setBackground(outline);
-    modes.setPadding(dp(3), dp(3), dp(3), dp(3));
+    modes.setBackground(AppStyle.shape(this, AppStyle.CONTROL, AppStyle.R_SMALL, true));
+    modes.setPadding(dp(2), dp(2), dp(2), dp(2));
     TextView color = button("彩光", MUTED, BG);
     TextView firstRoll = button("开卷", MUTED, BG);
     color.setTag("editor.light_leak.color");
     firstRoll.setTag("editor.light_leak.first_roll");
     for (TextView mode : new TextView[] {color, firstRoll}) {
-      mode.setTextSize(AppStyle.TYPE_LABEL);
+      mode.setTextSize(AppStyle.TYPE_MICRO);
       mode.setMinHeight(0);
       modes.addView(mode, new LinearLayout.LayoutParams(0, -1, 1));
     }
-    add(header, modes, 144, 40);
-    add(editor, header, -1, AppStyle.TOUCH_MIN);
+    add(header, modes, 116, 30);
+    add(editor, header, -1, 34);
+    gap(editor, 8);
     updateLightLeakModes(color, firstRoll);
     color.setOnClickListener(v -> selectLightLeakMode(false, color, firstRoll));
     firstRoll.setOnClickListener(v -> selectLightLeakMode(true, color, firstRoll));
 
-    slider(LIGHT_LEAK_AMOUNT, "强度", 0, 100, 1, "%");
+    slider(LIGHT_LEAK_AMOUNT, "漏光强度", 0, 100, 1, " %");
     SeekBar strength = sliders.get(LIGHT_LEAK_AMOUNT);
     strength.setContentDescription("漏光强度");
     TextView value = values.get(LIGHT_LEAK_AMOUNT);
-    TextView shuffle = button("换一个", INK, AppStyle.CONTROL);
+    LinearLayout shuffle = horizontal();
     shuffle.setTag("editor.light_leak.shuffle");
+    shuffle.setGravity(Gravity.CENTER);
+    shuffle.setClickable(true);
+    shuffle.setFocusable(true);
     shuffle.setContentDescription("换一个漏光效果");
-    shuffle.setTextSize(AppStyle.TYPE_LABEL);
-    shuffle.setMinHeight(0);
-    shuffle.setPadding(0, 0, 0, 0);
-    shuffle.setSingleLine(true);
-    shuffle.setBackground(new android.graphics.drawable.InsetDrawable(
-        shuffle.getBackground(), 0, dp(5), 0, dp(5)));
+    shuffle.setBackground(
+        new android.graphics.drawable.RippleDrawable(
+            ColorStateList.valueOf(AppStyle.RIPPLE),
+            AppStyle.shape(this, AppStyle.CONTROL, 9f, true),
+            AppStyle.shape(this, Color.WHITE, 9f, false)));
+    ImageView dice = new ImageView(this);
+    dice.setImageResource(R.drawable.ic_ui_dice);
+    dice.setImageTintList(ColorStateList.valueOf(INK));
+    dice.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    LinearLayout.LayoutParams diceParams = new LinearLayout.LayoutParams(dp(16), dp(16));
+    diceParams.rightMargin = dp(6);
+    shuffle.addView(dice, diceParams);
+    TextView shuffleLabel = text("换一个", AppStyle.TYPE_LABEL, INK);
+    AppStyle.setTypeface(shuffleLabel, AppStyle.FONT_SEMIBOLD);
+    shuffleLabel.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    shuffle.addView(shuffleLabel, new LinearLayout.LayoutParams(-2, -2));
+    controls.add(shuffle);
     shuffle.setOnClickListener(
         v -> {
           if (exporting || activeImport != null || destroyed) return;
@@ -2863,11 +3828,12 @@ public final class MainActivity extends Activity {
           if (settings.optInt(LIGHT_LEAK_AMOUNT) == 0) {
             set(LIGHT_LEAK_AMOUNT, LIGHT_LEAK_START_AMOUNT);
             strength.setProgress(LIGHT_LEAK_START_AMOUNT);
-            refreshSliderValue(LIGHT_LEAK_AMOUNT, LIGHT_LEAK_START_AMOUNT, "%", strength, value);
+            refreshSliderValue(LIGHT_LEAK_AMOUNT, LIGHT_LEAK_START_AMOUNT, " %", strength, value);
           }
           scheduleRender();
         });
-    add(editor, shuffle, -1, AppStyle.TOUCH_MIN);
+    add(editor, shuffle, -1, 38);
+    gap(editor, 14);
   }
 
   private void selectLightLeakMode(boolean first, TextView color, TextView firstRoll) {
@@ -2884,9 +3850,13 @@ public final class MainActivity extends Activity {
     firstRoll.setSelected(first);
     for (TextView mode : new TextView[] {color, firstRoll}) {
       boolean selected = mode.isSelected();
-      AppStyle.pillAction(mode, selected ? GOLD : MUTED,
-          selected ? AppStyle.SELECTED : Color.TRANSPARENT);
-      AppStyle.setTypeface(mode, selected ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
+      mode.setTextColor(selected ? INK : MUTED);
+      mode.setBackground(
+          new android.graphics.drawable.RippleDrawable(
+              ColorStateList.valueOf(AppStyle.RIPPLE),
+              selected ? AppStyle.selectedShape(this, 6f) : null,
+              AppStyle.shape(this, Color.WHITE, 6f, false)));
+      AppStyle.setTypeface(mode, selected ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_MEDIUM);
       mode.setPadding(0, 0, 0, 0);
     }
   }
@@ -2908,25 +3878,29 @@ public final class MainActivity extends Activity {
 
   private void slider(
       String key, String label, double min, double max, double step, String suffix) {
-    LinearLayout line = horizontal();
+    slider(editor, key, label, min, max, step, suffix);
+  }
+
+  private void slider(
+      LinearLayout parent, String key, String label, double min, double max, double step,
+      String suffix) {
+    LinearLayout row = vertical();
+    LinearLayout header = horizontal();
+    header.setMinimumHeight(dp(16));
     TextView name = text(label, AppStyle.TYPE_BODY, INK);
-    name.setGravity(Gravity.CENTER_VERTICAL);
+    AppStyle.setTypeface(name, AppStyle.FONT_MEDIUM);
     name.setMaxLines(2);
     name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-    boolean narrow = narrowControls();
-    add(line, name, narrow ? 66 : 76, 48);
+    LinearLayout.LayoutParams nameLayout = new LinearLayout.LayoutParams(0, -2, 1);
+    nameLayout.setMarginEnd(dp(8));
+    header.addView(name, nameLayout);
     TextView value = text("", AppStyle.TYPE_LABEL, AppStyle.VALUE);
     AppStyle.setNumericTypeface(value);
-    value.setGravity(Gravity.CENTER);
+    AppStyle.setTypeface(value, AppStyle.FONT_SEMIBOLD);
+    value.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
     value.setSingleLine(true);
-    value.setHorizontallyScrolling(false);
-    value.setIncludeFontPadding(false);
-    value.setPadding(dp(4), 0, dp(4), 0);
-    value.setAutoSizeTextTypeUniformWithConfiguration(
-        8, 11, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
-    GradientDrawable valueBox = AppStyle.pill(this, AppStyle.FIELD, false);
-    valueBox.setStroke(Math.max(1, dp(.6f)), AppStyle.OUTLINE);
-    value.setBackground(valueBox);
+    add(header, value, -2, -2);
+    add(row, header, -1, -2);
     AdjustmentSeekBar bar = new AdjustmentSeekBar(this, sliderColors(key));
     bar.setMax((int) Math.round((max - min) / step));
     double defaultValue = sliderDefault(key);
@@ -2935,15 +3909,13 @@ public final class MainActivity extends Activity {
     if (min < 0 && max > 0) bar.setDetentProgress((int) Math.round(-min / step));
     bar.setContentDescription(label);
     controls.add(bar);
-    LinearLayout.LayoutParams trackLayout = new LinearLayout.LayoutParams(0, dp(48), 1);
-    trackLayout.leftMargin = dp(4);
-    trackLayout.rightMargin = dp(6);
-    line.addView(bar, trackLayout);
-    add(line, value, narrow ? 68 : 72, 32);
-    add(editor, line, -1, 56);
+    add(row, bar, -1, AppStyle.TOUCH_PRIMARY);
+    LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+    rowParams.bottomMargin = dp(10);
+    parent.addView(row, rowParams);
     sliders.put(key, bar);
     values.put(key, value);
-    value.setText(number(settings.optDouble(key, defaultValue), suffix));
+    value.setText(number(key, settings.optDouble(key, defaultValue), suffix));
     if (Build.VERSION.SDK_INT >= 30) bar.setStateDescription(value.getText());
     bar.setOnResetListener(
         () -> {
@@ -2952,7 +3924,9 @@ public final class MainActivity extends Activity {
           set(key, defaultValue);
           bar.setProgress((int) Math.round((defaultValue - min) / step));
           refreshSliderValue(key, defaultValue, suffix, bar, value);
-          bar.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
+          if (Haptics.enabled) {
+            bar.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
+          }
           scheduleRender();
         });
     bar.setOnSeekBarChangeListener(
@@ -2989,7 +3963,7 @@ public final class MainActivity extends Activity {
 
   private void refreshSliderValue(
       String key, double v, String suffix, SeekBar bar, TextView value) {
-    value.setText(number(v, suffix));
+    value.setText(number(key, v, suffix));
     if (Build.VERSION.SDK_INT >= 30) bar.setStateDescription(value.getText());
     if (key.startsWith("balance_") && key.endsWith("_hue")) {
       String saturation = key.substring(0, key.length() - 4) + "_saturation";
@@ -3000,9 +3974,22 @@ public final class MainActivity extends Activity {
   }
 
   private int[] sliderColors(String key) {
-    if (key.equals("grade_temperature")) return new int[] {0xff659ee8, 0xff999292, 0xffffa34e};
+    boolean light = AppStyle.isLight();
+    int[] accentTrack =
+        light
+            ? new int[] {0xffc2c2cb, 0xff8e8e98, 0xffc83422}
+            : new int[] {0xff3a3a42, 0xff6a6a74, 0xfff0523d};
+    if (key.equals("edge_amount")
+        || key.equals("exposure_compensation_ev")
+        || key.equals("grade_exposure")) return accentTrack;
+    if (key.equals("grade_temperature"))
+      return light
+          ? new int[] {0xff4b7db8, 0xffb8b8c2, 0xffd98236}
+          : new int[] {0xff5288c8, 0xff50505a, 0xffe2944b};
     if (key.equals("grade_tint") || key.equals("m_filter_shift"))
-      return new int[] {0xff6dbb8c, 0xff8b858d, 0xffd77cbb};
+      return light
+          ? new int[] {0xff3d9465, 0xffb8b8c2, 0xffb84c90}
+          : new int[] {0xff4ba876, 0xff50505a, 0xffc95aa0};
     if (key.equals("y_filter_shift")) return new int[] {0xff699fe6, 0xff92908a, 0xffe7c64d};
     if (key.startsWith("hsl_")) {
       String band = key.substring(4, key.lastIndexOf('_'));
@@ -3038,10 +4025,8 @@ public final class MainActivity extends Activity {
         return new int[] {0xff626268, mixColor(color, 0xff85858b, .5f), color};
       }
     }
-    if (key.equals("grade_saturation")) return new int[] {0xff63636b, 0xffbe9570, 0xffff9348};
-    if (key.equals("exposure_compensation_ev")
-        || key.equals("print_brightness")
-        || key.equals("grade_exposure")
+    if (key.equals("grade_saturation")) return accentTrack;
+    if (key.equals("print_brightness")
         || key.equals("grade_brightness")
         || key.equals("grade_contrast")
         || key.equals("grade_shadows")
@@ -3049,8 +4034,8 @@ public final class MainActivity extends Activity {
         || key.equals("grade_black")
         || key.equals("grade_white")
         || key.startsWith("grade_vignette")
-        || key.endsWith("_luminance")) return new int[] {0xff53535c, 0xff909098, 0xffd8d8dd};
-    return new int[] {0xff67646a, 0xffac7e58, 0xffff7a1a};
+        || key.endsWith("_luminance")) return new int[] {AppStyle.SLIDER_TRACK, AppStyle.SLIDER_TRACK};
+    return accentTrack;
   }
 
   private int hueColor(float hue) {
@@ -3064,8 +4049,10 @@ public final class MainActivity extends Activity {
         Math.round(Color.blue(from) * (1 - weight) + Color.blue(to) * weight));
   }
 
-  private String number(double value, String suffix) {
-    if ("%".equals(suffix)) return Math.round(value) + suffix;
+  private String number(String key, double value, String suffix) {
+    if (key.equals("edge_amount")) return String.format(Locale.US, "%.1f%s", value, suffix);
+    if (key.equals("edge_frame_number")) return Long.toString(Math.round(value));
+    if (suffix != null && suffix.trim().equals("%")) return Math.round(value) + suffix;
     return String.format(
         Locale.US, "%s%.2f%s", value > 0 && !suffix.contains("×") ? "+" : "", value, suffix);
   }
@@ -3279,11 +4266,20 @@ public final class MainActivity extends Activity {
   }
 
   private String editParams(JSONObject recipe, JSONObject metadata) {
+    return editParams(recipe, metadata, false);
+  }
+
+  private String editParams(JSONObject recipe, JSONObject metadata, boolean preserveFrameAlpha) {
     try {
       JSONObject j = new JSONObject(recipe.toString());
+      j.remove("edge_preserve_alpha");
+      if (preserveFrameAlpha) j.put("edge_preserve_alpha", true);
       Stock stock = find(films, recipe.optString("film_stock"));
+      boolean monochrome = FilmStockPolicy.monochrome(recipe.optString("film_stock"));
+      if (monochrome) j.put("silver_highlight_edr", true);
+      else j.remove("silver_highlight_edr");
       if (recipe.optInt(LIGHT_LEAK_AMOUNT) > 0)
-        j.put("light_leak_monochrome", FilmStockPolicy.monochrome(recipe.optString("film_stock")));
+        j.put("light_leak_monochrome", monochrome);
       j.put("film_label", stock == null ? "" : shortName(stock.name));
       JSONObject source = metadata == null ? new JSONObject() : metadata;
       j.put("source_make", source.optString("make"));
@@ -3470,7 +4466,7 @@ public final class MainActivity extends Activity {
     final String backendKey = galleryBackendKey();
     final String photoKey = file == null ? null : ThumbnailDiskCache.key(file.getAbsolutePath());
     final String diskKey = file == null ? null : photoKey + "-" + ThumbnailDiskCache.key(
-        "neutral-gallery-v2", file.getAbsolutePath(), Long.toString(file.length()),
+        "neutral-gallery-v3", file.getAbsolutePath(), Long.toString(file.length()),
         Long.toString(file.lastModified()), backendKey, Integer.toString(sourceEdge), renderParams,
         Integer.toString(postLongEdge));
     if (diskKey != null) thumbStockDiskKeys.put(stock, diskKey);
@@ -3535,7 +4531,9 @@ public final class MainActivity extends Activity {
                   activeRenderer.openFile(file.getAbsolutePath(), openParams1, sourceEdge);
                 else activeRenderer.open(input, openParams1);
                 long opened = SystemClock.elapsedRealtime();
-                made = activeRenderer.render(renderParams, "{}", false, postLongEdge);
+                String thumbEdits = FilmStockPolicy.monochrome(stock)
+                    ? "{\"silver_highlight_edr\":true}" : "{}";
+                made = activeRenderer.render(renderParams, thumbEdits, false, postLongEdge);
                 ++thumbRenderCount;
                 if (!destroyed && diskKey != null && backendKey.equals(galleryBackendKey())
                     && !removedGalleryPhotos.contains(photoKey) && thumbWrites.get() < 2) {
@@ -3736,7 +4734,7 @@ public final class MainActivity extends Activity {
           String p = params();
           String recipeForResult = settings.toString();
           Bitmap input = source;
-          String edits = editParams();
+          String edits = editParams(settings, sourceMetadata, true);
           File original = sourceFile;
           boolean raw = sourceRaw;
           worker.execute(
@@ -3747,6 +4745,8 @@ public final class MainActivity extends Activity {
                   long start = System.nanoTime();
                   Bitmap image = renderer.render(p, edits, false);
                   JSONObject comparison = new JSONObject(edits);
+                  comparison.remove("edge_preserve_alpha");
+                  comparison.remove("silver_highlight_edr");
                   comparison.put("grade_enabled", false);
                   comparison.put("date_enabled", false);
                   comparison.remove(LIGHT_LEAK_AMOUNT);
@@ -4175,7 +5175,9 @@ public final class MainActivity extends Activity {
                   job.name,
                   stored.getAbsolutePath(),
                   selected.timestamp,
-                  selected.mediaId));
+                  selected.mediaId,
+                  PhotoLabels.format(stored, job.name),
+                  stored.length()));
           stored = null;
           writeImportDiagnostic(job, "completed", null);
         } finally {
@@ -4333,13 +5335,16 @@ public final class MainActivity extends Activity {
     main.post(this::pumpHomeThumbnails);
     activeImport = null;
     ArrayList<Frame> added = new ArrayList<>();
+    long importedAt = nextRecentTimestamp();
     for (PendingImport item : imported) {
       Frame frame =
           new Frame(item.id, item.name, item.path, pristineParamsJson());
       frame.sourceTimestamp = item.sourceTimestamp;
-      frame.importedAt = System.currentTimeMillis();
+      frame.importedAt = importedAt;
       frame.sourceMediaId = String.valueOf(item.mediaId);
       frame.edited = false;
+      frame.formatLabel = item.formatLabel;
+      frame.fileSize = item.fileSize;
       library.add(frame);
       added.add(frame);
     }
@@ -4359,6 +5364,11 @@ public final class MainActivity extends Activity {
           .show();
       return;
     }
+    boolean transitionedFromEmpty = importStartedFromEmpty && !imported.isEmpty();
+    if (transitionedFromEmpty) {
+      // Avoid flashing the top progress banner when transitioning from empty welcome card to gallery.
+      homeImportProgressVisible = false;
+    }
     syncHeroLook();
     refreshHistory();
     if (imported.isEmpty()) {
@@ -4374,8 +5384,16 @@ public final class MainActivity extends Activity {
           .show();
       return;
     }
-    setHomeImportHint("已导入 " + imported.size() + " 张 · 点击任意照片即可编辑");
-    completeHomeImportProgress(imported.size(), failed);
+    setHomeImportHint("");
+    if (transitionedFromEmpty) {
+      resetHomeImportButton();
+      showNotice(
+          failed > 0
+              ? String.format(Locale.CHINA, "已导入 %d 张 · %d 张跳过", imported.size(), failed)
+              : String.format(Locale.CHINA, "已导入 %d 张照片", imported.size()));
+    } else {
+      completeHomeImportProgress(imported.size(), failed);
+    }
     if (failed > 0) {
       new Haptics.DialogBuilder(this)
           .setTitle("部分照片已导入")
@@ -4403,11 +5421,145 @@ public final class MainActivity extends Activity {
     showNotice("已取消导入");
   }
 
+  private android.graphics.drawable.Drawable tintedButtonIcon(int resId, int sizeDp, int color) {
+    android.graphics.drawable.Drawable d = getDrawable(resId);
+    if (d == null) return null;
+    d = d.mutate();
+    int px = dp(sizeDp);
+    d.setBounds(0, 0, px, px);
+    d.setTint(color);
+    return d;
+  }
+
+  private void styleHomeTopButton(TextView view, boolean primary) {
+    boolean light = AppStyle.isLight();
+    int fill = primary ? AppStyle.PRIMARY : (light ? AppStyle.SURFACE : AppStyle.CONTROL);
+    int stroke = primary ? AppStyle.PRIMARY : AppStyle.OUTLINE;
+    int ink = primary ? AppStyle.ON_PRIMARY : AppStyle.INK;
+    int iconRes = primary ? R.drawable.ic_ui_add : R.drawable.ic_ui_manage;
+    view.setTextSize(AppStyle.TYPE_LABEL);
+    AppStyle.setTypeface(view, AppStyle.FONT_BOLD);
+    view.setTextColor(ink);
+    view.setGravity(Gravity.CENTER);
+    view.setSingleLine(true);
+    view.setIncludeFontPadding(false);
+    view.setMinHeight(dp(AppStyle.TOUCH_MIN));
+    view.setMinimumHeight(dp(AppStyle.TOUCH_MIN));
+    view.setCompoundDrawablePadding(dp(5));
+    view.setFocusable(true);
+    view.setClickable(true);
+    GradientDrawable box = AppStyle.shape(this, fill, 10f, false);
+    box.setStroke(Math.max(1, dp(.9f)), stroke);
+    GradientDrawable mask = AppStyle.shape(this, Color.WHITE, 10f, false);
+    android.graphics.drawable.RippleDrawable ripple =
+        new android.graphics.drawable.RippleDrawable(
+            ColorStateList.valueOf(AppStyle.RIPPLE), box, mask);
+    view.setBackground(new android.graphics.drawable.InsetDrawable(ripple, 0, dp(4), 0, dp(4)));
+    // Restore horizontal & vertical padding AFTER setBackground(), since InsetDrawable overrides it.
+    view.setPadding(dp(12), dp(4), dp(12), dp(4));
+    view.setCompoundDrawablesRelative(tintedButtonIcon(iconRes, 14, ink), null, null, null);
+  }
+
+  private void styleHomeFilterPill(TextView view, boolean active) {
+    boolean light = AppStyle.isLight();
+    int fill = active ? (light ? 0xffffffff : 0xff222228) : (light ? 0xffe4e4e9 : 0xff141418);
+    int stroke = active ? (light ? 0xffc8c8d2 : 0xff363640) : (light ? 0xffd2d2da : 0xff24242c);
+    int ink = active ? AppStyle.INK : AppStyle.MUTED;
+    GradientDrawable box = AppStyle.shape(this, fill, AppStyle.R_SMALL, false);
+    box.setStroke(Math.max(1, dp(.9f)), stroke);
+    GradientDrawable mask = AppStyle.shape(this, Color.WHITE, AppStyle.R_SMALL, false);
+    view.setBackground(
+        new android.graphics.drawable.RippleDrawable(
+            ColorStateList.valueOf(AppStyle.RIPPLE), box, mask));
+    view.setPadding(dp(12), 0, dp(12), 0);
+    view.setTextColor(ink);
+    AppStyle.setTypeface(view, active ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_MEDIUM);
+  }
+
+  private void attachImportSlotTo(FrameLayout host) {
+    if (homeImportSlot == null || host == null) return;
+    if (homeImportSlot.getParent() == host) return;
+    if (homeImportSlot.getParent() instanceof ViewGroup oldParent)
+      oldParent.removeView(homeImportSlot);
+    host.addView(homeImportSlot, new FrameLayout.LayoutParams(-1, -2));
+  }
+
+  private void syncHomeModeChrome() {
+    boolean empty = library.isEmpty();
+    boolean selecting = selectionActive();
+    if (empty) homeFavoritesOnly = false;
+    if (homeLogo != null) homeLogo.setTextSize(empty ? 28 : 23);
+    if (homeSlogan != null) homeSlogan.setVisibility(empty ? View.VISIBLE : View.GONE);
+    if (homeTopActions != null) {
+      homeTopActions.setVisibility(!empty && !selecting ? View.VISIBLE : View.GONE);
+    }
+    if (homeTopImportButton != null) {
+      boolean canImport = !exporting && !batchImportRunning && !selecting;
+      homeTopImportButton.setEnabled(canImport);
+      homeTopImportButton.setAlpha(canImport ? 1f : .45f);
+    }
+    if (homeManage != null) {
+      boolean canManage = !empty && !selecting && !batchImportRunning;
+      homeManage.setVisibility(empty || selecting ? View.GONE : View.VISIBLE);
+      homeManage.setEnabled(canManage);
+      homeManage.setAlpha(canManage ? 1f : .45f);
+    }
+    if (homeEmptyWelcome != null) homeEmptyWelcome.setVisibility(empty ? View.VISIBLE : View.GONE);
+    if (homePopulatedSection != null)
+      homePopulatedSection.setVisibility(empty ? View.GONE : View.VISIBLE);
+    if (homeFilterBar != null)
+      homeFilterBar.setVisibility(!empty && !selecting ? View.VISIBLE : View.GONE);
+    if (homeSelectionHeader != null)
+      homeSelectionHeader.setVisibility(!empty && selecting ? View.VISIBLE : View.GONE);
+    if (empty) {
+      attachImportSlotTo(homeEmptyImportHost);
+      if (homePopulatedImportHost != null) homePopulatedImportHost.setVisibility(View.GONE);
+    } else if (homeImportProgressVisible) {
+      attachImportSlotTo(homePopulatedImportHost);
+      if (homePopulatedImportHost != null) homePopulatedImportHost.setVisibility(View.VISIBLE);
+    } else {
+      if (homePopulatedImportHost != null) homePopulatedImportHost.setVisibility(View.GONE);
+      attachImportSlotTo(homeEmptyImportHost);
+    }
+    updateHomeFilterPills();
+  }
+
+  private void updateHomeFilterPills() {
+    if (homeFilterAll == null || homeFilterFavorites == null) return;
+    int favCount = 0;
+    for (Frame frame : library) if (frame.favorite) favCount++;
+    homeFilterAll.setText("全部 " + library.size());
+    homeFilterFavorites.setText("收藏 " + favCount);
+    styleHomeFilterPill(homeFilterAll, !homeFavoritesOnly);
+    styleHomeFilterPill(homeFilterFavorites, homeFavoritesOnly);
+  }
+
+  private void cancelImportHostAnimation() {
+    if (homeImportHostAnimator != null) {
+      homeImportHostAnimator.cancel();
+      homeImportHostAnimator = null;
+    }
+    if (homePopulatedImportHost != null) {
+      homePopulatedImportHost.animate().cancel();
+      homePopulatedImportHost.setAlpha(1f);
+      ViewGroup.LayoutParams lp = homePopulatedImportHost.getLayoutParams();
+      if (lp != null && lp.height != ViewGroup.LayoutParams.WRAP_CONTENT) {
+        lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+        homePopulatedImportHost.setLayoutParams(lp);
+      }
+    }
+  }
+
   private void resetHomeImportButton() {
     if (homeImportButton == null) return;
+    cancelImportHostAnimation();
+    homeImportProgressVisible = false;
+    importStartedFromEmpty = false;
     if (homeImportProgress != null) homeImportProgress.setAnimating(false);
     if (homeImportCancel != null) homeImportCancel.setVisibility(View.GONE);
-    if (homeImportHint != null) homeImportHint.setVisibility(View.VISIBLE);
+    if (homeImportHint != null)
+      homeImportHint.setVisibility(
+          homeImportHint.getText().length() > 0 ? View.VISIBLE : View.GONE);
     homeImportButton.setEnabled(!exporting);
     AppStyle.pillAction(homeImportButton, AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
     AppStyle.setTypeface(homeImportButton, AppStyle.FONT_BOLD);
@@ -4417,16 +5569,47 @@ public final class MainActivity extends Activity {
     homeImportButton.setContentDescription(null);
     homeImportButton.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_NONE);
     homeImportSlot.setLabel("开始导入照片", "开始导入照片");
+    syncHomeModeChrome();
+  }
+
+  private void styleHomeImportCancel(TextView cancel) {
+    boolean light = AppStyle.isLight();
+    int fill = light ? 0xfff9f9fa : 0xff1e1e23;
+    int stroke = light ? 0xffd0d0d8 : 0xff32323a;
+    int ink = light ? 0xff4a4a52 : 0xffc4c4cc;
+    GradientDrawable box = AppStyle.shape(this, fill, AppStyle.R_SMALL, false);
+    box.setStroke(Math.max(1, dp(.9f)), stroke);
+    GradientDrawable mask = AppStyle.shape(this, Color.WHITE, AppStyle.R_SMALL, false);
+    android.graphics.drawable.RippleDrawable ripple =
+        new android.graphics.drawable.RippleDrawable(
+            ColorStateList.valueOf(AppStyle.RIPPLE), box, mask);
+    // Visually 36dp tall inside the 44dp touch target, concentric with the 54dp R12 import slot.
+    cancel.setBackground(new android.graphics.drawable.InsetDrawable(ripple, 0, dp(4), 0, dp(4)));
+    cancel.setPadding(dp(11), dp(4), dp(11), dp(4));
+    cancel.setTextColor(ink);
   }
 
   private void startHomeImportProgress(int total) {
     if (homeImportProgress == null || homeImportButton == null) return;
+    cancelImportHostAnimation();
+    importStartedFromEmpty = library.isEmpty();
+    homeImportProgressVisible = true;
+    syncHomeModeChrome();
+    if (!importStartedFromEmpty
+        && homePopulatedImportHost != null
+        && ValueAnimator.areAnimatorsEnabled()) {
+      homePopulatedImportHost.setAlpha(0f);
+      homePopulatedImportHost.animate().alpha(1f).setDuration(150).start();
+    }
     homeImportButton.setEnabled(false);
     homeImportButton.setBackground(homeImportProgress);
-    homeImportButton.setTextColor(INK);
+    homeImportButton.setTextColor(AppStyle.INK);
     homeImportButton.setTextSize(AppStyle.TYPE_BODY);
+    AppStyle.setTypeface(homeImportButton, AppStyle.FONT_SEMIBOLD);
+    AppStyle.setNumericTypeface(homeImportButton);
     homeImportButton.setGravity(Gravity.CENTER);
     homeImportButton.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    styleHomeImportCancel(homeImportCancel);
     homeImportCancel.setVisibility(View.VISIBLE);
     if (homeImportHint != null) homeImportHint.setVisibility(View.GONE);
     homeImportProgress.setFraction(0);
@@ -4467,8 +5650,44 @@ public final class MainActivity extends Activity {
     final int generation = batchImportGeneration;
     main.postDelayed(
         () -> {
-          if (!batchImportRunning && generation == batchImportGeneration)
+          if (batchImportRunning || generation != batchImportGeneration) return;
+          if (!library.isEmpty()
+              && homePopulatedImportHost != null
+              && homePopulatedImportHost.getVisibility() == View.VISIBLE
+              && homePopulatedImportHost.getHeight() > 0
+              && ValueAnimator.areAnimatorsEnabled()) {
+            final int startH = homePopulatedImportHost.getHeight();
+            homeImportHostAnimator = ValueAnimator.ofFloat(1f, 0f);
+            homeImportHostAnimator.setDuration(200);
+            homeImportHostAnimator.setInterpolator(
+                new android.view.animation.DecelerateInterpolator());
+            homeImportHostAnimator.addUpdateListener(
+                a -> {
+                  float f = (float) a.getAnimatedValue();
+                  homePopulatedImportHost.setAlpha(f);
+                  ViewGroup.LayoutParams lp = homePopulatedImportHost.getLayoutParams();
+                  lp.height = Math.max(1, Math.round(startH * f));
+                  homePopulatedImportHost.setLayoutParams(lp);
+                });
+            homeImportHostAnimator.addListener(
+                new android.animation.AnimatorListenerAdapter() {
+                  private boolean cancelled;
+
+                  @Override
+                  public void onAnimationCancel(android.animation.Animator animation) {
+                    cancelled = true;
+                  }
+
+                  @Override
+                  public void onAnimationEnd(android.animation.Animator animation) {
+                    if (!cancelled && !batchImportRunning && generation == batchImportGeneration)
+                      resetHomeImportButton();
+                  }
+                });
+            homeImportHostAnimator.start();
+          } else {
             resetHomeImportButton();
+          }
         },
         520);
   }
@@ -4506,7 +5725,7 @@ public final class MainActivity extends Activity {
 
   private void updateBatchPasteInsets() {
     if (homeContent != null) {
-      int bottom = selectionActive() ? batchPasteHeight() + dp(18) : dp(28);
+      int bottom = selectionActive() ? batchPasteHeight() + dp(18) : dp(96);
       if (homeContent.getPaddingBottom() != bottom)
         homeContent.setPadding(homeContent.getPaddingLeft(), homeContent.getPaddingTop(),
             homeContent.getPaddingRight(), bottom);
@@ -4516,6 +5735,8 @@ public final class MainActivity extends Activity {
 
   private void updateBatchPasteBar(boolean animate) {
     if (batchPasteBar == null) return;
+    syncHomeNavVisibility();
+    syncHomeModeChrome();
     View shell = batchPasteShell == null ? batchPasteBar : batchPasteShell;
     updateBatchPasteInsets();
     shell.animate().cancel();
@@ -4741,6 +5962,8 @@ public final class MainActivity extends Activity {
       saveThumbnail(id, loaded.bitmap);
       job.check();
       File original = stored;
+      final String importedFormat = PhotoLabels.format(original, job.name);
+      final long importedFileSize = original.length();
       main.post(
           () -> {
             if (destroyed || activeImport != job || job.cancelled.get()) {
@@ -4775,7 +5998,9 @@ public final class MainActivity extends Activity {
             Frame importedFrame =
                 new Frame(id, filename, original.getAbsolutePath(), settings.toString());
             importedFrame.edited = job.initialSettings != null;
-            importedFrame.importedAt = System.currentTimeMillis();
+            importedFrame.importedAt = nextRecentTimestamp();
+            importedFrame.formatLabel = importedFormat;
+            importedFrame.fileSize = importedFileSize;
             library.add(importedFrame);
             sortLibrary();
             syncHeroLook();
@@ -5030,6 +6255,42 @@ public final class MainActivity extends Activity {
     scheduleRender();
   }
 
+  private void loadFavoriteFilms() {
+    favoriteFilms.clear();
+    try {
+      JSONArray saved = new JSONArray(prefs.getString("favorite_films", "[]"));
+      for (int i = 0; i < saved.length(); i++) {
+        String id = saved.optString(i, "");
+        if (!id.isBlank()) favoriteFilms.add(id);
+      }
+    } catch (JSONException ignored) {
+      // A corrupted list simply starts empty; toggling rewrites it.
+    }
+  }
+
+  private void saveFavoriteFilms() {
+    JSONArray saved = new JSONArray();
+    for (String id : favoriteFilms) saved.put(id);
+    prefs.edit().putString("favorite_films", saved.toString()).apply();
+  }
+
+  private boolean isFavoriteFilm(String id) {
+    return id != null && favoriteFilms.contains(id);
+  }
+
+  private void toggleFavoriteFilm(String id) {
+    if (id == null) return;
+    if (!favoriteFilms.remove(id)) favoriteFilms.add(id);
+    saveFavoriteFilms();
+  }
+
+  private void clearFavoriteMenu() {
+    if (favoriteMenuOverlay != null && favoriteMenuOverlay.getParent() instanceof ViewGroup)
+      ((ViewGroup) favoriteMenuOverlay.getParent()).removeView(favoriteMenuOverlay);
+    favoriteMenuOverlay = null;
+    favoriteMenuId = null;
+  }
+
   private void loadLibrary() {
     activeId = prefs.getString("activeId", "demo");
     File file = new File(getFilesDir(), "library.json");
@@ -5050,8 +6311,11 @@ public final class MainActivity extends Activity {
             frame.sourceTimestamp =
                 j.optLong("sourceTimestamp", Math.max(0, original.lastModified()));
             frame.importedAt = j.optLong("importedAt", Math.max(0, original.lastModified()));
+            frame.lastSavedAt = j.optLong("lastSavedAt", 0);
             frame.sourceMediaId = j.optString("sourceMediaId", "");
             frame.edited = j.has("edited") ? j.optBoolean("edited", true) : true;
+            frame.formatLabel = j.optString("formatLabel", "");
+            frame.fileSize = j.optLong("fileSize", -1);
             library.add(frame);
           }
         }
@@ -5076,11 +6340,30 @@ public final class MainActivity extends Activity {
   }
 
   private void sortLibrary() {
-    // 最近照片按“最近导入”优先；同一批导入再按拍摄时间新到旧排列。
+    // 最近导入或保存的照片优先；同一批导入按拍摄时间新到旧排列。
     library.sort(
-        Comparator.comparingLong((Frame frame) -> frame.importedAt)
+        Comparator.comparingLong(Frame::recentTimestamp)
             .thenComparingLong(frame -> frame.sourceTimestamp)
             .reversed());
+  }
+
+  private long nextRecentTimestamp() {
+    long now = System.currentTimeMillis();
+    // 保存和导入按操作先后排序，即使发生在同一毫秒或系统时钟回拨。
+    return library.isEmpty() ? now : Math.max(now, library.get(0).recentTimestamp() + 1);
+  }
+
+  private boolean saveRecentEdit(Frame frame) {
+    int previousPosition = library.indexOf(frame);
+    long previousSavedAt = frame.lastSavedAt;
+    frame.lastSavedAt = nextRecentTimestamp();
+    library.remove(previousPosition);
+    library.add(0, frame);
+    if (saveLibrary()) return true;
+    frame.lastSavedAt = previousSavedAt;
+    library.remove(0);
+    library.add(previousPosition, frame);
+    return false;
   }
 
   private void saveActiveFrame() {
@@ -5090,24 +6373,22 @@ public final class MainActivity extends Activity {
       if (!params.equals(frame.params)) {
         homeThumbJobs.invalidate(frame.id);
         homeImages.removeDeveloped(frame.id);
-        File look = developedLook(frame.id);
-        if (look != null) look.delete();
       }
       frame.params = params;
       scheduleLibraryWrite();
     }
   }
 
-  private void saveLibrary() {
+  private boolean saveLibrary() {
     if (libraryWritePending != null) {
       main.removeCallbacks(libraryWritePending);
       libraryWritePending = null;
     }
     libraryDirty = false;
-    if (!writeLibrary()) {
-      libraryDirty = true;
-      showNotice("编辑记录保存失败，请检查剩余空间", true);
-    }
+    if (writeLibrary()) return true;
+    libraryDirty = true;
+    showNotice("编辑记录保存失败，请检查剩余空间", true);
+    return false;
   }
 
   private boolean writeLibrary() {
@@ -5125,8 +6406,12 @@ public final class MainActivity extends Activity {
         j.put("favorite", frame.favorite);
         j.put("sourceTimestamp", frame.sourceTimestamp);
         j.put("importedAt", frame.importedAt);
+        j.put("lastSavedAt", frame.lastSavedAt);
         j.put("sourceMediaId", frame.sourceMediaId);
         j.put("edited", frame.edited);
+        if (frame.formatLabel != null && !frame.formatLabel.isEmpty())
+          j.put("formatLabel", frame.formatLabel);
+        if (frame.fileSize >= 0) j.put("fileSize", frame.fileSize);
         list.put(j);
       }
     } catch (JSONException ex) {
@@ -5222,6 +6507,59 @@ public final class MainActivity extends Activity {
     }
   }
 
+  private TextView fadingNameText(String label, int color) {
+    TextView view =
+        new TextView(this) {
+          private Shader fadeShader;
+
+          private void updateFadeShader(int width, CharSequence txt) {
+            int avail = width - getPaddingLeft() - getPaddingRight();
+            // Fade long filenames smoothly across ~48%..80% so visible length stays around 3/4.
+            if (avail > 0
+                && txt != null
+                && getPaint().measureText(txt, 0, txt.length()) > avail * .72f) {
+              float start = avail * .48f;
+              float end = avail * .80f;
+              fadeShader =
+                  new LinearGradient(
+                      start, 0f, end, 0f, color, color & 0x00ffffff, Shader.TileMode.CLAMP);
+            } else {
+              fadeShader = null;
+            }
+            getPaint().setShader(fadeShader);
+          }
+
+          @Override
+          protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            if (w != oldw) updateFadeShader(w, getText());
+          }
+
+          @Override
+          protected void onTextChanged(CharSequence text, int start, int lengthBefore, int lengthAfter) {
+            super.onTextChanged(text, start, lengthBefore, lengthAfter);
+            if (getWidth() > 0) updateFadeShader(getWidth(), text);
+          }
+        };
+    view.setText(label);
+    view.setTextSize(11.5f);
+    view.setTextColor(color);
+    view.setIncludeFontPadding(false);
+    AppStyle.setTypeface(view, AppStyle.FONT_REGULAR);
+    view.setSingleLine(true);
+    view.setMaxLines(1);
+    view.setEllipsize(null);
+    return view;
+  }
+
+  private static String formatCompactFileSize(long bytes) {
+    if (bytes <= 0) return "0 KB";
+    if (bytes < 1024L * 1024L) {
+      return Math.max(1L, Math.round(bytes / 1024.0)) + " KB";
+    }
+    return String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0));
+  }
+
   private void refreshHistory() {
     if (historyList == null) return;
     EditClipboard clipboard = loadEditClipboard();
@@ -5242,8 +6580,11 @@ public final class MainActivity extends Activity {
         .append(";batch=")
         .append(batchPasteMode)
         .append(";manage=")
-        .append(manageMode);
+        .append(manageMode)
+        .append('|')
+        .append(homeFavoritesOnly);
     String current = signature.toString();
+    syncHomeModeChrome();
     if (current.equals(historySignature) && historyList.getChildCount() > 0) return;
     historySignature = current;
     controls.removeIf(v -> descendant(v, historyList));
@@ -5251,24 +6592,50 @@ public final class MainActivity extends Activity {
     historyList.removeAllViews();
     batchCardViews.clear();
     if (library.isEmpty()) {
-      LinearLayout empty = vertical();
-      empty.setPadding(dp(16), dp(15), dp(16), dp(15));
-      AppStyle.surface(empty, AppStyle.SURFACE, AppStyle.R_MEDIUM);
-      TextView title = text("你的第一张照片，还在等光。", AppStyle.TYPE_BODY, INK);
-      add(empty, title, -1, 26);
-      TextView detail = text("导入照片后，点击任意照片即可开始编辑。", AppStyle.TYPE_MICRO, MUTED);
-      add(empty, detail, -1, 24);
-      add(historyList, empty, -1, 88);
       return;
     }
-    for (int i = 0; i < library.size(); i += 2) {
+    ArrayList<Frame> visibleFrames = new ArrayList<>();
+    for (Frame frame : library) {
+      if (!homeFavoritesOnly || selectionActive() || frame.favorite) visibleFrames.add(frame);
+    }
+    if (visibleFrames.isEmpty()) {
+      LinearLayout favEmpty = vertical();
+      favEmpty.setGravity(Gravity.CENTER_HORIZONTAL);
+      favEmpty.setPadding(dp(18), dp(28), dp(18), dp(28));
+      GradientDrawable favEmptyBg = AppStyle.shape(this, AppStyle.SURFACE, AppStyle.R_MEDIUM, false);
+      favEmptyBg.setStroke(Math.max(1, dp(.9f)), AppStyle.OUTLINE);
+      favEmpty.setBackground(favEmptyBg);
+      TextView t = text("还没有收藏的照片", AppStyle.TYPE_BODY, INK);
+      AppStyle.setTypeface(t, AppStyle.FONT_SEMIBOLD);
+      t.setGravity(Gravity.CENTER);
+      add(favEmpty, t, -1, -2);
+      TextView d = text("长按任意照片可加入收藏", AppStyle.TYPE_MICRO, MUTED);
+      d.setGravity(Gravity.CENTER);
+      LinearLayout.LayoutParams dLp = new LinearLayout.LayoutParams(-1, -2);
+      dLp.topMargin = dp(6);
+      favEmpty.addView(d, dLp);
+      add(historyList, favEmpty, -1, -2);
+      return;
+    }
+    boolean metadataBackfilled = false;
+    for (int i = 0; i < visibleFrames.size(); i += 2) {
       LinearLayout row = horizontal();
       row.setGravity(Gravity.TOP);
-      for (int k = i; k < Math.min(i + 2, library.size()); k++) {
-        Frame frame = library.get(k);
+      for (int k = i; k < Math.min(i + 2, visibleFrames.size()); k++) {
+        Frame frame = visibleFrames.get(k);
+        boolean selectedForBatch = selectionContains(frame);
         LinearLayout card = vertical();
-        AppStyle.surface(card, AppStyle.SURFACE, AppStyle.R_MEDIUM);
+        card.setBackground(AppStyle.shape(this, AppStyle.SURFACE, AppStyle.R_MEDIUM, false));
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setShape(GradientDrawable.RECTANGLE);
+        cardBg.setColor(Color.TRANSPARENT);
+        cardBg.setCornerRadius(dp(AppStyle.R_MEDIUM));
+        cardBg.setStroke(
+            selectedForBatch ? Math.max(1, dp(2f)) : 0,
+            selectedForBatch ? GOLD : Color.TRANSPARENT);
+        card.setForeground(cardBg);
         card.setClipToOutline(true);
+        card.setElevation(0);
         FrameLayout photoBox = new FrameLayout(this);
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -5279,10 +6646,9 @@ public final class MainActivity extends Activity {
             developedLook(frame.id),
             new File(new File(getFilesDir(), "thumbnails"), frame.id + ".jpg"),
             false);
-        boolean selectedForBatch = selectionContains(frame);
         View scrim = new View(this);
-        scrim.setBackgroundColor(0x66000000);
-        scrim.setVisibility(selectedForBatch ? View.VISIBLE : View.GONE);
+        scrim.setBackgroundColor(Color.TRANSPARENT);
+        scrim.setVisibility(View.GONE);
         photoBox.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
         ImageView favorite = null;
         FrameLayout.LayoutParams favoriteParams = null;
@@ -5295,8 +6661,8 @@ public final class MainActivity extends Activity {
           favorite.setContentDescription("已收藏");
           favorite.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
           favoriteParams =
-              new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.TOP | Gravity.END);
-          favoriteParams.topMargin = dp(9);
+              new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP | Gravity.END);
+          favoriteParams.topMargin = dp(8);
           favoriteParams.rightMargin = dp(selectionActive() ? 16 + AppStyle.SELECTION_BADGE : 8);
           photoBox.addView(favorite, favoriteParams);
         }
@@ -5307,7 +6673,7 @@ public final class MainActivity extends Activity {
           copied.setGravity(Gravity.CENTER);
           AppStyle.setTypeface(copied, AppStyle.FONT_BOLD);
           copied.setPadding(dp(10), 0, dp(10), 0);
-          copied.setBackground(AppStyle.pill(this, 0xcc16141a, false));
+          copied.setBackground(AppStyle.shape(this, AppStyle.NOTICE_BG, 6f, false));
           FrameLayout.LayoutParams copiedParams =
               new FrameLayout.LayoutParams(-2, dp(28), Gravity.TOP | Gravity.START);
           copiedParams.topMargin = dp(8);
@@ -5326,36 +6692,40 @@ public final class MainActivity extends Activity {
         photoBox.addView(checked, checkedParams);
         styleBatchCheck(checked, selectedForBatch);
         batchCardViews.put(
-            frame.id, new BatchCardViews(photoBox, scrim, favoriteParams, checked));
-        add(card, photoBox, -1, 125);
+            frame.id, new BatchCardViews(photoBox, scrim, cardBg, favoriteParams, checked));
+        add(card, photoBox, -1, 176);
         LinearLayout names = vertical();
-        names.setPadding(dp(12), dp(10), dp(12), dp(12));
-        TextView name = text(PhotoLabels.title(frame.name), AppStyle.TYPE_BODY, INK);
-        name.setSingleLine(true);
-        name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        add(names, name, -1, 26);
-        File original = new File(frame.path);
+        names.setPadding(dp(10), dp(8), dp(10), dp(9));
+        String stock = frame.edited ? "已保存调整" : "暂未编辑";
+        if (frame.edited) {
+          Stock s = find(films, frame.filmStockId());
+          if (s != null) stock = shortName(s.name);
+        }
+        TextView look = text(stock, AppStyle.TYPE_LABEL, frame.edited ? GOLD : MUTED);
+        AppStyle.setTypeface(look, frame.edited ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_MEDIUM);
+        look.setSingleLine(true);
+        look.setMaxLines(1);
+        look.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        add(names, look, -1, -2);
+        TextView name = fadingNameText(PhotoLabels.title(frame.name), AppStyle.withAlpha(INK, .86f));
+        LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(-1, -2);
+        nameLp.topMargin = dp(3);
+        names.addView(name, nameLp);
+        if (!frame.hasCachedMetadata()) metadataBackfilled = true;
         TextView details =
             text(
-                PhotoLabels.format(original, frame.name)
+                frame.formatLabel()
                     + " · "
-                    + android.text.format.Formatter.formatShortFileSize(this, original.length()),
+                    + formatCompactFileSize(frame.fileSizeBytes()),
                 AppStyle.TYPE_MICRO,
                 MUTED);
         AppStyle.setNumericTypeface(details);
-        add(names, details, -1, 22);
-        String stock = frame.edited ? "已保存调整" : "暂未编辑";
-        if (frame.edited)
-          try {
-            Stock s = find(films, new JSONObject(frame.params).optString("film_stock"));
-            if (s != null) stock = shortName(s.name);
-          } catch (Exception ignored) {
-            // 历史记录引用的胶片已不存在，保留原来的标签
-          }
-        TextView look = text(stock, AppStyle.TYPE_MICRO, frame.edited ? GOLD : MUTED);
-        look.setSingleLine(true);
-        look.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        add(names, look, -1, 24);
+        details.setSingleLine(true);
+        details.setMaxLines(1);
+        details.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams detailsLp = new LinearLayout.LayoutParams(-1, -2);
+        detailsLp.topMargin = dp(2);
+        names.addView(details, detailsLp);
         add(card, names, -1, -2);
         photoBox.setClickable(true);
         photoBox.setFocusable(true);
@@ -5372,14 +6742,14 @@ public final class MainActivity extends Activity {
         photoBox.setOnLongClickListener(
             v -> {
               if (selectionActive()) return true;
-              v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+              Haptics.longPress(v);
               showFrameActions(frame);
               return true;
             });
         card.setOnLongClickListener(
             v -> {
               if (selectionActive()) return true;
-              v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+              Haptics.longPress(v);
               showFrameActions(frame);
               return true;
             });
@@ -5388,11 +6758,12 @@ public final class MainActivity extends Activity {
         if (k == i) lp.rightMargin = dp(10);
         row.addView(card, lp);
       }
-      if (i + 1 == library.size())
+      if (i + 1 == visibleFrames.size())
         row.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
       add(historyList, row, -1, -2);
-      gap(historyList, 12);
+      gap(historyList, 10);
     }
+    if (metadataBackfilled) scheduleLibraryWrite();
   }
 
   private boolean selectionActive() {
@@ -5407,9 +6778,13 @@ public final class MainActivity extends Activity {
 
   private void updateHistoryHeader() {
     if (historyTitle == null) return;
-    String suffix = " · " + library.size() + " 张";
+    String prefix = manageMode ? "已选择" : "最近照片";
+    String suffix =
+        manageMode
+            ? " · " + manageSelection.size() + " / " + library.size() + " 张"
+            : " · " + library.size() + " 张";
     android.text.SpannableStringBuilder label =
-        new android.text.SpannableStringBuilder("最近照片").append(suffix);
+        new android.text.SpannableStringBuilder(prefix).append(suffix);
     int start = label.length() - suffix.length();
     label.setSpan(
         new android.text.style.RelativeSizeSpan(
@@ -5428,7 +6803,10 @@ public final class MainActivity extends Activity {
         label.length(),
         android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
     historyTitle.setText(label);
-    historyTitle.setContentDescription("最近照片，共 " + library.size() + " 张");
+    historyTitle.setContentDescription(
+        manageMode
+            ? "已选择 " + manageSelection.size() + " 张，共 " + library.size() + " 张"
+            : "最近照片，共 " + library.size() + " 张");
     if (homeManage != null)
       homeManage.setVisibility(
           library.isEmpty() || selectionActive() ? View.GONE : View.VISIBLE);
@@ -5437,8 +6815,9 @@ public final class MainActivity extends Activity {
     if (homeClearSelection != null) {
       boolean canClear = manageMode && !manageSelection.isEmpty();
       homeClearSelection.setEnabled(canClear);
-      homeClearSelection.setTextColor(canClear ? GOLD : AppStyle.DISABLED);
+      homeClearSelection.setTextColor(canClear ? MUTED : AppStyle.DISABLED);
     }
+    syncHomeModeChrome();
   }
 
   private void enterManageMode() {
@@ -5556,7 +6935,6 @@ public final class MainActivity extends Activity {
     homeImages.removeDeveloped(frame.id);
     new File(frame.path).delete();
     new File(new File(getFilesDir(), "thumbnails"), frame.id + ".jpg").delete();
-    new File(new File(getFilesDir(), "developed"), frame.id + ".jpg").delete();
     homeImages.remove(new File(frame.path));
   }
 
@@ -5759,14 +7137,12 @@ public final class MainActivity extends Activity {
   private void applyPastedParams(Frame frame, String params) {
     boolean unchanged = params.equals(frame.params);
     frame.edited = true;
-    File look = developedLook(frame.id);
-    if (unchanged && ((look != null && look.isFile()) || homeImages.isWriting(frame.id)
+    if (unchanged && (hasDevelopedLook(frame) || homeImages.isWriting(frame.id)
         || homeThumbJobs.contains(frame.id, params)
         || (frame.id.equals(activeId) && mainPreviewPending()))) return;
     homeThumbJobs.invalidate(frame.id);
     frame.params = params;
     homeImages.removeDeveloped(frame.id);
-    new File(new File(getFilesDir(), "developed"), frame.id + ".jpg").delete();
     if (frame.id.equals(activeId)) {
       try {
         settings = new JSONObject(params);
@@ -5793,20 +7169,18 @@ public final class MainActivity extends Activity {
     if (candidates == null) return;
     for (Frame frame : candidates) {
       if (frame == null || frame.id.equals(activeId) || frame.params == null) continue;
-      File look = developedLook(frame.id);
-      if ((look != null && look.isFile()) || homeImages.isWriting(frame.id)) continue;
+      if (hasDevelopedLook(frame) || homeImages.isWriting(frame.id)) continue;
       homeThumbJobs.offer(frame.id, frame.params);
     }
     pumpHomeThumbnails();
   }
 
-  /** A killed process may have saved recipes before their derived JPEGs finished writing. */
+  /** Recover missing previews and asynchronously replace legacy film JPEGs. */
   private void queueMissingHomeThumbnails() {
     if (homeImages == null || destroyed) return;
     ArrayList<Frame> missing = new ArrayList<>();
     for (Frame frame : library) {
-      File look = developedLook(frame.id);
-      if (!frame.edited || (look != null && look.isFile()) || homeImages.isWriting(frame.id)) continue;
+      if (!frame.edited || hasDevelopedLook(frame) || homeImages.isWriting(frame.id)) continue;
       if (!frame.id.equals(activeId)) missing.add(frame);
       else if (!homeThumbPaused && ready && source != null && !mainPreviewPending()) {
         boolean valid = developed != null && frame.id.equals(developedPhotoId)
@@ -5853,7 +7227,7 @@ public final class MainActivity extends Activity {
             try {
               if (raw) activeRenderer.openRaw(path, openParams(engineParams), 1024);
               else activeRenderer.openFile(path, openParams(engineParams), 1024);
-              made = activeRenderer.render(engineParams, editParams(recipe, metadata), false, 1024);
+              made = activeRenderer.render(engineParams, editParams(recipe, metadata, true), false, 1024);
               ++homeThumbRenderCount;
             } finally {
               openedSource = null;
@@ -5932,6 +7306,11 @@ public final class MainActivity extends Activity {
     }
     views.scrim.animate().cancel();
     views.check.animate().cancel();
+    if (views.cardBg != null) {
+      views.cardBg.setStroke(
+          selected ? Math.max(1, dp(2f)) : 0,
+          selected ? GOLD : Color.TRANSPARENT);
+    }
     styleBatchCheck(views.check, selected);
     if (!selectionActive()) {
       views.scrim.setVisibility(View.GONE);
@@ -5996,13 +7375,14 @@ public final class MainActivity extends Activity {
   }
 
   private void styleBatchCheck(ImageView check, boolean selected) {
-    GradientDrawable circle = new GradientDrawable();
-    circle.setShape(GradientDrawable.OVAL);
-    circle.setColor(selected ? GOLD : 0x66000000);
-    circle.setStroke(Math.max(1, dp(selected ? 0 : 1)), Color.WHITE);
-    check.setBackground(circle);
+    GradientDrawable badge = new GradientDrawable();
+    badge.setShape(GradientDrawable.RECTANGLE);
+    badge.setCornerRadius(dp(7));
+    badge.setColor(selected ? AppStyle.GOLD : 0x6b0a0a0b);
+    badge.setStroke(Math.max(1, dp(1.5f)), selected ? AppStyle.GOLD : 0xd9ffffff);
+    check.setBackground(badge);
     check.setImageResource(R.drawable.ic_material_check);
-    check.setImageTintList(ColorStateList.valueOf(AppStyle.ON_PRIMARY));
+    check.setImageTintList(ColorStateList.valueOf(AppStyle.ON_ACCENT));
     check.setImageAlpha(selected ? 255 : 0);
     check.setPadding(dp(4), dp(4), dp(4), dp(4));
     check.setContentDescription(selected ? "已选择" : "未选择");
@@ -6314,7 +7694,102 @@ public final class MainActivity extends Activity {
       resetButton.setEnabled(changed && !exporting);
       setResetButtonVisible(changed);
     }
+    if (cropButton != null) cropButton.setEnabled(!exporting && source != null);
+    updateCropIndicator();
     if (compareButton != null) compareButton.setEnabled(!exporting);
+  }
+
+  private boolean hasGeometryEdits() {
+    if (settings == null) return false;
+    double gx = settings.optDouble("geo_x", 0);
+    double gy = settings.optDouble("geo_y", 0);
+    double gw = settings.optDouble("geo_w", 1);
+    double gh = settings.optDouble("geo_h", 1);
+    int turns = ((settings.optInt("geo_turns", 0) % 4) + 4) % 4;
+    boolean flipH = settings.optBoolean("geo_flip_h", false);
+    boolean flipV = settings.optBoolean("geo_flip_v", false);
+    double angle = settings.optDouble("geo_angle", 0);
+    return Math.abs(gx) > 0.001
+        || Math.abs(gy) > 0.001
+        || Math.abs(gw - 1.0) > 0.001
+        || Math.abs(gh - 1.0) > 0.001
+        || turns != 0
+        || flipH
+        || flipV
+        || Math.abs(angle) > 0.05;
+  }
+
+  private void updateCropIndicator() {
+    boolean active = hasGeometryEdits();
+    if (cropButton != null) {
+      cropButton.setSelected(active);
+      cropButton.setContentDescription(active ? "裁切（已应用）" : "裁切");
+    }
+    if (cropActiveDot != null) cropActiveDot.setVisibility(active ? View.VISIBLE : View.GONE);
+  }
+
+  private void openCropPage() {
+    if (source == null || exporting || activeImport != null || cropPage != null) return;
+    if (photo != null) photo.cancelPendingSingleTap();
+    finishPendingSliderTaps();
+    RectF initial =
+        new RectF(
+            (float) settings.optDouble("geo_x", 0),
+            (float) settings.optDouble("geo_y", 0),
+            (float) (settings.optDouble("geo_x", 0) + settings.optDouble("geo_w", 1)),
+            (float) (settings.optDouble("geo_y", 0) + settings.optDouble("geo_h", 1)));
+    int turns = settings.optInt("geo_turns", 0);
+    boolean flipH = settings.optBoolean("geo_flip_h", false);
+    float angleDeg = (float) settings.optDouble("geo_angle", 0);
+    int fw = fullWidth > 0 ? fullWidth : source.getWidth();
+    int fh = fullHeight > 0 ? fullHeight : source.getHeight();
+    CropPage page =
+        new CropPage(
+            this,
+            source,
+            fw,
+            fh,
+            initial,
+            turns,
+            flipH,
+            angleDeg,
+            new CropPage.Listener() {
+              @Override
+              public void onApply(RectF crop, int newTurns, boolean newFlipH, float newAngleDeg) {
+                set("geo_x", (double) crop.left);
+                set("geo_y", (double) crop.top);
+                set("geo_w", (double) crop.width());
+                set("geo_h", (double) crop.height());
+                set("geo_turns", newTurns);
+                set("geo_flip_h", newFlipH);
+                set("geo_angle", (double) newAngleDeg);
+                closeCropPage();
+                updateHistoryButtons();
+                scheduleRender();
+                buildPanel();
+                if (photo != null) photo.resetZoom();
+              }
+
+              @Override
+              public void onCancel() {
+                closeCropPage();
+              }
+            });
+    cropPage = page;
+    screens.addView(page, new FrameLayout.LayoutParams(-1, -1));
+    page.setAlpha(0f);
+    page.animate().alpha(1f).setDuration(150).start();
+  }
+
+  private void closeCropPage() {
+    CropPage page = cropPage;
+    if (page == null) return;
+    cropPage = null;
+    page.animate()
+        .alpha(0f)
+        .setDuration(120)
+        .withEndAction(() -> screens.removeView(page))
+        .start();
   }
 
   /** 只有本次进入编辑页产生过改动时才显示重置；出现时轻微淡入，避免硬切。 */
@@ -6497,10 +7972,6 @@ public final class MainActivity extends Activity {
     trace.put("format", format);
     if (options.isJpeg()) trace.put("jpeg_quality", options.jpegQuality);
     final ExportSheet sheet = exportSheet;
-    if (requestedEdge > 0 && sheet != null) {
-      int[] labelSize = ExportOptions.scaledSize(width, height, requestedEdge);
-      ui(() -> sheet.setOutputSize("较小尺寸 · " + labelSize[0] + " × " + labelSize[1], labelSize[0], labelSize[1]));
-    }
     worker.execute(
         () -> {
           Uri uri = null;
@@ -6513,10 +7984,17 @@ public final class MainActivity extends Activity {
                 new android.app.ActivityManager.MemoryInfo();
             ((android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE))
                 .getMemoryInfo(memory);
-            long estimate = ExportOptions.estimateBytes(renderWidth, renderHeight);
+            JSONObject plan = new JSONObject(NativeEngine.dimensions(renderWidth, renderHeight, edits));
+            int plannedWidth = plan.getInt("width"), plannedHeight = plan.getInt("height");
+            long estimate = ExportOptions.estimateBytes(renderWidth, renderHeight, plannedWidth, plannedHeight);
             if (estimate > memory.availMem * .85)
               throw new ExportMemoryException(
-                  estimate, memory.availMem, ExportOptions.safeLongEdge(width, height, memory.availMem));
+                  estimate, memory.availMem,
+                  ExportOptions.safeLongEdge(renderWidth, renderHeight, memory.availMem, estimate));
+            if (requestedEdge > 0 && sheet != null) {
+              ui(() -> sheet.setOutputSize(
+                  "较小尺寸 · " + plannedWidth + " × " + plannedHeight, plannedWidth, plannedHeight));
+            }
             renderer.closeImage();
             openedSource = null;
             if (raw) renderer.openRaw(original.getAbsolutePath(), openParams(p), requestedEdge);
@@ -6683,7 +8161,7 @@ public final class MainActivity extends Activity {
                                 + "\n\n"
                                 + (mode == 2 ? "TIFF 为 16 位文件；部分相册不显示其缩略图，可从文件管理器打开。\n\n" : "")
                                 + "包含本次调色、片边与日期。导出配方已保存在本机编辑记录中。")
-                        .setNegativeButton("回到首页", (dialog, which) -> showHome())
+                        .setNegativeButton("回到首页", (dialog, which) -> showHome(true))
                         .setPositiveButton(
                             "再编辑一张", (dialog, which) -> importPhoto(exportedSettings))
                         .show();
@@ -6750,7 +8228,7 @@ public final class MainActivity extends Activity {
                 + target[0]
                 + " × "
                 + target[1]
-                + " 导出，调色、片边和日期会保留；是否继续？")
+                + " 显影后导出，调色、片边和日期会保留。是否继续？")
         .setNegativeButton("取消", null)
         .setPositiveButton(
             "按较小尺寸导出",
@@ -6765,6 +8243,34 @@ public final class MainActivity extends Activity {
   private String getPackageVersion() {
     try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; }
     catch (Exception e) { return ""; }
+  }
+
+  private List<LightTablePage.SourcePhoto> lightTableSources() {
+    ArrayList<LightTablePage.SourcePhoto> out = new ArrayList<>();
+    for (Frame frame : library) {
+      File thumbnail = new File(new File(getFilesDir(), "thumbnails"), frame.id + ".jpg");
+      File developed = developedLook(frame.id);
+      File original = new File(frame.path);
+      String filmLabel = "";
+      if (frame.edited && frame.params != null && !frame.params.isBlank()) {
+        try {
+          Stock s = find(films, new JSONObject(frame.params).optString("film_stock"));
+          if (s != null) filmLabel = shortName(s.name);
+        } catch (Exception ignored) {
+        }
+      }
+      out.add(
+          new LightTablePage.SourcePhoto(
+              frame.id,
+              frame.name,
+              frame.path,
+              thumbnail,
+              developed,
+              original.isFile() ? original.length() : 0,
+              frame.params,
+              filmLabel));
+    }
+    return out;
   }
 
   private void about() {
@@ -6788,8 +8294,104 @@ public final class MainActivity extends Activity {
 
   private void refreshUpdateNotice() {
     boolean available = updates.hasAvailableUpdate();
-    if (homeAbout != null) homeAbout.setAvailable(available);
+    if (settingsNavDot != null)
+      settingsNavDot.setVisibility(available ? View.VISIBLE : View.GONE);
+    if (settingsPage != null) settingsPage.setUpdateAvailable(available);
     if (aboutPage != null) aboutPage.setUpdateAvailable(available);
+  }
+
+  private void attachSettings() {
+    if (homeTabHost == null) return;
+    if (settingsPage == null) {
+      SettingsPage page =
+          new SettingsPage(
+              this,
+              getPackageVersion(),
+              () -> selectHomeTab(HomeTab.HOME),
+              this::about,
+              () -> refreshEditorStrip(false),
+              () -> updates.checkInBackground(),
+              this::onDiskCacheCleared,
+              bootStateIo,
+              this::switchTheme);
+      settingsPage = page;
+      homeTabHost.addView(page, new FrameLayout.LayoutParams(-1, -1));
+    }
+    settingsPage.setUpdateAvailable(updates.hasAvailableUpdate());
+    settingsPage.refreshCacheSize();
+    settingsPage.setVisibility(View.VISIBLE);
+  }
+
+  private void onDiskCacheCleared() {
+    if (destroyed) return;
+    thumbPrint = "";
+    syncThumbCache();
+    if (homeImages != null) homeImages.clearMemoryCache();
+  }
+
+  /** Live in-place Darkroom Black / Studio Silver switch without restarting SpectralRenderer. */
+  private void switchTheme(boolean light) {
+    if (destroyed || light == AppStyle.isLight()) return;
+    AppStyle.saveTheme(this, light);
+    syncStyleAliases();
+    if (photo != null) photo.cancelPendingSingleTap();
+    cancelPanelAnimation();
+    finishToolAnimations();
+    if (homeImportHostAnimator != null) {
+      homeImportHostAnimator.cancel();
+      homeImportHostAnimator = null;
+    }
+    if (frameActions != null && frameActions.isShowing()) frameActions.dismiss();
+    frameActions = null;
+    clearFavoriteMenu();
+    closeCropPage();
+    closeAbout();
+    if (editorStrip != null) {
+      editorStrip.close();
+      editorStrip = null;
+    }
+    detachLightTable();
+    settingsPage = null;
+    controls.clear();
+    historySignature = "";
+    buildUI();
+    AppStyle.applyWindowTheme(this);
+    if (photo != null && source != null) photo.images(source, developed);
+    if (exportButton != null) {
+      if (ready && developed != null) {
+        exportButton.setText("导出照片");
+        exportButton.setEnabled(true);
+        exportButton.setOnClickListener(v -> exportOptions());
+      } else if (ready) {
+        exportButton.setText("导出照片");
+        exportButton.setEnabled(false);
+      }
+    }
+    updateStockLabels();
+    updateHistoryButtons();
+    refreshUpdateNotice();
+    selectHomeTab(HomeTab.SETTINGS);
+  }
+
+  private void attachLightTable() {
+    if (homeTabHost == null) return;
+    detachLightTable();
+    LightTablePage page =
+        new LightTablePage(
+            this,
+            () -> selectHomeTab(HomeTab.HOME),
+            lightTableSources(),
+            this::setHomeNavSuppressed);
+    lightTablePage = page;
+    homeTabHost.addView(page, new FrameLayout.LayoutParams(-1, -1));
+  }
+
+  private void detachLightTable() {
+    LightTablePage page = lightTablePage;
+    if (page == null) return;
+    lightTablePage = null;
+    if (page.getParent() instanceof ViewGroup) ((ViewGroup) page.getParent()).removeView(page);
+    page.release();
   }
 
   private void closeAbout() {
@@ -6845,6 +8447,7 @@ public final class MainActivity extends Activity {
               (d, n) -> {
                 try {
                   ScrollView s = new ScrollView(this);
+                  AppStyle.hideScrollBars(s);
                   TextView t = text(readAsset("licenses/" + names[n]), AppStyle.TYPE_LABEL, INK);
                   t.setPadding(dp(20), dp(16), dp(20), dp(16));
                   s.addView(t);
@@ -6867,7 +8470,8 @@ public final class MainActivity extends Activity {
   @Override
   protected void onStart() {
     super.onStart();
-    if (updates != null) updates.checkInBackground();
+    if (updates != null && prefs.getBoolean("auto_check_updates", true))
+      updates.checkInBackground();
   }
 
   @Override
@@ -6876,6 +8480,7 @@ public final class MainActivity extends Activity {
     if (updates != null) updates.resume();
     if (gallerySheet != null && gallerySheet.isShowing()) gallerySheet.refresh();
     if (batchImportRunning && homeImportProgress != null) homeImportProgress.setAnimating(true);
+    if (lightTablePage != null) lightTablePage.onHostResume();
   }
 
   @Override
@@ -6885,6 +8490,7 @@ public final class MainActivity extends Activity {
     updateEditorLayout();
     AppNotice.clear(getWindow());
     if (homeImportProgress != null) homeImportProgress.setAnimating(false);
+    if (lightTablePage != null) lightTablePage.onHostPause();
     flushLibraryWrite();
     super.onPause();
   }
@@ -6896,13 +8502,31 @@ public final class MainActivity extends Activity {
     if (batchImportRunning) cancelBatchImport();
     cancelPanelAnimation();
     finishToolAnimations();
+    if (homeImportHostAnimator != null) {
+      homeImportHostAnimator.cancel();
+      homeImportHostAnimator = null;
+    }
+    if (frameActions != null) {
+      frameActions.dismiss();
+      frameActions = null;
+    }
     if (gallerySheet != null) gallerySheet.dismiss();
     if (exportSheet != null) exportSheet.dismiss();
+    if (cropPage != null) {
+      screens.removeView(cropPage);
+      cropPage = null;
+    }
     if (sponsorPage != null) {
       SponsorPage page = sponsorPage;
       sponsorPage = null;
       screens.removeView(page);
       page.release();
+    }
+    detachLightTable();
+    if (settingsPage != null) {
+      SettingsPage page = settingsPage;
+      settingsPage = null;
+      if (page.getParent() instanceof ViewGroup) ((ViewGroup) page.getParent()).removeView(page);
     }
     if (backCallback != null && Build.VERSION.SDK_INT >= 33) {
       getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);

@@ -8,7 +8,7 @@ include("${ENGINE}/cmake/LibRaw.cmake")
 # The reproducible Android overlay preserves the upstream material data/model.
 file(GLOB CORE "${ENGINE}/src/core/*.cpp")
 add_library(spektra SHARED
-    bridge.cpp engine_boot.cpp edit_pipeline.cpp raw_adapter.cpp output_spaces.cpp ${CORE}
+    bridge.cpp engine_boot.cpp edit_pipeline.cpp film_border.cpp raw_adapter.cpp output_spaces.cpp ${CORE}
     "${ENGINE}/src/io/raw_decoder.cpp"
     "${ENGINE}/src/io/raw_headroom.cpp"
     "${ENGINE}/host/output.cpp"

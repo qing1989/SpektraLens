@@ -22,6 +22,7 @@ struct Context {
     spk_session *session = nullptr;
     std::string resources, raw_path;
     mobile::RawImage raw_preview;
+    int raw_preview_edge = 0;
     ~Context() {
         if (session)
             spk_session_release(session);
@@ -101,7 +102,8 @@ mobile::Image16 bitmap_pixels(JNIEnv *e, jobject bitmap) {
     AndroidBitmap_unlockPixels(e, bitmap);
     return image;
 }
-jobject bitmap(JNIEnv *e, const uint16_t *src, uint32_t w, uint32_t h, uint32_t stride) {
+jobject bitmap(JNIEnv *e, const uint16_t *src, uint32_t w, uint32_t h, uint32_t stride,
+               bool has_alpha = false) {
     auto bc = e->FindClass("android/graphics/Bitmap"),
          cc = e->FindClass("android/graphics/Bitmap$Config");
     auto config = e->GetStaticObjectField(
@@ -113,6 +115,8 @@ jobject bitmap(JNIEnv *e, const uint16_t *src, uint32_t w, uint32_t h, uint32_t 
         jint(w), jint(h), config);
     if (e->ExceptionCheck() || !out)
         return nullptr;
+    if (!has_alpha)
+        e->CallVoidMethod(out, e->GetMethodID(bc, "setHasAlpha", "(Z)V"), JNI_FALSE);
     AndroidBitmapInfo info{};
     AndroidBitmap_getInfo(e, out, &info);
     void *pixels = nullptr;
@@ -121,10 +125,14 @@ jobject bitmap(JNIEnv *e, const uint16_t *src, uint32_t w, uint32_t h, uint32_t 
     for (uint32_t y = 0; y < h; y++) {
         auto row = static_cast<uint8_t *>(pixels) + y * info.stride;
         for (uint32_t x = 0; x < w; x++) {
-            for (int k = 0; k < 3; k++)
-                row[x * 4 + k] =
-                    uint8_t((uint32_t(src[(size_t(y) * stride + x) * 4 + k]) + 128) / 257);
-            row[x * 4 + 3] = 255;
+            const auto *rgba = src + (size_t(y) * stride + x) * 4;
+            const uint32_t alpha = has_alpha ? rgba[3] : 65535;
+            // Android's ARGB_8888 Canvas bitmaps store premultiplied colour.
+            for (int k = 0; k < 3; k++) {
+                const uint32_t premul = alpha == 65535 ? rgba[k] : (rgba[k] * alpha + 32767) / 65535;
+                row[x * 4 + k] = uint8_t((premul + 128) / 257);
+            }
+            row[x * 4 + 3] = uint8_t((alpha + 128) / 257);
         }
     }
     AndroidBitmap_unlockPixels(e, out);
@@ -135,7 +143,7 @@ double elapsed_ms(Clock::time_point start) {
     return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
 mobile::Image16 render_edit(Context *c, const std::string &p, const spk::Json &edits, bool full,
-                          spk::Json *timings = nullptr) {
+                          spk::Json *timings = nullptr, bool transparent_frame = false) {
     auto start = Clock::now();
     set_params(c, p);
     if (timings) timings->set("set_params_ms", spk::Json(elapsed_ms(start)));
@@ -146,7 +154,7 @@ mobile::Image16 render_edit(Context *c, const std::string &p, const spk::Json &e
         if (timings) timings->set("spectral_ms", spk::Json(elapsed_ms(start)));
         start = Clock::now();
         auto out = mobile::apply_edits(result.rgba16, result.width, result.height,
-                                       result.row_stride_px, edits);
+                                       result.row_stride_px, edits, transparent_frame);
         if (timings) timings->set("edits_ms", spk::Json(elapsed_ms(start)));
         spk_result_free(&result);
         return out;
@@ -206,15 +214,20 @@ Java_app_spektrafilm_NativeEngine_rawPreview(JNIEnv *e, jclass, jlong p, jstring
         spk_string_free(reply);
         auto transform = json(encoded);
         const auto &m = transform.at("matrix").items();
+        float mat[9];
+        for (int idx = 0; idx < 9; idx++)
+            mat[idx] = float(m[idx].as_double());
         mobile::Image16 im;
         im.width = raw.width;
         im.height = raw.height;
         im.rgba.resize(size_t(im.width) * im.height * 4);
-        for (size_t i = 0; i < size_t(im.width) * im.height; i++) {
+        const size_t total = size_t(im.width) * im.height;
+        for (size_t i = 0; i < total; i++) {
+            const float r0 = raw.rgb[i * 3 + 0];
+            const float g0 = raw.rgb[i * 3 + 1];
+            const float b0 = raw.rgb[i * 3 + 2];
             for (int k = 0; k < 3; k++) {
-                float v = 0;
-                for (int z = 0; z < 3; z++)
-                    v += float(m[k * 3 + z].as_double()) * raw.rgb[i * 3 + z];
+                float v = mat[k * 3 + 0] * r0 + mat[k * 3 + 1] * g0 + mat[k * 3 + 2] * b0;
                 im.rgba[i * 4 + k] = uint16_t(
                     std::lround(std::clamp(spkhost::cctf_encode_mode(v, 0), 0.f, 1.f) * 65535));
             }
@@ -222,6 +235,7 @@ Java_app_spektrafilm_NativeEngine_rawPreview(JNIEnv *e, jclass, jlong p, jstring
         }
         c->raw_preview = std::move(raw);
         c->raw_path = name;
+        c->raw_preview_edge = std::max(1, edge);
         return bitmap(e, im.rgba.data(), im.width, im.height, im.width);
     } catch (const std::exception &ex) {
         fail(e, ex.what());
@@ -238,8 +252,7 @@ extern "C" JNIEXPORT void JNICALL Java_app_spektrafilm_NativeEngine_openRaw(JNIE
         auto j = json(utf(e, params));
         j.set("input_color_space", spk::Json(std::string("ProPhoto RGB")));
         j.set("input_cctf_decoding", spk::Json(false));
-        if (edge > 0 && c->raw_path == name &&
-            std::max(c->raw_preview.width, c->raw_preview.height) <= uint32_t(edge) &&
+        if (edge > 0 && c->raw_path == name && c->raw_preview_edge == edge &&
             !c->raw_preview.rgb.empty()) {
             auto &r = c->raw_preview;
             open_rgb(c, r.rgb.data(), r.width, r.height, j.dump());
@@ -297,8 +310,10 @@ extern "C" JNIEXPORT jobject JNICALL
 Java_app_spektrafilm_NativeEngine_renderEdited(JNIEnv *e, jclass, jlong p, jstring params,
                                                jstring edits, jboolean full) {
     try {
-        auto im = render_edit(ctx(p), utf(e, params), json(utf(e, edits)), full);
-        return bitmap(e, im.rgba.data(), im.width, im.height, im.width);
+        const auto options = json(utf(e, edits));
+        auto im = render_edit(ctx(p), utf(e, params), options, full, nullptr,
+                              options.at("edge_preserve_alpha").as_bool());
+        return bitmap(e, im.rgba.data(), im.width, im.height, im.width, im.has_alpha);
     } catch (const std::exception &ex) {
         fail(e, ex.what());
         return nullptr;
@@ -354,6 +369,9 @@ extern "C" JNIEXPORT void JNICALL Java_app_spektrafilm_NativeEngine_closeImage(J
             spk_session_release(c->session);
             c->session = nullptr;
         }
+        c->raw_preview = {};
+        c->raw_path.clear();
+        c->raw_preview_edge = 0;
     }
 }
 extern "C" JNIEXPORT void JNICALL Java_app_spektrafilm_NativeEngine_destroy(JNIEnv *, jclass,

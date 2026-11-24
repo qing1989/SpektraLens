@@ -3,146 +3,414 @@
 package app.spektrafilm;
 
 import android.content.Context;
-import android.graphics.*;
-import android.view.*;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.RectF;
+import android.view.MotionEvent;
+import android.view.View;
 
-/** Normalised source-space crop; the native export uses the identical rectangle. */
+/**
+ * Interactive non-destructive crop canvas supporting 90° rotation, horizontal flip, straighten
+ * angle preview, aspect-ratio locking, rule-of-thirds grid, and precision L-corner handles.
+ * Internally stores display-space normalized crop and converts bijectively to source-space.
+ */
 final class CropEditor extends View {
   private final Bitmap image;
-  private final Paint p = new Paint(3);
-  private final RectF area = new RectF(), crop, frame = new RectF();
+  private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+  private final Paint gridPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+  private final Paint bracketPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+  private final Matrix drawMatrix = new Matrix();
+  private final RectF area = new RectF(), displayCrop = new RectF(), frame = new RectF();
   private float aspect, lastX, lastY;
+  private int turns;
+  private boolean flipH;
+  private float angleDeg;
   private int handle = -1;
+  private Runnable changeListener;
 
-  CropEditor(Context c, Bitmap b, RectF initial) {
-    super(c);
-    image = b;
-    crop = new RectF(initial);
+  CropEditor(Context context, Bitmap bitmap, RectF initialSourceCrop) {
+    this(context, bitmap, initialSourceCrop, 0, false, 0f);
+  }
+
+  CropEditor(
+      Context context,
+      Bitmap bitmap,
+      RectF initialSourceCrop,
+      int initialTurns,
+      boolean initialFlipH,
+      float initialAngleDeg) {
+    super(context);
+    this.image = bitmap;
+    this.turns = ((initialTurns % 4) + 4) % 4;
+    this.flipH = initialFlipH;
+    this.angleDeg = initialAngleDeg;
+    sourceToDisplay(initialSourceCrop, this.turns, this.flipH, displayCrop);
+    clamp();
     setContentDescription("裁切框：拖动四角改变范围，拖动中间移动");
   }
 
+  void setOnChangeListener(Runnable listener) {
+    this.changeListener = listener;
+  }
+
+  /** Normalized source-space crop rectangle matching native edit_pipeline.cpp Geometry. */
   RectF value() {
-    return new RectF(crop);
+    RectF out = new RectF();
+    displayToSource(displayCrop, turns, flipH, out);
+    return out;
+  }
+
+  int turns() {
+    return turns;
+  }
+
+  boolean flipH() {
+    return flipH;
+  }
+
+  float angleDeg() {
+    return angleDeg;
+  }
+
+  float displayAspect() {
+    float dw = displaySourceWidth();
+    float dh = displaySourceHeight();
+    return (displayCrop.width() * dw) / Math.max(1f, displayCrop.height() * dh);
+  }
+
+  int outputWidth(int fullSourceW, int fullSourceH) {
+    RectF src = value();
+    int cw = Math.max(1, Math.round(src.width() * fullSourceW));
+    int ch = Math.max(1, Math.round(src.height() * fullSourceH));
+    return (turns % 2 == 1) ? ch : cw;
+  }
+
+  int outputHeight(int fullSourceW, int fullSourceH) {
+    RectF src = value();
+    int cw = Math.max(1, Math.round(src.width() * fullSourceW));
+    int ch = Math.max(1, Math.round(src.height() * fullSourceH));
+    return (turns % 2 == 1) ? cw : ch;
+  }
+
+  private float displaySourceWidth() {
+    return (turns % 2 == 1) ? image.getHeight() : image.getWidth();
+  }
+
+  private float displaySourceHeight() {
+    return (turns % 2 == 1) ? image.getWidth() : image.getHeight();
+  }
+
+  void rotate90() {
+    RectF src = value();
+    turns = (turns + 1) % 4;
+    sourceToDisplay(src, turns, flipH, displayCrop);
+    if (aspect > 0f) applyAspect(aspect);
+    else clamp();
+    invalidate();
+    notifyChanged();
+  }
+
+  void toggleFlipH() {
+    RectF src = value();
+    flipH = !flipH;
+    sourceToDisplay(src, turns, flipH, displayCrop);
+    clamp();
+    invalidate();
+    notifyChanged();
+  }
+
+  void setAngle(float deg) {
+    float clamped = Math.max(-45f, Math.min(45f, deg));
+    if (Math.abs(clamped - angleDeg) < 0.001f) return;
+    angleDeg = clamped;
+    invalidate();
+    notifyChanged();
   }
 
   void ratio(float r) {
     aspect = r;
-    if (r == 0) {
+    if (r <= 0f) {
       invalidate();
+      notifyChanged();
       return;
     }
-    float physical = image.getWidth() / (float) image.getHeight(), normalized = r / physical;
-    float w = crop.width(), h = w / normalized;
-    if (h > 1) {
-      h = 1;
-      w = normalized;
-    }
-    float cx = crop.centerX(), cy = crop.centerY();
-    crop.set(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
-    clamp();
+    applyAspect(r);
     invalidate();
+    notifyChanged();
+  }
+
+  void resetAll() {
+    turns = 0;
+    flipH = false;
+    angleDeg = 0f;
+    aspect = 0f;
+    displayCrop.set(0f, 0f, 1f, 1f);
+    invalidate();
+    notifyChanged();
   }
 
   void reset() {
-    crop.set(0, 0, 1, 1);
+    displayCrop.set(0f, 0f, 1f, 1f);
     ratio(aspect);
   }
 
-  private void clamp() {
-    if (crop.left < 0) crop.offset(-crop.left, 0);
-    if (crop.right > 1) crop.offset(1 - crop.right, 0);
-    if (crop.top < 0) crop.offset(0, -crop.top);
-    if (crop.bottom > 1) crop.offset(0, 1 - crop.bottom);
+  private void applyAspect(float targetAspect) {
+    float physical = displaySourceWidth() / Math.max(1f, displaySourceHeight());
+    float normalized = targetAspect / physical;
+    float w = displayCrop.width();
+    float h = w / normalized;
+    if (h > 1f) {
+      h = 1f;
+      w = Math.min(1f, normalized);
+    }
+    if (w > 1f) {
+      w = 1f;
+      h = Math.min(1f, 1f / normalized);
+    }
+    float cx = displayCrop.centerX(), cy = displayCrop.centerY();
+    displayCrop.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f);
+    clamp();
   }
 
-  protected void onDraw(Canvas c) {
-    super.onDraw(c);
-    float d = getResources().getDisplayMetrics().density,
-        s =
-            Math.min(
-                (getWidth() - 24 * d) / image.getWidth(),
-                (getHeight() - 24 * d) / image.getHeight());
-    float w = image.getWidth() * s, h = image.getHeight() * s;
+  private void clamp() {
+    float w = Math.max(.08f, Math.min(1f, displayCrop.width()));
+    float h = Math.max(.08f, Math.min(1f, displayCrop.height()));
+    float left = Math.max(0f, Math.min(1f - w, displayCrop.left));
+    float top = Math.max(0f, Math.min(1f - h, displayCrop.top));
+    displayCrop.set(left, top, left + w, top + h);
+  }
+
+  private void notifyChanged() {
+    if (changeListener != null) changeListener.run();
+  }
+
+  private static void sourceToDisplay(RectF src, int turns, boolean flipH, RectF out) {
+    float[] xs = {src.left, src.right};
+    float[] ys = {src.top, src.bottom};
+    float minU = 1f, maxU = 0f, minV = 1f, maxV = 0f;
+    for (float a : xs) {
+      for (float b : ys) {
+        float u1, v1;
+        switch (turns) {
+          case 1:
+            u1 = 1f - b;
+            v1 = a;
+            break;
+          case 2:
+            u1 = 1f - a;
+            v1 = 1f - b;
+            break;
+          case 3:
+            u1 = b;
+            v1 = 1f - a;
+            break;
+          default:
+            u1 = a;
+            v1 = b;
+            break;
+        }
+        float u = flipH ? (1f - u1) : u1;
+        float v = v1;
+        if (u < minU) minU = u;
+        if (u > maxU) maxU = u;
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+      }
+    }
+    out.set(minU, minV, maxU, maxV);
+  }
+
+  private static void displayToSource(RectF disp, int turns, boolean flipH, RectF out) {
+    float[] us = {disp.left, disp.right};
+    float[] vs = {disp.top, disp.bottom};
+    float minA = 1f, maxA = 0f, minB = 1f, maxB = 0f;
+    for (float u : us) {
+      for (float v : vs) {
+        float u1 = flipH ? (1f - u) : u;
+        float v1 = v;
+        float a, b;
+        switch (turns) {
+          case 1:
+            a = v1;
+            b = 1f - u1;
+            break;
+          case 2:
+            a = 1f - u1;
+            b = 1f - v1;
+            break;
+          case 3:
+            a = 1f - v1;
+            b = u1;
+            break;
+          default:
+            a = u1;
+            b = v1;
+            break;
+        }
+        if (a < minA) minA = a;
+        if (a > maxA) maxA = a;
+        if (b < minB) minB = b;
+        if (b > maxB) maxB = b;
+      }
+    }
+    out.set(
+        Math.max(0f, Math.min(0.999f, minA)),
+        Math.max(0f, Math.min(0.999f, minB)),
+        Math.max(0.001f, Math.min(1f, maxA)),
+        Math.max(0.001f, Math.min(1f, maxB)));
+  }
+
+  @Override
+  protected void onDraw(Canvas canvas) {
+    super.onDraw(canvas);
+    float d = getResources().getDisplayMetrics().density;
+    canvas.drawColor(AppStyle.STAGE_BG);
+    if (image == null || image.isRecycled()) return;
+
+    float pad = 20f * d;
+    float dw = displaySourceWidth();
+    float dh = displaySourceHeight();
+    float scale = Math.min((getWidth() - pad * 2f) / dw, (getHeight() - pad * 2f) / dh);
+    float w = dw * scale;
+    float h = dh * scale;
     area.set(
-        (getWidth() - w) / 2, (getHeight() - h) / 2, (getWidth() + w) / 2, (getHeight() + h) / 2);
-    c.drawColor(Color.BLACK);
-    c.drawBitmap(image, null, area, p);
+        (getWidth() - w) / 2f,
+        (getHeight() - h) / 2f,
+        (getWidth() + w) / 2f,
+        (getHeight() + h) / 2f);
+
+    // Draw full transformed photo clipped to stage bounds so straighten tilt previews smoothly.
+    canvas.save();
+    canvas.clipRect(area);
+    drawMatrix.reset();
+    drawMatrix.postTranslate(-image.getWidth() / 2f, -image.getHeight() / 2f);
+    if (turns != 0) drawMatrix.postRotate(turns * 90f);
+    if (flipH) drawMatrix.postScale(-1f, 1f);
+    if (Math.abs(angleDeg) > 0.01f) {
+      double rad = Math.toRadians(angleDeg);
+      float cw = Math.max(1f, displayCrop.width() * w);
+      float ch = Math.max(1f, displayCrop.height() * h);
+      float fit =
+          (float)
+              Math.max(
+                  Math.abs(Math.cos(rad)) + Math.abs(Math.sin(rad)) * (ch / cw),
+                  Math.abs(Math.cos(rad)) + Math.abs(Math.sin(rad)) * (cw / ch));
+      drawMatrix.postRotate(-angleDeg);
+      drawMatrix.postScale(fit, fit);
+    }
+    drawMatrix.postScale(scale, scale);
+    drawMatrix.postTranslate(area.centerX(), area.centerY());
+    paint.setStyle(Paint.Style.FILL);
+    paint.setAlpha(255);
+    canvas.drawBitmap(image, drawMatrix, paint);
+    canvas.restore();
+
     RectF r = frame;
     r.set(
-        area.left + crop.left * w,
-        area.top + crop.top * h,
-        area.left + crop.right * w,
-        area.top + crop.bottom * h);
-    p.setColor(0xb9000000);
-    c.drawRect(area.left, area.top, area.right, r.top, p);
-    c.drawRect(area.left, r.bottom, area.right, area.bottom, p);
-    c.drawRect(area.left, r.top, r.left, r.bottom, p);
-    c.drawRect(r.right, r.top, area.right, r.bottom, p);
-    p.setColor(AppStyle.GOLD);
-    p.setStrokeWidth(2 * d);
-    p.setStyle(Paint.Style.STROKE);
-    c.drawRect(r, p);
-    p.setStrokeWidth(d);
-    p.setColor(0x99ffffff);
+        area.left + displayCrop.left * w,
+        area.top + displayCrop.top * h,
+        area.left + displayCrop.right * w,
+        area.top + displayCrop.bottom * h);
+
+    // Dimmed outer crop mask.
+    paint.setColor(0xa6000000);
+    canvas.drawRect(area.left, area.top, area.right, r.top, paint);
+    canvas.drawRect(area.left, r.bottom, area.right, area.bottom, paint);
+    canvas.drawRect(area.left, r.top, r.left, r.bottom, paint);
+    canvas.drawRect(r.right, r.top, area.right, r.bottom, paint);
+
+    // Crisp outer frame hairline + rule-of-thirds grid.
+    gridPaint.setStyle(Paint.Style.STROKE);
+    gridPaint.setStrokeWidth(Math.max(1f, d));
+    gridPaint.setColor(0x66ffffff);
     for (int i = 1; i < 3; i++) {
-      c.drawLine(r.left + i * r.width() / 3, r.top, r.left + i * r.width() / 3, r.bottom, p);
-      c.drawLine(r.left, r.top + i * r.height() / 3, r.right, r.top + i * r.height() / 3, p);
+      float vx = r.left + i * r.width() / 3f;
+      float hy = r.top + i * r.height() / 3f;
+      canvas.drawLine(vx, r.top, vx, r.bottom, gridPaint);
+      canvas.drawLine(r.left, hy, r.right, hy, gridPaint);
     }
-    p.setStyle(Paint.Style.FILL);
-    p.setColor(AppStyle.GOLD);
-    c.drawCircle(r.left, r.top, 6 * d, p);
-    c.drawCircle(r.right, r.top, 6 * d, p);
-    c.drawCircle(r.left, r.bottom, 6 * d, p);
-    c.drawCircle(r.right, r.bottom, 6 * d, p);
+    gridPaint.setStrokeWidth(Math.max(1.25f * d, 1.5f));
+    gridPaint.setColor(0xeeffffff);
+    canvas.drawRect(r, gridPaint);
+
+    // Precision Instrument vermilion L-corner brackets.
+    float arm = Math.min(18f * d, Math.min(r.width(), r.height()) * 0.28f);
+    bracketPaint.setStyle(Paint.Style.STROKE);
+    bracketPaint.setStrokeCap(Paint.Cap.SQUARE);
+    bracketPaint.setStrokeWidth(3f * d);
+    bracketPaint.setColor(AppStyle.GOLD);
+    // Top-left
+    canvas.drawLine(r.left, r.top + arm, r.left, r.top, bracketPaint);
+    canvas.drawLine(r.left, r.top, r.left + arm, r.top, bracketPaint);
+    // Top-right
+    canvas.drawLine(r.right - arm, r.top, r.right, r.top, bracketPaint);
+    canvas.drawLine(r.right, r.top, r.right, r.top + arm, bracketPaint);
+    // Bottom-left
+    canvas.drawLine(r.left, r.bottom - arm, r.left, r.bottom, bracketPaint);
+    canvas.drawLine(r.left, r.bottom, r.left + arm, r.bottom, bracketPaint);
+    // Bottom-right
+    canvas.drawLine(r.right - arm, r.bottom, r.right, r.bottom, bracketPaint);
+    canvas.drawLine(r.right, r.bottom, r.right, r.bottom - arm, bracketPaint);
   }
 
+  @Override
   public boolean onTouchEvent(MotionEvent e) {
-    if (area.width() <= 0) return true;
-    float x = (e.getX() - area.left) / area.width(), y = (e.getY() - area.top) / area.height();
+    if (area.width() <= 0f) return true;
+    float x = (e.getX() - area.left) / area.width();
+    float y = (e.getY() - area.top) / area.height();
     if (e.getActionMasked() == MotionEvent.ACTION_DOWN) {
       lastX = x;
       lastY = y;
-      float best = 48 * getResources().getDisplayMetrics().density;
+      float best = 48f * getResources().getDisplayMetrics().density;
       handle = 4;
       for (int i = 0; i < 4; i++) {
-        float a = (i % 2 == 0 ? crop.left : crop.right), b = (i < 2 ? crop.top : crop.bottom);
+        float a = (i % 2 == 0 ? displayCrop.left : displayCrop.right);
+        float b = (i < 2 ? displayCrop.top : displayCrop.bottom);
         float distance = (float) Math.hypot((a - x) * area.width(), (b - y) * area.height());
         if (distance < best) {
           best = distance;
           handle = i;
         }
       }
-      getParent().requestDisallowInterceptTouchEvent(true);
+      if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);
     } else if (e.getActionMasked() == MotionEvent.ACTION_MOVE) {
       if (handle == 4) {
-        crop.offset(x - lastX, y - lastY);
+        displayCrop.offset(x - lastX, y - lastY);
         clamp();
       } else if (handle >= 0) {
         boolean left = handle % 2 == 0, top = handle < 2;
-        float ax = left ? crop.right : crop.left, ay = top ? crop.bottom : crop.top;
-        float w = Math.max(.04f, Math.min(left ? ax : 1 - ax, Math.abs(x - ax))),
-            h = Math.max(.04f, Math.min(top ? ay : 1 - ay, Math.abs(y - ay)));
-        if (aspect > 0) {
-          float norm = aspect * image.getHeight() / image.getWidth();
+        float ax = left ? displayCrop.right : displayCrop.left;
+        float ay = top ? displayCrop.bottom : displayCrop.top;
+        float w = Math.max(.08f, Math.min(left ? ax : 1f - ax, Math.abs(x - ax)));
+        float h = Math.max(.08f, Math.min(top ? ay : 1f - ay, Math.abs(y - ay)));
+        if (aspect > 0f) {
+          float norm = aspect * displaySourceHeight() / Math.max(1f, displaySourceWidth());
           h = w / norm;
-          float maxH = top ? ay : 1 - ay;
+          float maxH = top ? ay : 1f - ay;
           if (h > maxH) {
             h = maxH;
             w = h * norm;
           }
         }
-        crop.set(left ? ax - w : ax, top ? ay - h : ay, left ? ax : ax + w, top ? ay : ay + h);
+        displayCrop.set(
+            left ? ax - w : ax, top ? ay - h : ay, left ? ax : ax + w, top ? ay : ay + h);
       }
       lastX = x;
       lastY = y;
       invalidate();
-    } else if (e.getActionMasked() == MotionEvent.ACTION_UP) {
-      getParent().requestDisallowInterceptTouchEvent(false);
-      performClick();
+      notifyChanged();
+    } else if (e.getActionMasked() == MotionEvent.ACTION_UP
+        || e.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+      if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
+      if (e.getActionMasked() == MotionEvent.ACTION_UP) performClick();
     }
     return true;
   }
 
+  @Override
   public boolean performClick() {
     super.performClick();
     return true;

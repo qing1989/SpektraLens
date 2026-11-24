@@ -28,12 +28,18 @@ final class AdaptiveActionRow extends LinearLayout {
 
   private final ArrayList<Action> actions = new ArrayList<>();
   private final boolean equalWidths;
+  private final boolean fillRow;
   private final int gap;
   private int[] widths = new int[0];
 
   AdaptiveActionRow(Context context, boolean equalWidths, int gapDp) {
+    this(context, equalWidths, gapDp, false);
+  }
+
+  AdaptiveActionRow(Context context, boolean equalWidths, int gapDp, boolean fillRow) {
     super(context);
     this.equalWidths = equalWidths;
+    this.fillRow = fillRow;
     gap = AppStyle.dp(context, gapDp);
     setBaselineAligned(false);
     setGravity(Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
@@ -70,10 +76,14 @@ final class AdaptiveActionRow extends LinearLayout {
     boolean stacked = required > available;
     setOrientation(stacked ? VERTICAL : HORIZONTAL);
     int height = AppStyle.dp(getContext(), AppStyle.TOUCH_PRIMARY);
+    int sharedWidth =
+        fillRow && MeasureSpec.getMode(widthSpec) != MeasureSpec.UNSPECIFIED
+            ? Math.max(widest, (available - gap * (actions.size() - 1)) / actions.size())
+            : Math.min(widest, available);
     for (int i = 0; i < actions.size(); i++) {
       int width;
-      if (equalWidths) width = Math.min(widest, available);
-      else if (stacked) width = available;
+      if (stacked) width = available;
+      else if (equalWidths) width = sharedWidth;
       else {
         width = widths[i];
         if (i == actions.size() - 1 && MeasureSpec.getMode(widthSpec) != MeasureSpec.UNSPECIFIED)

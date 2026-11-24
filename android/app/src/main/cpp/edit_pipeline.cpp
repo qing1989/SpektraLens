@@ -3,6 +3,7 @@
 // Android scan-side edits. Tone order follows SpektraLab Canvas/Shaders.metal;
 // this mobile path grades encoded sRGB, using the sRGB mid-grey pivot.
 #include "edit_pipeline.hpp"
+#include "film_border.hpp"
 #include "output.hpp"
 #include "platform.hpp"
 #include <algorithm>
@@ -30,6 +31,87 @@ float luma(const float c[3]) { return c[0] * .2126f + c[1] * .7152f + c[2] * .07
 float tonepos(float x) {
     return x <= .4614f ? .5f * x / .4614f : .5f + .5f * (x - .4614f) / (1 - .4614f);
 }
+struct SilverEdrLut {
+    static constexpr int kSize = 4096;
+    static constexpr float kLinLow = .05f;
+    std::array<float, kSize + 1> srgb_lin{};
+    std::array<float, kSize + 1> lin_srgb{};
+    std::array<float, kSize + 1> shoulder_scale{};
+
+    SilverEdrLut() {
+        constexpr float kShoulder = .40f;
+        constexpr float kPaperWhite = .7292f;
+        constexpr float kTargetWhite = .96f;
+        constexpr float kExtra = kTargetWhite - kPaperWhite;
+        constexpr float kPower = 2.3f;
+        constexpr float kSlope = 1.f + kExtra * kPower / (kPaperWhite - kShoulder);
+        constexpr float kHead = 1.f - kTargetWhite;
+        for (int i = 0; i <= kSize; ++i) {
+            const float t = float(i) / float(kSize);
+            srgb_lin[i] = t <= .040449936f ? t / 12.92f : std::pow((t + .055f) / 1.055f, 2.4f);
+            const float yl = kLinLow + t * (1.f - kLinLow);
+            lin_srgb[i] = 1.055f * std::pow(yl, 1.f / 2.4f) - .055f;
+            const float y = kShoulder + t * (1.f - kShoulder);
+            float mapped;
+            if (y <= kPaperWhite) {
+                const float u = (y - kShoulder) / (kPaperWhite - kShoulder);
+                mapped = y + kExtra * std::pow(u, kPower);
+            } else {
+                mapped = kTargetWhite + kHead * (1.f - std::exp(-kSlope * (y - kPaperWhite) / kHead));
+            }
+            shoulder_scale[i] = mapped / (y + 1e-10f);
+        }
+    }
+
+    static float sample(const std::array<float, kSize + 1> &table, float t) {
+        const float pos = sat(t) * float(kSize);
+        const int idx = std::min(int(pos), kSize - 1);
+        const float frac = pos - float(idx);
+        return table[idx] + (table[idx + 1] - table[idx]) * frac;
+    }
+
+    float to_lin(float v) const { return sample(srgb_lin, v); }
+
+    float to_srgb(float y) const {
+        y = sat(y);
+        if (y < kLinLow)
+            return y <= .0031308f ? 12.92f * y : 1.055f * std::pow(y, 1.f / 2.4f) - .055f;
+        return sample(lin_srgb, (y - kLinLow) / (1.f - kLinLow));
+    }
+
+    float scale_for(float y) const {
+        return sample(shoulder_scale, (y - .40f) / (1.f - .40f));
+    }
+};
+
+const SilverEdrLut &silver_edr_lut() {
+    static const SilverEdrLut lut;
+    return lut;
+}
+
+// Highlight shoulder expansion for monochrome silver paper (Ilford Multigrade IV RC),
+// which has no calibrated upstream edr_tone_map. Leaves shadows/midtones (Y <= 0.40)
+// strictly untouched and expands the CAM16-compressed paper white (Y ~ 0.7292, sRGB ~ 222)
+// smoothly to Y ~ 0.96 (sRGB ~ 250) with C1 continuity and soft roll-off toward 1.0.
+void apply_silver_highlight_edr(float c[3]) {
+    if (std::max({c[0], c[1], c[2]}) <= .665f) return;
+    const auto &lut = silver_edr_lut();
+    constexpr float kShoulder = .40f;
+    if (c[0] == c[1] && c[1] == c[2]) {
+        const float y = lut.to_lin(c[0]);
+        if (y <= kShoulder) return;
+        const float out = lut.to_srgb(y * lut.scale_for(y));
+        c[0] = c[1] = c[2] = out;
+        return;
+    }
+    const float r = lut.to_lin(c[0]), g = lut.to_lin(c[1]), b = lut.to_lin(c[2]);
+    const float y = r * .2126f + g * .7152f + b * .0722f;
+    if (y <= kShoulder) return;
+    const float scale = lut.scale_for(y);
+    c[0] = lut.to_srgb(r * scale);
+    c[1] = lut.to_srgb(g * scale);
+    c[2] = lut.to_srgb(b * scale);
+}
 uint16_t quant(float x) { return uint16_t(std::lround(sat(x) * 65535.f)); }
 
 // Scan-side light added to the developed image. The saved seed determines the
@@ -53,6 +135,11 @@ struct LightLeak {
 
     void apply(Image16 &out, int left, int top, int width, int height, bool filmBorder) const {
         if (!active()) return;
+        // The slider uses a square-root response so low values reach a visible
+        // fog earlier while 0/100 stay fixed. The saved seed rebuilds the same
+        // shape, and resizing evaluates the normalized profiles at new pixel
+        // centers.
+        const float strength = std::sqrt(amount);
         // A fixed integer generator keeps stored recipes independent of the
         // platform's standard-library distribution implementations.
         uint32_t state = seed;
@@ -71,51 +158,62 @@ struct LightLeak {
         }
         const bool sideEdge = edge < 2;  // Left/right, then top/bottom.
         const bool farEdge = (edge & 1) != 0;
-        const int alongMargin = filmBorder ? (sideEdge ? top : left) : 0;
-        const int inwardMargin = filmBorder ? (sideEdge ? left : top) : 0;
-        const int length = sideEdge ? height : width;
-        const int normalSize = sideEdge ? width : height;
         const float center = .08f + .84f * next();
-        const float radius = .20f + .16f * next() + .30f * amount;
-        const float skew = (next() - .5f) * .65f;
-        const float depth = (.12f + .06f * next() + .28f * amount) * std::min(width, height);
-        const float peak = amount * (.87f + .12f * next());
-        const float startFraction = center - radius * (1 + skew);
-        const float endFraction = center + radius * (1 - skew);
-        const int first = std::max(-alongMargin, int(std::floor(double(startFraction) * length)));
-        const int last = std::min(length + alongMargin, int(std::ceil(double(endFraction) * length)));
-
-        for (int along = first; along < last; ++along) {
-            const float offset = (along + .5f) / length - center;
-            const float span = radius * (offset < 0 ? 1 + skew : 1 - skew);
-            const float profile = 1 - smooth(0, span, std::fabs(offset));
-            if (profile <= 0) continue;
-            const float reach = depth * (.42f + .58f * profile);
-            const int limit = int(std::ceil(reach));
-            for (int inward = -inwardMargin; inward < limit; ++inward) {
-                const float falloff = 1 - smooth(0, reach, inward + .5f);
-                const float glow = peak * profile * falloff;
-                const int across = farEdge ? normalSize - 1 - inward : inward;
-                const int x = sideEdge ? across : along;
-                const int y = sideEdge ? along : across;
-                auto *pixel = &out.rgba[(size_t(y + top) * out.width + x + left) * 4];
-                // Lift the warm core and tint the outer glow even over pale
-                // areas. Fade the tint at neutral white to retain clean whites.
-                const float white = std::min({pixel[0], pixel[1], pixel[2]}) / 65535.f;
-                const float tint = glow * smooth(.30f, .80f, white)
-                                 * (1 - smooth(.96f, 1, white));
-                const float red = monochrome ? glow * .76f : glow;
-                const float green = monochrome ? red : glow * (.28f + .54f * falloff);
-                const float blue = monochrome ? red : glow * (.21f + .36f * falloff);
-                pixel[0] = blend(pixel[0], 65535, red);
-                pixel[1] = blend(pixel[1], 65535, green);
-                pixel[2] = blend(pixel[2], 65535, blue);
-                if (!monochrome) {
-                    pixel[1] = blend(pixel[1], 46800, tint * (.38f - .23f * falloff));
-                    pixel[2] = blend(pixel[2], 34500, tint * .30f);
-                }
-            }
+        // A broad, low-frequency veil covers the whole frame. The core stays
+        // near the chosen edge, so the leak still has a believable entry point
+        // instead of reading as a flat graduated filter.
+        const float lateralWidth = .42f + .16f * next();
+        const float coreDepth = .26f + .10f * next();
+        const float coreWidth = .34f + .12f * next();
+        const float fogGreen = .80f + .08f * next();
+        const float fogBlue = .68f + .14f * next();
+        const uint16_t fogGreen16 = uint16_t(std::lround(fogGreen * 65535));
+        const uint16_t fogBlue16 = uint16_t(std::lround(fogBlue * 65535));
+        const int outW = int(out.width), outH = int(out.height);
+        std::vector<float> veilX(outW), coreX(outW), lateralX(outW), coreAlongX(outW);
+        std::vector<float> veilY(outH), coreY(outH), lateralY(outH), coreAlongY(outH);
+        for (int x = 0; x < outW; ++x) {
+            const float u = (x - left + .5f) / width;
+            const float across = farEdge ? 1 - u : u;
+            veilX[x] = .08f + .52f * (1 - smooth(0, 1, across));
+            coreX[x] = 1 - smooth(0, coreDepth, across);
+            lateralX[x] = 1 - .45f * smooth(0, 1, std::fabs(u - center) / lateralWidth);
+            coreAlongX[x] = 1 - smooth(0, coreWidth, std::fabs(u - center));
         }
+        for (int y = 0; y < outH; ++y) {
+            const float v = (y - top + .5f) / height;
+            const float across = farEdge ? 1 - v : v;
+            veilY[y] = .08f + .52f * (1 - smooth(0, 1, across));
+            coreY[y] = 1 - smooth(0, coreDepth, across);
+            lateralY[y] = 1 - .45f * smooth(0, 1, std::fabs(v - center) / lateralWidth);
+            coreAlongY[y] = 1 - smooth(0, coreWidth, std::fabs(v - center));
+        }
+        const int xBegin = filmBorder ? 0 : left;
+        const int xEnd = filmBorder ? outW : left + int(width);
+        const int yBegin = filmBorder ? 0 : top;
+        const int yEnd = filmBorder ? outH : top + int(height);
+        for (int y = yBegin; y < yEnd; ++y)
+            for (int x = xBegin; x < xEnd; ++x) {
+                const float veil = sideEdge ? veilX[x] * lateralY[y] : veilY[y] * lateralX[x];
+                const float core = sideEdge ? coreX[x] * coreAlongY[y] : coreY[y] * coreAlongX[x];
+                const float fog = std::min(.86f, strength * (veil + .25f * core));
+                auto *pixel = &out.rgba[(size_t(y) * out.width + x) * 4];
+                const float floor = std::min({pixel[0], pixel[1], pixel[2]}) / 65535.f;
+                const float keep = floor < .97f ? 1.f : std::max(0.f, (1.f - floor) / .03f);
+                // Keep deep blacks clean: the veil is most visible over the
+                // lit part of the frame, as in the reference scan. The film
+                // base lies outside the photo, so it takes the full veil and
+                // visibly continues the leak past the gate.
+                const bool inside = x >= left && x < left + int(width)
+                                 && y >= top && y < top + int(height);
+                const float luma = (pixel[0] * .2126f + pixel[1] * .7152f
+                                    + pixel[2] * .0722f) / 65535.f;
+                const float lift = inside ? smooth(.03f, .38f, luma) : 1.f;
+                const float mix = fog * keep * lift;
+                pixel[0] = blend(pixel[0], 65535, mix);
+                pixel[1] = blend(pixel[1], monochrome ? 65535 : fogGreen16, mix);
+                pixel[2] = blend(pixel[2], monochrome ? 65535 : fogBlue16, mix);
+            }
     }
 
     static uint16_t blend(uint16_t from, uint16_t to, float mix) {
@@ -126,14 +224,18 @@ struct LightLeak {
                         bool filmBorder, bool fromRight, float widthFraction, float phase) const {
         const float strength = smooth(0, .81f, amount);
         const float feather = .085f;
-        const int xMargin = filmBorder ? left : 0, yMargin = filmBorder ? top : 0;
-        for (int y = -yMargin; y < height + yMargin; ++y) {
+        const int right = int(out.width) - width - left;
+        const int entry = filmBorder ? (fromRight ? right : left) : 0;
+        const int opposite = filmBorder ? (fromRight ? left : right) : 0;
+        const int yBegin = filmBorder ? -top : 0;
+        const int yEnd = filmBorder ? int(out.height) - top : height;
+        for (int y = yBegin; y < yEnd; ++y) {
             const float t = (y + .5f) / height;
             const float wave = .012f * std::sin(2 * pi * t + phase)
                              + .005f * std::sin(6 * pi * t - phase);
             const float boundary = widthFraction * (.56f + .44f * amount) + wave;
-            const int limit = int(std::ceil(double(boundary + feather) * width));
-            for (int inward = -xMargin; inward < limit; ++inward) {
+            const int limit = std::min(width + opposite, int(std::ceil(double(boundary + feather) * width)));
+            for (int inward = -entry; inward < limit; ++inward) {
                 const float distance = (inward + .5f) / width - boundary;
                 const float mix = strength * (1 - smooth(-.012f, feather, distance));
                 const float rim = smooth(-.032f, .024f, distance);
@@ -275,10 +377,13 @@ struct Grade {
             if (brightness != 0)
                 c[k] = std::pow(std::max(0.f, c[k]), 1 / (1 + brightness * .8f));
         }
-        float pos = tonepos(luma(c)), ws = (1 - pos) * (1 - pos), wh = pos * pos;
+        float pos = sat(tonepos(luma(c))), ws = (1 - pos) * (1 - pos), wh = pos * pos;
+        float wh_lift = smooth(.45f, .95f, pos);
         for (int k = 0; k < 3; k++) {
-            c[k] += shadows * .25f * ws * (1 - c[k]);
-            c[k] += highlights * .25f * wh * (highlights > 0 ? 1 - c[k] : c[k]);
+            c[k] += shadows * .25f * ws * std::max(0.f, 1 - c[k]);
+            c[k] += highlights > 0
+                        ? highlights * .78f * wh_lift * std::max(0.f, 1 - c[k])
+                        : highlights * .25f * wh * c[k];
             c[k] = (c[k] - black) / std::max(1 - black - white, .05f);
         }
         float l = luma(c);
@@ -367,31 +472,6 @@ struct Grade {
     }
 };
 
-struct FrameLayout {
-    uint32_t left = 0, top = 0, bottom = 0, width = 0, height = 0;
-    std::string style;
-    FrameLayout(uint32_t w, uint32_t h, const spk::Json &j) {
-        style = j.at("edge_style").as_string();
-        if (style.empty())
-            style = "none";
-        if (style != "none") {
-            const auto margin = std::max(
-                2u, uint32_t(std::lround(std::min(w, h) * num(j, "edge_amount", 6, 2, 15) / 100)));
-            left = top = margin;
-            if (filmBorder()) {
-                const auto end = std::max(1u, uint32_t(std::lround(margin * .56)));
-                const auto rail = uint32_t(std::lround(margin * 1.82));
-                left = w >= h ? end : rail;
-                top = w >= h ? rail : end;
-            }
-        }
-        bottom = style == "instant" ? top * 3 : top;
-        width = w + left * 2;
-        height = h + top + bottom;
-    }
-    bool identity() const { return style == "none"; }
-    bool filmBorder() const { return style == "135_black" || style == "135_warm"; }
-};
 void rect(Image16 &im, int x, int y, int w, int h, const float c[3], float alpha = 1) {
     int x0 = std::max(x, 0), y0 = std::max(y, 0), x1 = std::min(int(im.width), x + w),
         y1 = std::min(int(im.height), y + h);
@@ -420,17 +500,14 @@ uint64_t glyph(char c) {
     return p ? bitmap[p - letters] : 0;
 }
 void text(Image16 &im, const std::string &value, int x, int y, int size, const float c[3],
-          float opacity, bool rotate = false) {
+          float opacity) {
     for (char ch : value) {
         uint64_t bits = glyph(ch);
         for (int row = 0; row < 7; row++) {
             int mask = int((bits >> ((6 - row) * 8)) & 31);
             for (int col = 0; col < 5; col++)
-                if (mask & (1 << (4 - col))) {
-                    const int u = x + col * size, v = y + row * size;
-                    rect(im, rotate ? int(im.width) - v - size : u, rotate ? u : v,
-                         size, size, c, opacity);
-                }
+                if (mask & (1 << (4 - col)))
+                    rect(im, x + col * size, y + row * size, size, size, c, opacity);
         }
         x += 6 * size;
     }
@@ -636,91 +713,7 @@ void date(Image16 &im, const spk::Json &j, int ix, int iy, int iw, int ih) {
         }
     }
 }
-float rounded_distance(float x, float y, float halfWidth, float halfHeight, float radius) {
-    const float dx = std::fabs(x) - halfWidth + radius;
-    const float dy = std::fabs(y) - halfHeight + radius;
-    const float ox = std::max(0.f, dx), oy = std::max(0.f, dy);
-    return std::sqrt(ox * ox + oy * oy) + std::min(0.f, std::max(dx, dy)) - radius;
-}
-
-void film_base_and_gate(Image16 &im, const FrameLayout &f, int width, int height) {
-    const int left = int(f.left), top = int(f.top);
-    const float radius = std::min(width, height) * .011f;
-    const int rim = int(std::ceil(radius + 2));
-    const bool warm = f.style == "135_warm";
-    const float base[3] = {warm ? .168f : .084f, warm ? .108f : .081f, warm ? .078f : .079f};
-    const float scaleX = 1.f / width, scaleY = 1.f / height;
-    for (int y = 0; y < int(im.height); ++y) {
-        const float v = (y + .5f - top) * scaleY;
-        const bool innerRow = y >= top + rim && y < top + height - rim;
-        for (int x = 0; x < int(im.width); ++x) {
-            // Jump directly across the unaffected photo interior.
-            if (innerRow && x == left + rim && width > 2 * rim) x = left + width - rim;
-            const float u = (x + .5f - left) * scaleX;
-            const bool inside = x >= left && x < left + width && y >= top && y < top + height;
-            float alpha = 1.f;
-            if (inside) {
-                const float shift = (.6f * (4.f * u * (1.f - u)) - .25f) * radius * .36f;
-                const float d = rounded_distance(x + .5f - left - width * .5f,
-                    y + .5f - top - height * .5f, width * .5f, height * .5f, radius);
-                alpha = sat(d + shift + .52f);
-                if (alpha == 0) continue;
-            }
-            uint32_t grain = uint32_t(x) * 0x9e3779b9u ^ uint32_t(y) * 0x85ebca6bu;
-            grain = (grain ^ (grain >> 16)) * 0x7feb352du;
-            const float density = .018f * (.5f - v) + .032f * (.5f - u * (2.f - u))
-                                + .022f * (float(grain >> 24) / 255.f - .5f);
-            auto *pixel = &im.rgba[(size_t(y) * im.width + x) * 4];
-            for (int k = 0; k < 3; ++k)
-                pixel[k] = quant(std::lerp(pixel[k] / 65535.f, base[k] + density, alpha));
-        }
-    }
-}
-
-void film_hole(Image16 &im, float u, float v, float w, float h, bool rotate,
-               const float backing[3]) {
-    const float cx = rotate ? im.width - v : u, cy = rotate ? u : v;
-    const float hw = (rotate ? h : w) * .5f, hh = (rotate ? w : h) * .5f;
-    const float radius = std::min(hw, hh) * .34f;
-    for (int y = std::max(0, int(std::floor(cy - hh))); y < std::min(int(im.height), int(std::ceil(cy + hh))); ++y)
-        for (int x = std::max(0, int(std::floor(cx - hw))); x < std::min(int(im.width), int(std::ceil(cx + hw))); ++x) {
-            const float d = rounded_distance(x + .5f - cx, y + .5f - cy, hw, hh, radius);
-            const float alpha = sat(.5f - d);
-            auto *pixel = &im.rgba[(size_t(y) * im.width + x) * 4];
-            for (int k = 0; k < 3; ++k)
-                pixel[k] = quant(std::lerp(pixel[k] / 65535.f, backing[k], alpha));
-        }
-}
-
-void borders(Image16 &im, const FrameLayout &f, const spk::Json &j, uint32_t iw, uint32_t ih) {
-    if (f.filmBorder()) {
-        const bool rotate = ih > iw, warm = f.style == "135_warm";
-        const float rail = rotate ? f.left : f.top;
-        const int end = int(rotate ? f.top : f.left);
-        const int length = int(rotate ? ih : iw);
-        const int across = int(rotate ? iw : ih);
-        const float pitch = length / 8.f;
-        const float holeWidth = std::min(.47f * pitch, .83f * rail), holeHeight = .55f * rail;
-        const float backing[3] = {warm ? .875f : .83f, warm ? .846f : .83f, .80f};
-        for (int i = 0; i < 8; ++i) {
-            const float u = end + (i + .5f) * pitch;
-            film_hole(im, u, rail * .42f, holeWidth, holeHeight, rotate, backing);
-            film_hole(im, u, across + rail * 1.58f, holeWidth, holeHeight, rotate, backing);
-        }
-        const int size = int(std::min(rail * .24f / 7, length / 140.f));
-        if (size > 0) {
-            const float ink[3] = {warm ? .74f : .57f, warm ? .52f : .54f, warm ? .33f : .47f};
-            std::string label = j.at("film_label").as_string();
-            if (label.empty()) label = "SPEKTRALENS FILM";
-            const auto number = std::to_string(std::clamp(j.at("edge_frame_number").as_int(36), 0, 99));
-            const int inset = std::max(1, length / 50);
-            const int y = int(rail) + across + std::max(1, int(rail * .025f));
-            const int numberX = end + length - inset - int(number.size()) * size * 6;
-            const int labelWidth = std::max(0, numberX - end - 2 * inset);
-            text(im, label.substr(0, labelWidth / (size * 6)), end + inset, y, size, ink, 1, rotate);
-            text(im, number, numberX, y, size, ink, 1, rotate);
-        }
-    }
+void paper_caption(Image16 &im, const FrameLayout &f, const spk::Json &j, uint32_t ih) {
     if (f.style == "instant") {
         std::string caption = j.at("edge_caption").as_string();
         if (!caption.empty()) {
@@ -761,14 +754,16 @@ Geometry::Geometry(const spk::Json &j, uint32_t sw, uint32_t sh) : source_w(sw),
     crop_w = right - left;
     crop_h = bottom - top;
     angle = num(j, "geo_angle", 0, -45, 45) * pi / 180;
+    cos_a = std::cos(angle);
+    sin_a = std::sin(angle);
     turns = ((j.at("geo_turns").as_int() % 4) + 4) % 4;
     flip_h = j.at("geo_flip_h").as_bool();
     flip_v = j.at("geo_flip_v").as_bool();
     out_w = turns % 2 ? crop_h : crop_w;
     out_h = turns % 2 ? crop_w : crop_h;
-    fit =
-        std::max(std::fabs(std::cos(angle)) + std::fabs(std::sin(angle)) * double(crop_h) / crop_w,
-                 std::fabs(std::cos(angle)) + std::fabs(std::sin(angle)) * double(crop_w) / crop_h);
+    const double abs_cos = std::fabs(cos_a), abs_sin = std::fabs(sin_a);
+    fit = std::max(abs_cos + abs_sin * double(crop_h) / crop_w,
+                   abs_cos + abs_sin * double(crop_w) / crop_h);
 }
 void Geometry::sample(uint32_t ox, uint32_t oy, double &sx, double &sy) const {
     double u = (ox + .5) / out_w, v = (oy + .5) / out_h;
@@ -788,8 +783,8 @@ void Geometry::sample(uint32_t ox, uint32_t oy, double &sx, double &sy) const {
         b = u;
     }
     double dx = (a - .5) * crop_w / fit, dy = (b - .5) * crop_h / fit;
-    sx = x + crop_w * .5 + std::cos(angle) * dx + std::sin(angle) * dy - .5;
-    sy = y + crop_h * .5 - std::sin(angle) * dx + std::cos(angle) * dy - .5;
+    sx = x + crop_w * .5 + cos_a * dx + sin_a * dy - .5;
+    sy = y + crop_h * .5 - sin_a * dx + cos_a * dy - .5;
 }
 namespace {
 bool identity_geometry(const Geometry &geo) {
@@ -803,19 +798,20 @@ bool date_active(const spk::Json &edits) {
 }  // namespace
 
 Image16 apply_edits(const uint16_t *pixels, uint32_t w, uint32_t h, uint32_t stride,
-                    const spk::Json &edits) {
+                    const spk::Json &edits, bool transparent_frame) {
     if (!w || !h || !pixels)
         throw std::runtime_error("No rendered pixels");
     Geometry geo(edits, w, h);
     Grade grade(edits);
     FrameLayout f(geo.out_w, geo.out_h, edits);
     LightLeak leak(edits);
+    const bool silver_edr = edits.at("silver_highlight_edr").as_bool();
     if (uint64_t(f.width) * f.height > 300000000ull)
         throw std::runtime_error("Edited output exceeds 300 megapixels");
     // Keep this predicate in sync with every visual key consumed below. A new overlay or
     // crop field must make identity() false, otherwise the fast path would silently skip it.
-    if (identity_geometry(geo) && grade.identity() && f.identity() && !date_active(edits)
-        && !leak.active()) {
+    if (identity_geometry(geo) && !silver_edr && grade.identity() && f.identity()
+        && !date_active(edits) && !leak.active()) {
         Image16 out;
         out.width = w;
         out.height = h;
@@ -838,37 +834,86 @@ Image16 apply_edits(const uint16_t *pixels, uint32_t w, uint32_t h, uint32_t str
     float base[3] = {.008f, .008f, .008f};
     if (f.style == "clean_white" || f.style == "instant")
         base[0] = base[1] = base[2] = .96f;
-    for (size_t i = 0; i < out.rgba.size(); i += 4) {
-        for (int k = 0; k < 3; k++)
-            out.rgba[i + k] = quant(base[k]);
-        out.rgba[i + 3] = 65535;
-    }
-    for (uint32_t y = 0; y < geo.out_h; y++)
-        for (uint32_t x = 0; x < geo.out_w; x++) {
-            double sx, sy;
-            geo.sample(x, y, sx, sy);
-            sx = std::clamp(sx, 0., double(w - 1));
-            sy = std::clamp(sy, 0., double(h - 1));
-            uint32_t x0 = uint32_t(sx), y0 = uint32_t(sy), x1 = std::min(x0 + 1, w - 1),
-                     y1 = std::min(y0 + 1, h - 1);
-            float fx = float(sx - x0), fy = float(sy - y0), c[3];
-            for (int k = 0; k < 3; k++) {
-                float a = pixels[(size_t(y0) * stride + x0) * 4 + k] * (1 - fx) +
-                          pixels[(size_t(y0) * stride + x1) * 4 + k] * fx;
-                float b = pixels[(size_t(y1) * stride + x0) * 4 + k] * (1 - fx) +
-                          pixels[(size_t(y1) * stride + x1) * 4 + k] * fx;
-                c[k] = (a * (1 - fy) + b * fy) / 65535.f;
-            }
-            grade.apply(c, (x + .5f) / geo.out_w, (y + .5f) / geo.out_h);
-            auto *p = &out.rgba[(size_t(y + f.top) * out.width + x + f.left) * 4];
-            for (int k = 0; k < 3; k++)
-                p[k] = quant(c[k]);
+    const uint16_t base_q[4] = {quant(base[0]), quant(base[1]), quant(base[2]), 65535};
+    auto fill_span = [&](uint32_t y, uint32_t x_begin, uint32_t x_end) {
+        auto *row = &out.rgba[(size_t(y) * out.width + x_begin) * 4];
+        for (uint32_t x = x_begin; x < x_end; ++x, row += 4) {
+            row[0] = base_q[0];
+            row[1] = base_q[1];
+            row[2] = base_q[2];
+            row[3] = 65535;
         }
-    if (f.filmBorder()) film_base_and_gate(out, f, geo.out_w, geo.out_h);
-    // Extend into film base before drawing the open perforations and edge print.
-    leak.apply(out, f.left, f.top, geo.out_w, geo.out_h, f.filmBorder());
-    borders(out, f, edits, geo.out_w, geo.out_h);
-    date(out, edits, int(f.left), int(f.top), int(geo.out_w), int(geo.out_h));
+    };
+    if (!f.identity()) {
+        for (uint32_t y = 0; y < f.top; ++y) fill_span(y, 0, out.width);
+        for (uint32_t y = f.top; y < f.top + geo.out_h; ++y) {
+            if (f.left > 0) fill_span(y, 0, f.left);
+            if (f.left + geo.out_w < out.width) fill_span(y, f.left + geo.out_w, out.width);
+        }
+        for (uint32_t y = f.top + geo.out_h; y < out.height; ++y) fill_span(y, 0, out.width);
+    }
+    const bool id_geo = identity_geometry(geo);
+    if (id_geo && !silver_edr && grade.identity()) {
+        const size_t row_values = size_t(w) * 4;
+        for (uint32_t y = 0; y < h; ++y) {
+            auto *dst = &out.rgba[(size_t(y + f.top) * out.width + f.left) * 4];
+            std::memcpy(dst, pixels + size_t(y) * stride * 4, row_values * sizeof(uint16_t));
+            for (size_t i = 3; i < row_values; i += 4) dst[i] = 65535;
+        }
+    } else if (id_geo) {
+        constexpr float inv65535 = 1.f / 65535.f;
+        const float inv_w = 1.f / float(w), inv_h = 1.f / float(h);
+        for (uint32_t y = 0; y < h; ++y) {
+            const float ny = (y + .5f) * inv_h;
+            const auto *src = pixels + size_t(y) * stride * 4;
+            auto *dst = &out.rgba[(size_t(y + f.top) * out.width + f.left) * 4];
+            for (uint32_t x = 0; x < w; ++x, src += 4, dst += 4) {
+                float c[3] = {src[0] * inv65535, src[1] * inv65535, src[2] * inv65535};
+                if (silver_edr) apply_silver_highlight_edr(c);
+                grade.apply(c, (x + .5f) * inv_w, ny);
+                dst[0] = quant(c[0]);
+                dst[1] = quant(c[1]);
+                dst[2] = quant(c[2]);
+                dst[3] = 65535;
+            }
+        }
+    } else {
+        const float inv_w = 1.f / float(geo.out_w), inv_h = 1.f / float(geo.out_h);
+        for (uint32_t y = 0; y < geo.out_h; y++) {
+            const float ny = (y + .5f) * inv_h;
+            auto *dst = &out.rgba[(size_t(y + f.top) * out.width + f.left) * 4];
+            for (uint32_t x = 0; x < geo.out_w; x++, dst += 4) {
+                double sx, sy;
+                geo.sample(x, y, sx, sy);
+                sx = std::clamp(sx, 0., double(w - 1));
+                sy = std::clamp(sy, 0., double(h - 1));
+                uint32_t x0 = uint32_t(sx), y0 = uint32_t(sy), x1 = std::min(x0 + 1, w - 1),
+                         y1 = std::min(y0 + 1, h - 1);
+                float fx = float(sx - x0), fy = float(sy - y0), c[3];
+                const auto *p00 = pixels + (size_t(y0) * stride + x0) * 4;
+                const auto *p10 = pixels + (size_t(y0) * stride + x1) * 4;
+                const auto *p01 = pixels + (size_t(y1) * stride + x0) * 4;
+                const auto *p11 = pixels + (size_t(y1) * stride + x1) * 4;
+                for (int k = 0; k < 3; k++) {
+                    float a = p00[k] * (1 - fx) + p10[k] * fx;
+                    float b = p01[k] * (1 - fx) + p11[k] * fx;
+                    c[k] = (a * (1 - fy) + b * fy) / 65535.f;
+                }
+                if (silver_edr) apply_silver_highlight_edr(c);
+                grade.apply(c, (x + .5f) * inv_w, ny);
+                dst[0] = quant(c[0]);
+                dst[1] = quant(c[1]);
+                dst[2] = quant(c[2]);
+                dst[3] = 65535;
+            }
+        }
+    }
+    if (f.film != FilmBorder::None) paint_film_base(out, f);
+    // The leak exposes the acetate before the perforations and optical lettering are applied.
+    leak.apply(out, f.left, f.top, geo.out_w, geo.out_h, f.acetate());
+    paper_caption(out, f, edits, geo.out_h);
+    date(out, edits, f.left, f.top, geo.out_w, geo.out_h);
+    if (f.film != FilmBorder::None) finish_film_border(out, f, edits, transparent_frame);
     return out;
 }
 spk::Json output_dimensions(uint32_t w, uint32_t h, const spk::Json &edits) {

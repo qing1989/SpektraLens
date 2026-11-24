@@ -71,6 +71,8 @@ for profile_name in base_profile_names + product_profile_names:
 licenses = ASSETS / 'licenses'
 licenses.mkdir(exist_ok=True)
 for name, source in {
+    'NOTICE.txt': ROOT / 'NOTICE',
+    'CITATION.cff': ROOT / 'CITATION.cff',
     'LibRaw-LGPL-2.1.txt': ROOT / 'third_party/LibRaw-0.22.2/LICENSE.LGPL',
     'LibRaw-COPYRIGHT.txt': ROOT / 'third_party/LibRaw-0.22.2/COPYRIGHT',
     'stb-LICENSE.txt': ENGINE / 'third_party/stb/LICENSE',

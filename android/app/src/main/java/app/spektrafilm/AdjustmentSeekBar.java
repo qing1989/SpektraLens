@@ -55,8 +55,9 @@ final class AdjustmentSeekBar extends SeekBar {
     touchSlop = configuration.getScaledTouchSlop();
     doubleTapSlop = configuration.getScaledDoubleTapSlop();
     float density = getResources().getDisplayMetrics().density;
-    track = new Track(colors, Math.round(3 * density));
-    Capsule thumb = new Capsule(Math.round(30 * density), Math.round(20 * density), density);
+    track = new Track(colors, Math.round(2f * density), density);
+    VernierThumb thumb =
+        new VernierThumb(Math.round(16 * density), Math.round(26 * density), density);
     setProgressTintList(null);
     setSecondaryProgressTintList(null);
     setProgressBackgroundTintList(null);
@@ -66,10 +67,11 @@ final class AdjustmentSeekBar extends SeekBar {
     setSplitTrack(false);
     setBackground(null);
     setMinWidth(0);
-    setMinHeight(Math.round(3 * density));
-    setMaxHeight(Math.round(3 * density));
+    setMinHeight(Math.round(14 * density));
+    setMaxHeight(Math.round(14 * density));
     int half = thumb.getIntrinsicWidth() / 2;
-    int inset = half + Math.max(2, Math.round(2 * density));
+    // Leave generous thumb travel clearance from both ends so 0% / 100% never hug the screen edge.
+    int inset = Math.max(half + Math.round(6 * density), Math.round(14 * density));
     setThumbOffset(half);
     setPadding(inset, 0, inset, 0);
   }
@@ -267,8 +269,10 @@ final class AdjustmentSeekBar extends SeekBar {
     // 刻度限 25 次/秒，快速甩动是连续的嗒嗒声而不是一片嗡嗡；过零不受限频。
     if (zero || now - lastTick >= 40) {
       lastTick = now;
-      performHapticFeedback(
-          zero ? HapticFeedbackConstants.CONTEXT_CLICK : HapticFeedbackConstants.CLOCK_TICK);
+      if (Haptics.enabled) {
+        performHapticFeedback(
+            zero ? HapticFeedbackConstants.CONTEXT_CLICK : HapticFeedbackConstants.CLOCK_TICK);
+      }
     }
   }
 
@@ -321,10 +325,13 @@ final class AdjustmentSeekBar extends SeekBar {
   private static final class Track extends StyledDrawable {
     private int[] colors;
     private final int height;
+    private final float density;
+    private final Paint tickPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
-    Track(int[] colors, int height) {
+    Track(int[] colors, int height, float density) {
       this.colors = colors.clone();
       this.height = Math.max(2, height);
+      this.density = density;
     }
 
     void colors(int[] value) {
@@ -347,24 +354,38 @@ final class AdjustmentSeekBar extends SeekBar {
     }
 
     public int getIntrinsicHeight() {
-      return height;
+      return Math.round(12 * density);
     }
 
     public void draw(Canvas canvas) {
       Rect bounds = getBounds();
       float radius = height / 2f, y = bounds.exactCenterY();
+      // Precision engineering tick marks (9 ticks with emphasized center index).
+      float span = Math.max(1f, bounds.width() - 4 * density);
+      float startX = bounds.left + 2 * density;
+      tickPaint.setStrokeWidth(Math.max(1f, density));
+      int baseAlpha = enabled ? alpha : alpha * 2 / 5;
+      for (int i = 0; i <= 8; i++) {
+        boolean center = i == 4;
+        float tx = startX + span * (i / 8f);
+        float halfH = (center ? 4.5f : 2.5f) * density;
+        tickPaint.setColor(AppStyle.MUTED);
+        tickPaint.setAlpha(Math.round(baseAlpha * (center ? .68f : .32f)));
+        canvas.drawLine(tx, y - halfH, tx, y + halfH, tickPaint);
+      }
       applyAlpha();
       canvas.drawRoundRect(
           bounds.left, y - radius, bounds.right, y + radius, radius, radius, paint);
     }
   }
 
-  private static final class Capsule extends StyledDrawable {
+  /** Precision Instrument vertical vernier index thumb with vermilion center hairline. */
+  private static final class VernierThumb extends StyledDrawable {
     private final int width, height;
     private final float density;
-    private final RectF pill = new RectF();
+    private final RectF box = new RectF();
 
-    Capsule(int width, int height, float density) {
+    VernierThumb(int width, int height, float density) {
       this.width = width;
       this.height = height;
       this.density = density;
@@ -379,20 +400,28 @@ final class AdjustmentSeekBar extends SeekBar {
     }
 
     public void draw(Canvas canvas) {
-      pill.set(getBounds());
-      float radius = pill.height() / 2;
+      box.set(getBounds());
+      float radius = 4.5f * density;
       paint.setStyle(Paint.Style.FILL);
-      paint.setColor(active ? Color.WHITE : 0xfff5f5f7);
+      paint.setColor(AppStyle.SLIDER_THUMB_BG);
       applyAlpha();
-      canvas.drawRoundRect(pill, radius, radius, paint);
-      float stroke = Math.max(1, density * .65f);
-      pill.inset(stroke / 2, stroke / 2);
-      paint.setStyle(Paint.Style.STROKE);
-      paint.setStrokeWidth(stroke);
-      paint.setColor(active ? 0xffff8c42 : 0xffd7d7dc);
-      applyAlpha();
-      canvas.drawRoundRect(pill, radius, radius, paint);
+      canvas.drawRoundRect(box, radius, radius, paint);
+
+      // Center vernier optical index line in vermilion (clean solid thumb with no perimeter outline).
       paint.setStyle(Paint.Style.FILL);
+      paint.setColor(AppStyle.SLIDER_THUMB_MARK);
+      applyAlpha();
+      float markW = Math.max(2f * density, 2.5f);
+      float markH = box.height() * .54f;
+      float cx = box.centerX(), cy = box.centerY();
+      canvas.drawRoundRect(
+          cx - markW / 2f,
+          cy - markH / 2f,
+          cx + markW / 2f,
+          cy + markH / 2f,
+          markW / 2f,
+          markW / 2f,
+          paint);
     }
   }
 }

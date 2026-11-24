@@ -26,7 +26,6 @@ final class GallerySheet extends Dialog {
     default void files() {}
   }
 
-  private static final int INK = AppStyle.INK, MUTED = AppStyle.MUTED, GOLD = AppStyle.GOLD;
   private final Activity activity;
   private final Listener listener;
   private final int maxSelection;
@@ -50,12 +49,12 @@ final class GallerySheet extends Dialog {
   private LinearLayout root;
   private GridView grid;
   private ListView albumList;
-  private LinearLayout albumPanel;
-  private ImageView albumArrow;
-  private TextView access, emptyText, selectionSummary, confirmButton, allFilter, rawFilter;
+  private FrameLayout photosPanel, albumPanel;
+  private ImageView albumIcon, albumArrow;
+  private TextView access, emptyText, selectionSummary, confirmButton, allFilter, rawFilter,
+      albumSourceLabel;
   private ImageView emptyIcon;
   private LinearLayout empty, albumSourceButton;
-  private int expandedHeight, sheetWidth;
   private final Runnable enforceOpaque =
       () -> {
         if (closed) return;
@@ -72,7 +71,7 @@ final class GallerySheet extends Dialog {
   private final View.OnLayoutChangeListener windowSizeChanged =
       (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
         if (!closed && (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop))
-          resize(false);
+          resize();
       };
   private final BaseAdapter adapter =
       new BaseAdapter() {
@@ -91,10 +90,20 @@ final class GallerySheet extends Dialog {
         public View getView(int position, View recycled, ViewGroup parent) {
           Tile tile = recycled instanceof Tile ? (Tile) recycled : new Tile();
           GalleryPhotos.Photo photo = visible.get(position);
-          tile.bind(photo, selected.containsKey(photo.key()));
+          tile.bind(photo, selectionOrder(photo.key()));
           return tile;
         }
       };
+
+  private int selectionOrder(String key) {
+    if (!selected.containsKey(key)) return 0;
+    int index = 1;
+    for (String candidate : selected.keySet()) {
+      if (candidate.equals(key)) return index;
+      index++;
+    }
+    return 0;
+  }
 
   /** maxSelection=0 means unrestricted; one is used by the export success “再编辑一张” path. */
   GallerySheet(Activity activity, int maxSelection, Listener listener) {
@@ -153,9 +162,9 @@ final class GallerySheet extends Dialog {
   }
 
   private TextView filterChip(String label, Runnable action) {
-    TextView chip = text(label, AppStyle.TYPE_BODY, MUTED);
+    TextView chip = text(label, AppStyle.TYPE_MICRO, AppStyle.MUTED);
     chip.setGravity(Gravity.CENTER);
-    chip.setPadding(dp(18), 0, dp(18), 0);
+    chip.setPadding(dp(12), 0, dp(12), 0);
     chip.setFocusable(true);
     chip.setOnClickListener(v -> action.run());
     chip.setContentDescription(label + "筛选");
@@ -164,10 +173,16 @@ final class GallerySheet extends Dialog {
   }
 
   private void styleFilter(TextView chip, boolean active) {
-    chip.setTextColor(active ? INK : MUTED);
-    chip.setBackground(
+    chip.setTextColor(active ? AppStyle.GOLD : AppStyle.MUTED);
+    AppStyle.setTypeface(chip, active ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_MEDIUM);
+    GradientDrawable bg =
         AppStyle.shape(
-            getContext(), active ? AppStyle.CONTROL : Color.TRANSPARENT, AppStyle.R_SMALL, false));
+            getContext(),
+            active ? AppStyle.ACCENT_SOFT : Color.TRANSPARENT,
+            AppStyle.R_SMALL,
+            false);
+    if (active) bg.setStroke(Math.max(1, dp(.85f)), AppStyle.GOLD);
+    chip.setBackground(bg);
   }
 
   private LinearLayout sourceButton(int iconRes, String label, Runnable action) {
@@ -175,30 +190,47 @@ final class GallerySheet extends Dialog {
     button.setOrientation(LinearLayout.HORIZONTAL);
     button.setGravity(Gravity.CENTER);
     button.setPadding(dp(10), 0, dp(10), 0);
-    button.setBackground(AppStyle.shape(getContext(), AppStyle.CONTROL, AppStyle.R_SMALL, true));
+    button.setBackground(AppStyle.shape(getContext(), AppStyle.CONTROL, 10f, true));
     button.setClickable(true);
     button.setFocusable(true);
     button.setContentDescription(label);
     ImageView icon = new ImageView(getContext());
     icon.setImageResource(iconRes);
-    icon.setImageTintList(ColorStateList.valueOf(INK));
+    icon.setImageTintList(ColorStateList.valueOf(AppStyle.INK));
     icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-    button.addView(icon, new LinearLayout.LayoutParams(dp(22), dp(22)));
-    TextView name = text(label, AppStyle.TYPE_BODY, INK);
+    button.addView(icon, new LinearLayout.LayoutParams(dp(18), dp(18)));
+    TextView name = text(label, AppStyle.TYPE_LABEL, AppStyle.INK);
+    AppStyle.setTypeface(name, AppStyle.FONT_SEMIBOLD);
     name.setGravity(Gravity.CENTER);
     LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(-2, -2);
-    nameParams.leftMargin = dp(7);
+    nameParams.leftMargin = dp(6);
     button.addView(name, nameParams);
     ImageView arrow = new ImageView(getContext());
     arrow.setImageResource(R.drawable.ic_material_keyboard_arrow_down);
-    arrow.setImageTintList(ColorStateList.valueOf(INK));
+    arrow.setImageTintList(ColorStateList.valueOf(AppStyle.INK));
     arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-    LinearLayout.LayoutParams arrowParams = new LinearLayout.LayoutParams(dp(18), dp(18));
+    LinearLayout.LayoutParams arrowParams = new LinearLayout.LayoutParams(dp(16), dp(16));
     arrowParams.leftMargin = dp(4);
     button.addView(arrow, arrowParams);
-    if (label.equals("从相册选择")) albumArrow = arrow;
+    if (label.equals("从相册选择")) {
+      albumIcon = icon;
+      albumSourceLabel = name;
+      albumArrow = arrow;
+    }
     button.setOnClickListener(v -> action.run());
     return button;
+  }
+
+  private void styleAlbumSourceButton(boolean open) {
+    if (albumSourceButton == null) return;
+    GradientDrawable bg =
+        AppStyle.shape(getContext(), open ? AppStyle.ACCENT_SOFT : AppStyle.CONTROL, 10f, false);
+    bg.setStroke(Math.max(1, dp(.85f)), open ? AppStyle.GOLD : AppStyle.OUTLINE);
+    albumSourceButton.setBackground(bg);
+    int fg = open ? AppStyle.GOLD : AppStyle.INK;
+    if (albumIcon != null) albumIcon.setImageTintList(ColorStateList.valueOf(fg));
+    if (albumSourceLabel != null) albumSourceLabel.setTextColor(fg);
+    if (albumArrow != null) albumArrow.setImageTintList(ColorStateList.valueOf(fg));
   }
 
   private void setRawOnly(boolean value) {
@@ -228,58 +260,61 @@ final class GallerySheet extends Dialog {
 
   private void build() {
     root = column();
-    AppStyle.surface(root, AppStyle.SURFACE, AppStyle.R_LARGE);
+    root.setBackground(AppStyle.topRounded(getContext(), AppStyle.SURFACE, AppStyle.R_LARGE, true));
+    root.setClipToOutline(true);
     LinearLayout meta = new LinearLayout(getContext());
     meta.setOrientation(LinearLayout.HORIZONTAL);
     meta.setGravity(Gravity.CENTER_VERTICAL);
-    meta.setPadding(dp(20), dp(14), dp(20), dp(6));
+    meta.setPadding(dp(16), dp(14), dp(16), dp(6));
     LinearLayout filters = new LinearLayout(getContext());
     filters.setOrientation(LinearLayout.HORIZONTAL);
     allFilter = filterChip("全部", () -> setRawOnly(false));
     rawFilter = filterChip("RAW", () -> setRawOnly(true));
     styleFilter(allFilter, true);
     styleFilter(rawFilter, false);
-    filters.addView(allFilter, new LinearLayout.LayoutParams(-2, dp(36)));
-    LinearLayout.LayoutParams rawParams = new LinearLayout.LayoutParams(-2, dp(36));
-    rawParams.leftMargin = dp(10);
+    filters.addView(allFilter, new LinearLayout.LayoutParams(-2, dp(30)));
+    LinearLayout.LayoutParams rawParams = new LinearLayout.LayoutParams(-2, dp(30));
+    rawParams.leftMargin = dp(6);
     filters.addView(rawFilter, rawParams);
-    meta.addView(filters, new LinearLayout.LayoutParams(0, dp(40), 1));
-    selectionSummary = text("已选 0 张", AppStyle.TYPE_MICRO, GOLD);
+    meta.addView(filters, new LinearLayout.LayoutParams(0, dp(34), 1));
+    selectionSummary = text("已选 0 张", AppStyle.TYPE_LABEL, AppStyle.GOLD);
     AppStyle.setNumericTypeface(selectionSummary);
+    AppStyle.setTypeface(selectionSummary, AppStyle.FONT_BOLD);
     selectionSummary.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-    meta.addView(selectionSummary, new LinearLayout.LayoutParams(-2, dp(40)));
+    meta.addView(selectionSummary, new LinearLayout.LayoutParams(-2, dp(34)));
     root.addView(meta);
 
     LinearLayout sources = new LinearLayout(getContext());
     sources.setOrientation(LinearLayout.HORIZONTAL);
     sources.setGravity(Gravity.CENTER_VERTICAL);
-    sources.setPadding(dp(14), dp(6), dp(14), dp(10));
+    sources.setPadding(dp(16), dp(6), dp(16), dp(10));
     albumSourceButton =
         sourceButton(R.drawable.ic_import_album, "从相册选择", this::albums);
-    sources.addView(albumSourceButton, new LinearLayout.LayoutParams(0, dp(56), 1));
+    sources.addView(albumSourceButton, new LinearLayout.LayoutParams(0, dp(44), 1));
     LinearLayout fileSource =
         sourceButton(R.drawable.ic_import_folder, "从文件选择", () -> {
           dismiss();
           listener.files();
         });
-    LinearLayout.LayoutParams fileParams = new LinearLayout.LayoutParams(0, dp(56), 1);
-    fileParams.leftMargin = dp(12);
+    LinearLayout.LayoutParams fileParams = new LinearLayout.LayoutParams(0, dp(44), 1);
+    fileParams.leftMargin = dp(9);
     sources.addView(fileSource, fileParams);
     root.addView(sources);
 
 
-    access = action("", GOLD, listener::permission);
+    access = action("", AppStyle.GOLD, listener::permission);
     access.setTextSize(AppStyle.TYPE_MICRO);
     access.setGravity(Gravity.CENTER_VERTICAL);
     access.setPadding(dp(20), 0, dp(20), 0);
     root.addView(access, new LinearLayout.LayoutParams(-1, dp(AppStyle.TOUCH_MIN)));
     FrameLayout body = new FrameLayout(getContext());
+    photosPanel = new FrameLayout(getContext());
     grid = new GridView(getContext());
     grid.setNumColumns(3);
     grid.setHorizontalSpacing(dp(4));
     grid.setVerticalSpacing(dp(4));
     grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
-    grid.setPadding(dp(12), 0, dp(12), dp(8));
+    grid.setPadding(dp(12), dp(4), dp(12), dp(12));
     grid.setClipToPadding(false);
     grid.setSelector(new ColorDrawable(Color.TRANSPARENT));
     grid.setAdapter(adapter);
@@ -298,45 +333,49 @@ final class GallerySheet extends Dialog {
           updateSelectionUi();
           adapter.notifyDataSetChanged();
         });
-    body.addView(grid, new FrameLayout.LayoutParams(-1, -1));
+    photosPanel.addView(grid, new FrameLayout.LayoutParams(-1, -1));
     empty = column();
     empty.setGravity(Gravity.CENTER);
     empty.setPadding(dp(24), dp(12), dp(24), dp(12));
     emptyIcon = new ImageView(getContext());
     emptyIcon.setImageResource(R.drawable.ic_ui_not_found);
-    emptyIcon.setImageTintList(ColorStateList.valueOf(MUTED));
+    emptyIcon.setImageTintList(ColorStateList.valueOf(AppStyle.MUTED));
     emptyIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
     emptyIcon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
     emptyIcon.setVisibility(View.GONE);
     LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(64), dp(64));
     iconParams.bottomMargin = dp(16);
     empty.addView(emptyIcon, iconParams);
-    emptyText = text("正在读取相册…", AppStyle.TYPE_TITLE, MUTED);
+    emptyText = text("正在读取相册…", AppStyle.TYPE_TITLE, AppStyle.MUTED);
     emptyText.setGravity(Gravity.CENTER);
     empty.addView(emptyText, new LinearLayout.LayoutParams(-1, -2));
-    body.addView(empty, new FrameLayout.LayoutParams(-1, -1));
+    photosPanel.addView(empty, new FrameLayout.LayoutParams(-1, -1));
     grid.setEmptyView(empty);
+    AppStyle.attachScrollFade(photosPanel, grid, AppStyle.SURFACE, 28, 26);
+    body.addView(photosPanel, new FrameLayout.LayoutParams(-1, -1));
 
-    albumPanel = column();
+    albumPanel = new FrameLayout(getContext());
+    albumPanel.setBackgroundColor(AppStyle.SURFACE);
     albumPanel.setVisibility(View.GONE);
     albumList = new ListView(getContext());
-    albumList.setDivider(new ColorDrawable(AppStyle.OUTLINE));
+    albumList.setDivider(new ColorDrawable(AppStyle.DIVIDER));
     albumList.setDividerHeight(1);
     albumList.setSelector(new ColorDrawable(Color.TRANSPARENT));
     albumList.setClipToPadding(false);
-    albumList.setPadding(0, dp(2), 0, dp(2));
-    albumPanel.addView(albumList, new LinearLayout.LayoutParams(-1, -1));
+    albumList.setPadding(0, dp(4), 0, dp(10));
+    albumPanel.addView(albumList, new FrameLayout.LayoutParams(-1, -1));
+    AppStyle.attachScrollFade(albumPanel, albumList, AppStyle.SURFACE, 28, 26);
     body.addView(albumPanel, new FrameLayout.LayoutParams(-1, -1));
     root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
 
     LinearLayout footer = new LinearLayout(getContext());
     footer.setPadding(dp(14), dp(8), dp(14), dp(14));
     footer.setGravity(Gravity.CENTER_VERTICAL);
-    TextView cancel = text("取消", AppStyle.TYPE_BODY, INK);
+    TextView cancel = text("取消", AppStyle.TYPE_BODY, AppStyle.INK);
     cancel.setGravity(Gravity.CENTER);
     cancel.setPadding(dp(12), 0, dp(12), 0);
     cancel.setOnClickListener(v -> dismiss());
-    AppStyle.pillAction(cancel, INK, AppStyle.CONTROL);
+    AppStyle.pillAction(cancel, AppStyle.INK, AppStyle.CONTROL);
     footer.addView(cancel, new LinearLayout.LayoutParams(0, dp(AppStyle.TOUCH_PRIMARY), 1));
     confirmButton = primaryAction("确认导入", this::confirmImport);
     LinearLayout.LayoutParams confirmParams =
@@ -351,19 +390,20 @@ final class GallerySheet extends Dialog {
     Window window = getWindow();
     // Keep the window itself opaque as well as the root. Some OPPO window managers
     // composite a transparent dialog background even when the content View is opaque.
-    window.setBackgroundDrawable(AppStyle.shape(getContext(), AppStyle.SURFACE, AppStyle.R_LARGE, true));
+    window.setBackgroundDrawable(
+        AppStyle.topRounded(getContext(), AppStyle.SURFACE, AppStyle.R_LARGE, true));
     window.setGravity(Gravity.BOTTOM);
     window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     WindowManager.LayoutParams attributes = window.getAttributes();
-    attributes.dimAmount = .58f;
-    attributes.y = dp(10);
+    attributes.dimAmount = AppStyle.DIM_AMOUNT;
+    attributes.y = 0;
     attributes.alpha = 1f;
     window.setAttributes(attributes);
     // Some OEMs still apply their dialog alpha transition even when a custom
     // windowEnterAnimation is supplied. Disable the window animation and slide only the
     // opaque content, so no frame can show the Activity through the sheet.
     window.setWindowAnimations(0);
-    resize(true);
+    resize();
     root.setAlpha(1f);
     root.setTranslationY(0);
     super.show();
@@ -401,7 +441,7 @@ final class GallerySheet extends Dialog {
     super.dismiss();
   }
 
-  private void resize(boolean initial) {
+  private void resize() {
     // The import sheet is intentionally fixed at its expanded height. There is no drag handle
     // and no collapsed state in the new import flow.
     Rect visible = new Rect();
@@ -413,13 +453,9 @@ final class GallerySheet extends Dialog {
         visible.width() > 0
             ? visible.width()
             : activity.getResources().getDisplayMetrics().widthPixels;
-    sheetWidth = Math.min(dp(720), Math.max(dp(240), availableWidth - dp(24)));
-    expandedHeight = Math.max(dp(250), Math.round(available * .85f));
+    int sheetWidth = Math.min(dp(720), Math.max(dp(240), availableWidth));
+    int expandedHeight = Math.max(dp(250), Math.round(available * .84f));
     getWindow().setLayout(sheetWidth, expandedHeight);
-  }
-
-  private void height(int pixels) {
-    if (!closed) getWindow().setLayout(sheetWidth, pixels);
   }
 
   void refresh() {
@@ -542,9 +578,10 @@ final class GallerySheet extends Dialog {
   }
 
   private void updateSelectionUi() {
-    selectionSummary.setText(String.format(Locale.CHINA, "已选 %d 张", selected.size()));
-    confirmButton.setText("确认导入");
-    confirmButton.setEnabled(!selected.isEmpty());
+    int count = selected.size();
+    selectionSummary.setText(String.format(Locale.CHINA, "已选 %d 张", count));
+    confirmButton.setText(count > 0 ? String.format(Locale.CHINA, "确认导入 · %d 张", count) : "确认导入");
+    confirmButton.setEnabled(count > 0);
   }
 
   private void confirmImport() {
@@ -566,45 +603,14 @@ final class GallerySheet extends Dialog {
   }
 
   private void setAlbumPanelOpen(boolean open) {
-    setAlbumPanelOpen(open, true);
-  }
-
-  private void setAlbumPanelOpen(boolean open, boolean resizeSheet) {
     albumPanelOpen = open;
-    albumPanel.animate().cancel();
+    // AdapterView updates the grid and empty view independently on data changes.
+    (open ? photosPanel : albumPanel).setVisibility(View.GONE);
+    (open ? albumPanel : photosPanel).setVisibility(View.VISIBLE);
+    styleAlbumSourceButton(open);
     albumArrow.animate().cancel();
     albumArrow.animate().rotation(open ? 180f : 0f).setDuration(160).start();
-    if (open) {
-      grid.setVisibility(View.GONE);
-      empty.setVisibility(View.GONE);
-      albumPanel.setVisibility(View.VISIBLE);
-      albumPanel.setAlpha(0f);
-      albumPanel.setTranslationY(-dp(8));
-      albumPanel
-          .animate()
-          .alpha(1f)
-          .translationY(0)
-          .setDuration(180)
-          .start();
-      albumList.requestFocus();
-      height(expandedHeight);
-    } else {
-      albumPanel
-          .animate()
-          .alpha(0f)
-          .translationY(-dp(6))
-          .setDuration(140)
-          .withEndAction(
-              () -> {
-                if (!albumPanelOpen) {
-                  albumPanel.setVisibility(View.GONE);
-                  grid.setVisibility(View.VISIBLE);
-                  empty.setVisibility(visible.isEmpty() ? View.VISIBLE : View.GONE);
-                }
-              })
-          .start();
-      if (resizeSheet) height(expandedHeight);
-    }
+    if (open) albumList.requestFocus();
   }
 
   private void populateAlbumRows() {
@@ -648,7 +654,8 @@ final class GallerySheet extends Dialog {
             row.setPadding(dp(20), 0, dp(16), 0);
             String id = ids.get(position);
             boolean active = albumId.equals(id);
-            TextView name = text(names.get(position), AppStyle.TYPE_BODY, active ? GOLD : INK);
+            TextView name =
+                text(names.get(position), AppStyle.TYPE_BODY, active ? AppStyle.GOLD : AppStyle.INK);
             name.setSingleLine(true);
             name.setEllipsize(android.text.TextUtils.TruncateAt.END);
             name.setLineSpacing(dp(2), 1);
@@ -657,14 +664,18 @@ final class GallerySheet extends Dialog {
             for (GalleryPhotos.Photo photo : phone)
               if (!rawOnly || isRaw(photo)) rawTotal++;
             int count = id.isEmpty() ? rawTotal : counts.getOrDefault(id, 0);
-            TextView total = text(String.valueOf(count), AppStyle.TYPE_MICRO, active ? GOLD : MUTED);
+            TextView total =
+                text(
+                    String.valueOf(count),
+                    AppStyle.TYPE_MICRO,
+                    active ? AppStyle.GOLD : AppStyle.MUTED);
             AppStyle.setNumericTypeface(total);
             total.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
             row.addView(total, new LinearLayout.LayoutParams(dp(48), -1));
             if (active) {
               ImageView check = new ImageView(getContext());
               check.setImageResource(R.drawable.ic_material_check);
-              check.setImageTintList(ColorStateList.valueOf(GOLD));
+              check.setImageTintList(ColorStateList.valueOf(AppStyle.GOLD));
               check.setPadding(dp(3), dp(3), dp(3), dp(3));
               check.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
               LinearLayout.LayoutParams checkParams = new LinearLayout.LayoutParams(dp(24), dp(24));
@@ -682,15 +693,28 @@ final class GallerySheet extends Dialog {
     albumList.setOnItemClickListener(
         (parent, view, position, id) -> {
           albumId = ids.get(position);
-          // Keep the newly expanded sheet height so the selected album opens with more rows visible.
-          setAlbumPanelOpen(false, false);
+          setAlbumPanelOpen(false);
           filter(true);
         });
   }
 
+  private static String formatBadgeText(GalleryPhotos.Photo photo) {
+    String name = photo == null || photo.name == null ? "" : photo.name.toLowerCase(Locale.ROOT);
+    if (name.endsWith(".dng")) return "DNG";
+    if (name.endsWith(".heic")) return "HEIC";
+    if (name.endsWith(".heif") || name.endsWith(".hif")) return "HEIF";
+    if (name.endsWith(".png")) return "PNG";
+    if (name.endsWith(".webp")) return "WEBP";
+    if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "JPG";
+    return "";
+  }
+
   private final class Tile extends FrameLayout {
-    final ImageView image, check;
+    final ImageView image;
+    final TextView orderBadge, formatBadge;
     final View scrim;
+    final RippleDrawable selectedForeground, unselectedForeground;
+    boolean foregroundSelected;
     CancellationSignal signal;
     Future<?> future;
     boolean loading;
@@ -701,23 +725,43 @@ final class GallerySheet extends Dialog {
       image.setScaleType(ImageView.ScaleType.CENTER_CROP);
       addView(image, new FrameLayout.LayoutParams(-1, -1));
       scrim = new View(getContext());
-      scrim.setBackgroundColor(0x66000000);
+      scrim.setBackgroundColor(0x30000000);
       scrim.setVisibility(View.GONE);
       addView(scrim, new FrameLayout.LayoutParams(-1, -1));
-      check = new ImageView(getContext());
-      check.setImageResource(R.drawable.ic_material_check);
-      check.setImageTintList(ColorStateList.valueOf(AppStyle.ON_PRIMARY));
-      check.setBackground(AppStyle.pill(getContext(), GOLD, false));
-      check.setPadding(dp(4), dp(4), dp(4), dp(4));
-      check.setVisibility(View.GONE);
+      formatBadge = text("", 9, 0xfff4f4f6);
+      AppStyle.setTypeface(formatBadge, AppStyle.FONT_BOLD);
+      formatBadge.setPadding(dp(5), dp(1.5f), dp(5), dp(1.5f));
+      formatBadge.setBackground(AppStyle.shape(getContext(), 0xb80a0a0b, 4f, false));
+      formatBadge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+      FrameLayout.LayoutParams fmtParams =
+          new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START);
+      fmtParams.leftMargin = dp(5);
+      fmtParams.bottomMargin = dp(5);
+      addView(formatBadge, fmtParams);
+      orderBadge = text("", AppStyle.TYPE_MICRO, AppStyle.ON_ACCENT);
+      AppStyle.setNumericTypeface(orderBadge);
+      AppStyle.setTypeface(orderBadge, AppStyle.FONT_BOLD);
+      orderBadge.setGravity(Gravity.CENTER);
+      orderBadge.setBackground(AppStyle.shape(getContext(), AppStyle.GOLD, 6f, false));
+      orderBadge.setVisibility(View.GONE);
+      orderBadge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
       FrameLayout.LayoutParams checkParams =
-          new FrameLayout.LayoutParams(
-              dp(AppStyle.SELECTION_BADGE), dp(AppStyle.SELECTION_BADGE), Gravity.TOP | Gravity.END);
-      checkParams.topMargin = dp(7);
-      checkParams.rightMargin = dp(7);
-      addView(check, checkParams);
-      setBackground(
-          AppStyle.shape(getContext(), AppStyle.CONTROL, AppStyle.R_SMALL, false));
+          new FrameLayout.LayoutParams(dp(20), dp(20), Gravity.TOP | Gravity.END);
+      checkParams.topMargin = dp(5);
+      checkParams.rightMargin = dp(5);
+      addView(orderBadge, checkParams);
+      selectedForeground =
+          new RippleDrawable(
+              ColorStateList.valueOf(0x30ffffff),
+              borderFor(),
+              AppStyle.shape(getContext(), Color.WHITE, 6f, false));
+      unselectedForeground =
+          new RippleDrawable(
+              ColorStateList.valueOf(0x30ffffff),
+              null,
+              AppStyle.shape(getContext(), Color.WHITE, 6f, false));
+      setForeground(unselectedForeground);
+      setBackground(AppStyle.shape(getContext(), AppStyle.CONTROL, 6f, false));
       setClipToOutline(true);
       setLayoutParams(new AbsListView.LayoutParams(-1, -2));
     }
@@ -729,18 +773,25 @@ final class GallerySheet extends Dialog {
           View.MeasureSpec.makeMeasureSpec(side, View.MeasureSpec.EXACTLY));
     }
 
-    void bind(GalleryPhotos.Photo photo, boolean isSelected) {
+    void bind(GalleryPhotos.Photo photo, int order) {
+      boolean isSelected = order > 0;
       String key = photo.key();
       boolean same = key.equals(image.getTag());
       setContentDescription(
-          (isSelected ? "已选择，" : "") + photo.name + "，点击" + (isSelected ? "取消选择" : "选择"));
+          (isSelected ? "已选择第 " + order + " 张，" : "")
+              + photo.name
+              + "，点击"
+              + (isSelected ? "取消选择" : "选择"));
       scrim.setVisibility(isSelected ? View.VISIBLE : View.GONE);
-      check.setVisibility(isSelected ? View.VISIBLE : View.GONE);
-      setForeground(
-          new RippleDrawable(
-              ColorStateList.valueOf(0x30ffffff),
-              isSelected ? borderFor() : null,
-              AppStyle.shape(getContext(), Color.WHITE, AppStyle.R_SMALL, false)));
+      orderBadge.setVisibility(isSelected ? View.VISIBLE : View.GONE);
+      if (isSelected) orderBadge.setText(String.valueOf(order));
+      String fmt = formatBadgeText(photo);
+      formatBadge.setVisibility(fmt.isEmpty() ? View.GONE : View.VISIBLE);
+      if (!fmt.isEmpty()) formatBadge.setText(fmt);
+      if (isSelected != foregroundSelected) {
+        foregroundSelected = isSelected;
+        setForeground(isSelected ? selectedForeground : unselectedForeground);
+      }
       if (same) {
         Bitmap hit = cache.get(key);
         if (hit != null) {
@@ -770,11 +821,13 @@ final class GallerySheet extends Dialog {
     }
 
     private void startLoad(GalleryPhotos.Photo photo, String key) {
+      if (closed || thumbnails.isShutdown()) return;
       loading = true;
       CancellationSignal request = signal = new CancellationSignal();
       thumbnailSignals.add(request);
-      future =
-          thumbnails.submit(
+      try {
+        future =
+            thumbnails.submit(
               () -> {
                 Bitmap loaded = null;
                 try {
@@ -815,13 +868,19 @@ final class GallerySheet extends Dialog {
                       if (key.equals(image.getTag())) image.setImageBitmap(bitmap);
                     });
               });
+      } catch (java.util.concurrent.RejectedExecutionException ignored) {
+        thumbnailSignals.remove(request);
+        signal = null;
+        future = null;
+        loading = false;
+      }
     }
 
     private Drawable borderFor() {
       GradientDrawable border = new GradientDrawable();
       border.setColor(Color.TRANSPARENT);
-      border.setStroke(dp(2), GOLD);
-      border.setCornerRadius(dp(AppStyle.R_SMALL));
+      border.setStroke(dp(2), AppStyle.GOLD);
+      border.setCornerRadius(dp(6));
       return border;
     }
   }
@@ -839,7 +898,6 @@ final class GallerySheet extends Dialog {
     if (querySignal != null) querySignal.cancel();
     for (CancellationSignal signal : thumbnailSignals) signal.cancel();
     thumbnailSignals.clear();
-    albumPanel.animate().cancel();
     albumArrow.animate().cancel();
     if (root != null) root.animate().cancel();
     activity.getWindow().getDecorView().removeOnLayoutChangeListener(windowSizeChanged);

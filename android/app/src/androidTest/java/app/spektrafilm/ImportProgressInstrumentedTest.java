@@ -95,7 +95,9 @@ public final class ImportProgressInstrumentedTest
             }
             Outline outline = new Outline();
             button.getBackground().getOutline(outline);
-            assertEquals(Math.min(width, height) / 2f, outline.getRadius(), .5f);
+            float expectedRadius =
+                Math.min(AppStyle.dp(activity, AppStyle.R_BUTTON), Math.min(width, height) / 2f);
+            assertEquals(expectedRadius, outline.getRadius(), .5f);
             TextView cancel = (TextView) field("homeImportCancel");
             assertEquals(View.VISIBLE, cancel.getVisibility());
             assertTrue(cancel.getHeight() >= AppStyle.dp(activity, AppStyle.TOUCH_MIN));

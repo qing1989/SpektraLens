@@ -288,15 +288,14 @@ public final class UpdateInstrumentedTest extends ActivityInstrumentationTestCas
     RESPONSES.put(UpdateController.MANIFEST,
         manifestResponse(10000, 29, "- 第一项\n- 第二项"));
     main(() -> {
-      View about = activity.getWindow().getDecorView().findViewWithTag("home.about");
-      about.performClick();
+      openAboutFromSettings();
       controller.checkInBackground();
     });
     await(() -> !busy());
     assertTrue(controller.hasAvailableUpdate());
     assertNull(field("progress"));
     assertNull(field("notice"));
-    assertBadge("home.about", true);
+    assertNavDot(true);
     assertBadge("about.update", true);
     main(controller::check);
     await(() -> !busy());
@@ -304,10 +303,30 @@ public final class UpdateInstrumentedTest extends ActivityInstrumentationTestCas
     assertNotNull(notice);
     main(() -> notice.getWindow().getDecorView()
         .findViewWithTag("update.later").performClick());
-    assertBadge("home.about", true);
+    assertNavDot(true);
     assertBadge("about.update", true);
     assertNotNull(activity.getSharedPreferences("update_notice", 0).getString("manifest", null));
     assertEquals(Arrays.asList(UpdateController.MANIFEST, UpdateController.MANIFEST), REQUESTS);
+  }
+
+  /** Opens Settings from the home navigation, then the About row inside it. UI thread only. */
+  private void openAboutFromSettings() {
+    View root = activity.getWindow().getDecorView();
+    View settings = root.findViewWithTag("home.nav.settings");
+    assertNotNull("Settings tab missing from home navigation", settings);
+    settings.performClick();
+    View about = root.findViewWithTag("settings.about");
+    assertNotNull("About row missing from settings", about);
+    about.performClick();
+  }
+
+  private void assertNavDot(boolean expected) {
+    boolean[] visible = {false};
+    main(() -> {
+      View dot = activity.getWindow().getDecorView().findViewWithTag("home.nav.dot");
+      visible[0] = dot != null && dot.getVisibility() == View.VISIBLE;
+    });
+    assertEquals("home.nav.dot", expected, visible[0]);
   }
 
   private void assertBadge(String tag, boolean expected) {
@@ -355,7 +374,7 @@ public final class UpdateInstrumentedTest extends ActivityInstrumentationTestCas
     main(() -> restored[0] = new UpdateController(activity));
     assertTrue("Offline app opening restores the confirmed badge", restored[0].hasAvailableUpdate());
     main(restored[0]::close);
-    main(() -> activity.getWindow().getDecorView().findViewWithTag("home.about").performClick());
+    main(this::openAboutFromSettings);
     assertBadge("about.update", true);
   }
 
@@ -368,7 +387,7 @@ public final class UpdateInstrumentedTest extends ActivityInstrumentationTestCas
     main(controller::checkInBackground);
     await(() -> !busy());
     assertFalse(controller.hasAvailableUpdate());
-    assertBadge("home.about", false);
+    assertNavDot(false);
     assertNull(activity.getSharedPreferences("update_notice", 0).getString("manifest", null));
     RESPONSES.put(UpdateController.MANIFEST, manifestResponse(1, 1, ""));
     main(controller::checkInBackground);

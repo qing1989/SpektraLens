@@ -82,13 +82,7 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
     awaitPreview();
     String saved = settings().toString();
     String id = (String) field("activeId");
-    main(activity::finish);
-    setActivity(null);
-    activity = getActivity();
-    long end = android.os.SystemClock.elapsedRealtime() + 30000;
-    while (!(Boolean) field("ready") && android.os.SystemClock.elapsedRealtime() < end)
-      Thread.sleep(40);
-    assertTrue("Engine restored after restarting the activity", (Boolean) field("ready"));
+    restartActivity();
     assertEquals(id, field("activeId"));
     assertNull("Home defers developing the restored photograph", field("developed"));
     main(
@@ -106,6 +100,108 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
     awaitPreview();
     assertEquals(View.VISIBLE, ((View) field("editorScreen")).getVisibility());
     assertEquals("Reopening preserves the saved adjustments", saved, settings().toString());
+  }
+
+  public void testRecentPhotosFollowSavedEditsAcrossRestart() throws Exception {
+    String prefix = "SpektraLens-recent-" + UUID.randomUUID();
+    String earlier = prefix + "-1.JPG";
+    String later = prefix + "-2.JPG";
+    importPhoto(image(earlier), null);
+    importPhoto(image(later), null);
+    main(activity::onBackPressed);
+    assertRecentPhotos(later, earlier);
+
+    openRecentPhoto(earlier);
+    main(activity::onBackPressed);
+    assertRecentPhotos(later, earlier);
+
+    openRecentPhoto(earlier);
+    adjustExposure(.25);
+    leaveWith("放弃修改");
+    assertRecentPhotos(later, earlier);
+
+    openRecentPhoto(earlier);
+    adjustExposure(.5);
+    leaveWith("保存并返回");
+    assertRecentPhotos(earlier, later);
+
+    restartActivity();
+    assertRecentPhotos(earlier, later);
+    openRecentPhoto(later);
+    adjustExposure(.75);
+    leaveWith("保存并返回");
+    assertRecentPhotos(later, earlier);
+
+    openRecentPhoto(earlier);
+    adjustExposure(1.0);
+    awaitPreview();
+    exported();
+    assertTrue(ui("回到首页").performAction(AccessibilityNodeInfo.ACTION_CLICK));
+    assertRecentPhotos(earlier, later);
+  }
+
+  private void restartActivity() throws Exception {
+    main(activity::finish);
+    setActivity(null);
+    activity = getActivity();
+    long end = android.os.SystemClock.elapsedRealtime() + 30000;
+    while (!(Boolean) field("ready") && android.os.SystemClock.elapsedRealtime() < end)
+      Thread.sleep(40);
+    assertTrue("Engine restored after restarting the activity", (Boolean) field("ready"));
+  }
+
+  private void assertRecentPhotos(String first, String second) {
+    main(() -> {
+      try {
+        assertEquals(View.VISIBLE, ((View) field("homeScreen")).getVisibility());
+        ViewGroup row = (ViewGroup) ((ViewGroup) field("historyList")).getChildAt(0);
+        View firstPhoto = ((ViewGroup) row.getChildAt(0)).getChildAt(0);
+        View secondPhoto = ((ViewGroup) row.getChildAt(1)).getChildAt(0);
+        assertEquals("编辑 " + PhotoLabels.title(first), firstPhoto.getContentDescription());
+        assertEquals("编辑 " + PhotoLabels.title(second), secondPhoto.getContentDescription());
+      } catch (Exception error) {
+        throw new RuntimeException(error);
+      }
+    });
+  }
+
+  private void openRecentPhoto(String name) throws Exception {
+    main(() -> {
+      try {
+        View card = find((View) field("historyList"), "编辑 " + PhotoLabels.title(name), true);
+        assertNotNull(name, card);
+        assertTrue(card.performClick());
+      } catch (Exception error) {
+        throw new RuntimeException(error);
+      }
+    });
+    awaitPreview();
+  }
+
+  private void adjustExposure(double exposure) {
+    main(() -> {
+      try {
+        ((JSONObject) field("settings")).put("grade_exposure", exposure);
+        call("scheduleRender", new Class<?>[] {});
+      } catch (Exception error) {
+        throw new RuntimeException(error);
+      }
+    });
+  }
+
+  private void leaveWith(String action) {
+    main(activity::onBackPressed);
+    main(() -> {
+      try {
+        android.app.Dialog dialog = (android.app.Dialog) field("editorExitDialog");
+        assertNotNull(dialog);
+        View button = find(dialog.getWindow().getDecorView(), action, false);
+        assertNotNull(action, button);
+        assertTrue(button.performClick());
+      } catch (Exception error) {
+        throw new RuntimeException(error);
+      }
+    });
   }
 
   public void testRecentPhotoLongPressShowsTheCompleteActionMenu() throws Exception {
@@ -239,7 +335,7 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
             assertTrue(label.contains("1 张"));
             TextView manage = (TextView) field("homeManage");
             assertEquals(View.VISIBLE, manage.getVisibility());
-            assertEquals("照片管理", manage.getText().toString());
+            assertEquals("管理", manage.getText().toString());
             assertTrue(manage.performClick());
           } catch (Exception error) {
             throw new RuntimeException(error);
@@ -636,8 +732,12 @@ public final class WorkflowInstrumentedTest extends ActivityInstrumentationTestC
   }
 
   private Uri image() throws Exception {
+    return image("SpektraLens-workflow.JPG");
+  }
+
+  private Uri image(String name) throws Exception {
     ContentValues values = new ContentValues();
-    values.put(MediaStore.Images.Media.DISPLAY_NAME, "SpektraLens-workflow.JPG");
+    values.put(MediaStore.Images.Media.DISPLAY_NAME, name);
     values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
     values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/SpektraLensTests");
     Uri uri =

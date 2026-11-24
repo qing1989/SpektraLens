@@ -161,13 +161,16 @@ final class LibraryActionSheet extends Dialog {
     ScrollView scroll = new ScrollView(getContext());
     scroll.setTag("library.actions.scroll");
     scroll.setFillViewport(false);
+    scroll.setVerticalScrollBarEnabled(false);
     LinearLayout list = column();
-    list.setPadding(dp(18), 0, dp(18), dp(18));
+    list.setPadding(dp(18), dp(6), dp(18), dp(20));
     addGroup(list, "编辑", items, EDIT, EDIT);
     addGroup(list, "编辑参数", items, COPY, BATCH_PASTE);
     addGroup(list, "照片管理", items, FAVORITE, DELETE);
     scroll.addView(list, new ScrollView.LayoutParams(-1, -2));
-    root.addView(scroll, new ViewGroup.LayoutParams(-1, -2));
+    root.addView(
+        AppStyle.wrapScrollFade(getContext(), scroll, AppStyle.SURFACE, 26, 26, true),
+        new ViewGroup.LayoutParams(-1, -2));
   }
 
   private void addGroup(
@@ -314,7 +317,7 @@ final class LibraryActionSheet extends Dialog {
     window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
     window.setGravity(Gravity.BOTTOM);
     window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-    window.setDimAmount(.64f);
+    window.setDimAmount(AppStyle.DIM_AMOUNT);
     activity.getWindow().getDecorView().addOnLayoutChangeListener(windowChanged);
     resize();
   }

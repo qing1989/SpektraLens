@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix="spektra-export-tests-") as temporary:
         "-I" + str(engine / "src/core"), "-I" + str(engine / "host"),
         "-I" + str(engine / "third_party/stb"),
         str(root / "android/app/src/test/cpp/export_quality_test.cpp"),
-        str(native / "edit_pipeline.cpp"), str(native / "output_spaces.cpp"),
+        str(native / "edit_pipeline.cpp"), str(native / "film_border.cpp"), str(native / "output_spaces.cpp"),
         str(engine / "src/core/json.cpp"),
         str(engine / "host/output.cpp"), str(engine / "host/platform.cpp"),
         str(engine / "host/stb_impl.cpp"), "-lz",

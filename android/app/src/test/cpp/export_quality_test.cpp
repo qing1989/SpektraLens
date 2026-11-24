@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 #include "edit_pipeline.hpp"
+#include "film_border.hpp"
 #include "stb_image.h"
 #include <algorithm>
 #include <filesystem>
@@ -146,19 +147,38 @@ void check_light_leak() {
     const auto white = render(width, height, spk::Json::object(), 65535);
     check(render(width, height, edits, 65535).rgba == white.rgba, "Leak altered white highlights");
     const auto large = render(width * 3, height * 3, edits);
-    size_t tinted = 0;
+    size_t tinted = 0, visible25 = 0;
     for (uint32_t y = 0; y < height; ++y)
         for (uint32_t x = 0; x < width; ++x) {
             const size_t i = (size_t(y) * width + x) * 4;
             const size_t large_i = (size_t(y * 3 + 1) * large.width + x * 3 + 1) * 4;
             tinted += warm.rgba[i] > warm.rgba[i + 1];
+            visible25 += int(warm.rgba[i]) - int(warm.rgba[i + 2]) > 1500;
             for (int c = 0; c < 3; ++c)
                 check(std::abs(int(warm.rgba[i + c]) - int(large.rgba[large_i + c])) <= 1,
                       "Resizing moved or reshaped the leak");
         }
-    check(tinted > 0 && tinted < width * height / 3, "Leak must be warm and localized");
+    check(tinted > width * height * 95 / 100, "Color leak must veil the whole frame");
+    // The slider uses a square-root response so 25% must already read as a
+    // visible veil, not as a barely perceptible edge tint.
+    check(visible25 > width * height / 2, "25% color leak is too faint");
+    auto band = [&](int x0, int x1, int y0, int y1) {
+        long sum = 0;
+        for (int y = y0; y < y1; ++y)
+            for (int x = x0; x < x1; ++x) {
+                const size_t i = (size_t(y) * width + x) * 4;
+                sum += int(warm.rgba[i]) - int(warm.rgba[i + 2]);
+            }
+        return double(sum) / ((x1 - x0) * (y1 - y0));
+    };
     const size_t middle = (size_t(height / 2) * width + width / 2) * 4;
-    check(warm.rgba[middle] == base.rgba[middle], "Leak reached the photo centre");
+    check(warm.rgba[middle] != base.rgba[middle], "Full-frame veil missing at centre");
+    const double centreTint = band(width * 2 / 5, width * 3 / 5, height * 2 / 5, height * 3 / 5);
+    const double edgeTint = std::max({band(0, width / 10, 0, height),
+                                      band(width - width / 10, width, 0, height),
+                                      band(0, width, 0, height / 10),
+                                      band(0, width, height - height / 10, height)});
+    check(edgeTint > centreTint * 1.5, "Veil lacks a brighter entry edge");
 
     edits.set("light_leak_seed", spk::Json(198.0));
     check(render(width, height, edits).rgba != warm.rgba, "Changing seed did not alter the leak");
@@ -217,23 +237,27 @@ void check_light_leak() {
     edits.set("light_leak_monochrome", spk::Json(false));
     edits.set("edge_amount", spk::Json(15.0));
     for (const std::string mode : {"color", "first_roll"})
-        for (const std::string style : {"135_black", "135_warm", "clean_white", "instant"}) {
+        for (const std::string style : {"135_black", "135_warm", "135_bw_silver", "120_medium",
+                                        "4x5_sheet", "slide_mount", "clean_white", "instant"}) {
             edits.set("light_leak_mode", spk::Json(mode));
             edits.set("edge_style", spk::Json(style));
             edits.set("light_leak_amount", spk::Json(0.0));
             const auto without = render(width, height, edits);
             edits.set("light_leak_amount", spk::Json(80.0));
             const auto with = render(width, height, edits);
-            const auto left = (with.width - width) / 2;
-            const auto top = (with.height - height) / (style == "instant" ? 4 : 2);
-            const bool film = style == "135_black" || style == "135_warm";
+            const mobile::FrameLayout layout(width, height, edits);
+            const auto left = uint32_t(layout.left), top = uint32_t(layout.top);
+            const bool strip = style.starts_with("135_");
             size_t changedBorder = 0, holes = 0;
             for (uint32_t y = 0; y < with.height; ++y)
                 for (uint32_t x = 0; x < with.width; ++x) {
                     const size_t i = (size_t(y) * with.width + x) * 4;
                     if (x >= left && x < left + width && y >= top && y < top + height) {
-                        if (film && (x < left + 3 || x >= left + width - 3
-                            || y < top + 3 || y >= top + height - 3)) continue;
+                        // Material and gate shading are confined to the image edge.
+                        const uint32_t rim = style == "slide_mount" ? 20 : 3;
+                        if (layout.film != mobile::FilmBorder::None
+                            && (x < left + rim || x >= left + width - rim
+                                || y < top + rim || y >= top + height - rim)) continue;
                         const size_t j = (size_t(y - top) * width + x - left) * 4;
                         const auto &photo = mode == "color" ? strongColor : firstRoll;
                         check(std::equal(with.rgba.data() + i, with.rgba.data() + i + 4,
@@ -243,46 +267,193 @@ void check_light_leak() {
                     const bool changed = !std::equal(with.rgba.data() + i, with.rgba.data() + i + 4,
                                                      without.rgba.data() + i);
                     changedBorder += changed;
-                    if (film && without.rgba[i] >= 54394 && without.rgba[i + 2] == 52428) {
+                    if (strip && without.rgba[i] == 223 * 257 && without.rgba[i + 2] == 204 * 257) {
                         check(!changed, "Leak tinted a perforation");
                         ++holes;
                     }
                 }
-            check((changedBorder > 0) == film, "Leak must extend only onto film base");
-            if (film) check(holes > 0, "Perforation fixture did not find a hole");
+            check((changedBorder > 0) == layout.acetate(), "Leak must extend only onto acetate");
+            if (strip) check(holes > 0, "Perforation fixture did not find a hole");
         }
-    std::cout << "Light leak: neutral off, repeatable seed, scaled placement, highlights, monochrome and frame\n";
+    std::cout << "Light leak: neutral off, repeatable seed, full-frame veil, entry edge, highlights, monochrome and frame\n";
+}
+
+void check_highlight_expansion() {
+    auto eval_gray = [](uint8_t srgb, const spk::Json &edits) -> double {
+        uint16_t v = uint16_t(srgb) * 257;
+        uint16_t px[4] = {v, v, v, 65535};
+        auto out = mobile::apply_edits(px, 1, 1, 1, edits);
+        check(out.rgba[0] == out.rgba[1] && out.rgba[1] == out.rgba[2],
+              "Highlight expansion altered neutral balance");
+        return out.rgba[0] / 257.0;
+    };
+    // Silver monochrome paper shoulder expansion: shadows/midtones exact, paper white ~222 -> ~250, strictly monotonic.
+    auto silver = spk::Json::object();
+    silver.set("silver_highlight_edr", spk::Json(true));
+    check(eval_gray(60, silver) == 60.0, "Silver EDR altered shadow");
+    check(eval_gray(118, silver) == 118.0, "Silver EDR altered mid-gray");
+    check(eval_gray(165, silver) == 165.0, "Silver EDR altered upper midtone");
+    const double paper_white = eval_gray(222, silver);
+    check(paper_white >= 248.0 && paper_white <= 253.0, "Silver EDR did not lift paper white to ~250");
+    double prev = -1.0;
+    for (int v = 0; v <= 255; ++v) {
+        double cur = eval_gray(uint8_t(v), silver);
+        check(cur >= prev, "Silver EDR lost monotonicity");
+        prev = cur;
+    }
+    // Positive highlights slider: lifts dull snow strongly without washing shadows or midtones, strictly monotonic.
+    auto hi_up = spk::Json::object();
+    hi_up.set("grade_highlights", spk::Json(100.0));
+    check(eval_gray(60, hi_up) == 60.0, "Positive highlights washed shadows");
+    check(eval_gray(118, hi_up) <= 123.0, "Positive highlights bled too far into mid-gray");
+    const double snow = eval_gray(210, hi_up);
+    check(snow >= 235.0 && snow <= 246.0, "Positive highlights +100 did not lift dull snow enough");
+    const double bright = eval_gray(240, hi_up);
+    check(bright > snow && bright < 254.5, "Positive highlights clipped bright snow");
+    // Negative highlights slider still pulls highlights down.
+    auto hi_down = spk::Json::object();
+    hi_down.set("grade_highlights", spk::Json(-100.0));
+    check(eval_gray(210, hi_down) <= 180.0, "Negative highlights lost recovery range");
+    std::cout << "Highlight expansion: silver EDR shoulder and enhanced positive highlights slider passed\n";
 }
 
 void check_film_border() {
     for (const bool portrait : {false, true}) {
         const uint32_t w = portrait ? 200 : 300, h = portrait ? 300 : 200;
         std::vector<uint16_t> source(size_t(w) * h * 4, 32000);
-        for (const std::string style : {"135_black", "135_warm"}) {
+        for (const std::string style : {"135_black", "135_warm", "135_bw_silver", "slide_mount",
+                                        "120_medium", "4x5_sheet"}) {
             auto edits = spk::Json::object();
             edits.set("edge_style", spk::Json(style));
-            const auto result = mobile::apply_edits(source.data(), w, h, w, edits);
+            const auto result = mobile::apply_edits(source.data(), w, h, w, edits, true);
+            const auto flattened = mobile::apply_edits(source.data(), w, h, w, edits);
             const auto dimensions = mobile::output_dimensions(w, h, edits);
             check(dimensions.at("width").as_int() == int(result.width)
                   && dimensions.at("height").as_int() == int(result.height), "Film dimensions differ");
-            const int left = int(result.width - w) / 2, top = int(result.height - h) / 2;
-            check(portrait ? left > top : top > left, "Film rails on the wrong sides");
-            const int rail = portrait ? left : top;
-            const int across = portrait ? int(result.width) : int(result.height);
-            const int along = portrait ? int(result.height) : int(result.width);
-            for (int row : {int(rail * .42f), across - 1 - int(rail * .42f)}) {
-                int holes = 0;
-                bool previous = false;
-                for (int pos = 0; pos < along; ++pos) {
-                    const int x = portrait ? row : pos, y = portrait ? pos : row;
-                    const bool inHole = result.rgba[(size_t(y) * result.width + x) * 4] > 51000;
-                    if (inHole && !previous) ++holes;
-                    previous = inHole;
+            check(result.has_alpha && !flattened.has_alpha, "Incorrect film rendering mode");
+            const mobile::FrameLayout layout(w, h, edits);
+            const auto pixel = [&](int x, int y) {
+                return result.rgba.data() + (size_t(y) * result.width + x) * 4;
+            };
+            const auto *center = pixel(layout.left + w / 2, layout.top + h / 2);
+            check(center[0] == 32000 && center[3] == 65535, "Transparent frame changed photo centre");
+            for (size_t i = 0; i < result.rgba.size(); i += 4) {
+                const float alpha = result.rgba[i + 3] / 65535.f;
+                constexpr int backing[] = {223 * 257, 216 * 257, 204 * 257};
+                check(flattened.rgba[i + 3] == 65535, "Film export must be opaque RGB");
+                for (int k = 0; k < 3; ++k) {
+                    const long composite = std::lround(result.rgba[i + k] * alpha
+                                                       + backing[k] * (1.f - alpha));
+                    check(std::abs(flattened.rgba[i + k] - composite) <= 1, "Film matte changed the composite");
                 }
-                check(holes == 8, "Expected eight perforations per film rail");
+            }
+
+            if (style.starts_with("135_")) {
+                check(portrait ? layout.left > layout.top : layout.top > layout.left,
+                      "Film rails on the wrong sides");
+                const int rail = portrait ? layout.left : layout.top;
+                const int across = portrait ? result.width : result.height;
+                const int along = portrait ? result.height : result.width;
+                for (int row : {int(rail * .43f), across - 1 - int(rail * .43f)}) {
+                    int holes = 0;
+                    bool previous = false;
+                    for (int pos = 0; pos < along; ++pos) {
+                        const bool inHole = (portrait ? pixel(row, pos) : pixel(pos, row))[3] == 0;
+                        if (inHole && !previous) ++holes;
+                        previous = inHole;
+                    }
+                    check(holes == 8, "Expected eight fully transparent perforations per film rail");
+                }
+                const int u = portrait ? layout.top : layout.left;
+                const auto *base = portrait ? pixel(int(rail * .48f), u)
+                                            : pixel(u, int(rail * .48f));
+                check(style == "135_bw_silver" ? base[3] > 43000 && base[3] < 58000 : base[3] == 65535,
+                      "Incorrect acetate transmissivity");
+            } else if (style == "slide_mount") {
+                check(result.width == result.height, "Ordinary photos should have square slide mounts");
+                const auto *card = pixel(layout.left + w / 2, layout.top / 4);
+                check(card[0] > 53000 && card[0] > card[2] && card[3] == 65535, "Ivory mount must be solid");
+            } else if (style == "120_medium") {
+                int notches = 0;
+                bool previous = false;
+                for (int y = layout.top; y < layout.top + int(h); ++y) {
+                    const auto *p = pixel(layout.left - 1, y);
+                    const bool gate = p[0] >= 27000;
+                    if (gate && !previous) ++notches;
+                    previous = gate;
+                    check(p[3] == 65535, "Medium-format gate must have no transparent holes");
+                }
+                check(notches == 2, "Expected two V-shaped gate marks");
+            } else {
+                check(layout.top > layout.bottom, "Missing asymmetric sheet holder");
+                int cutouts = 0;
+                bool previous = false;
+                for (int x = result.width / 2; x < int(result.width) - 2; ++x) {
+                    const bool transparent = pixel(x, 1)[3] == 0;
+                    if (transparent && !previous) ++cutouts;
+                    previous = transparent;
+                }
+                check(cutouts == 3, "Sheet notch code must open through the top edge");
             }
         }
     }
+
+    // Slide mount: portrait and square mounts must keep stamps, lettering and red dot clear of the embossed groove.
+    for (const auto [w, h] : std::vector<std::pair<uint32_t, uint32_t>>{{600, 800}, {600, 600}}) {
+        std::vector<uint16_t> source(size_t(w) * h * 4, 32000);
+        for (const double amount : {2.0, 6.0, 15.0}) {
+            auto edits = spk::Json::object();
+            edits.set("edge_style", spk::Json(std::string("slide_mount")));
+            edits.set("edge_amount", spk::Json(amount));
+            edits.set("edge_frame_number", spk::Json(36.0));
+            const auto result = mobile::apply_edits(source.data(), w, h, w, edits, true);
+            const mobile::FrameLayout layout(w, h, edits);
+            const float pad = float(std::min({layout.left, layout.right, layout.top, layout.bottom}));
+            const float rim_w = std::max(1.f, pad * .048f);
+            const float lip = std::max(1.f, pad * .27f);
+            const int groove_end = int(std::ceil(lip + 2.4f * rim_w));
+            // Any red stamp or dark deboss overlapping the embossed groove drops green/blue far below ivory.
+            for (int y = 0; y <= groove_end; ++y) {
+                for (const int row : {y, int(result.height) - 1 - y}) {
+                    for (uint32_t x = uint32_t(groove_end); x + uint32_t(groove_end) < result.width; ++x) {
+                        const auto *p = result.rgba.data() + (size_t(row) * result.width + x) * 4;
+                        if (p[3] < 65535) continue;
+                        check(p[1] > 46000 && int(p[0]) - int(p[2]) < 9000,
+                              "Slide mount lettering or dot overlapped the embossed groove");
+                    }
+                }
+            }
+        }
+    }
+
+    // 4x5 sheet: V-notch rim highlight must decay smoothly below the tip without a bounding-box cliff.
+    {
+        const uint32_t w = 1600, h = 1200;
+        std::vector<uint16_t> source(size_t(w) * h * 4, 32000);
+        auto edits = spk::Json::object();
+        edits.set("edge_style", spk::Json(std::string("4x5_sheet")));
+        edits.set("edge_amount", spk::Json(6.0));
+        const auto result = mobile::apply_edits(source.data(), w, h, w, edits, true);
+        const mobile::FrameLayout layout(w, h, edits);
+        const float pitch = std::min(layout.top * .58f, result.width * .067f);
+        const float right = result.width - std::max(pitch, layout.right * .65f);
+        const float depth = pitch * .90f;
+        const float rim = std::max(.55f, pitch * .10f);
+        const int vx = int(std::lround(right - pitch));
+        const int y0 = int(std::floor(depth)) + 1;
+        const int y1 = std::min(int(result.height) - 2, int(std::ceil(depth + rim + 4)));
+        int maxDrop = 0;
+        for (int y = y0; y < y1; ++y) {
+            const int cur = int(result.rgba[(size_t(y) * result.width + vx) * 4]);
+            const int next = int(result.rgba[(size_t(y + 1) * result.width + vx) * 4]);
+            maxDrop = std::max(maxDrop, cur - next);
+        }
+        check(maxDrop < 12 * 257, "4x5 sheet V-notch highlight has a sharp bounding-box cutoff");
+        const int tailR = int(result.rgba[(size_t(y1) * result.width + vx) * 4]) / 257;
+        check(tailR < 26, "4x5 sheet V-notch highlight failed to fade to acetate base");
+    }
+
+    std::cout << "Film borders: both 135 colours plus silver, slide, 120 and sheet. Alpha, mattes and dimensions\n";
 }
 
 void check_date_imprint() {
@@ -328,6 +499,7 @@ int main(int argc, char **argv) {
     try {
         check(argc == 3, "Usage: export_quality_test resources output");
         check_light_leak();
+        check_highlight_expansion();
         check_film_border();
         check_date_imprint();
         std::filesystem::path directory(argv[2]);

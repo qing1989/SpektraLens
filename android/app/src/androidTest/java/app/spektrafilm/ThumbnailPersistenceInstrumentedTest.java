@@ -3,6 +3,7 @@
 package app.spektrafilm;
 
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
 import android.os.Handler;
@@ -59,6 +60,7 @@ public final class ThumbnailPersistenceInstrumentedTest
       scroll = new ScrollView(activity);
       image = new ImageView(activity);
       image.setLayoutParams(new ScrollView.LayoutParams(180, 180));
+      image.setMinimumHeight(180);
       scroll.addView(image);
       FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(180, 180, Gravity.TOP | Gravity.LEFT);
       decor.addView(scroll, params);
@@ -74,6 +76,7 @@ public final class ThumbnailPersistenceInstrumentedTest
     CountDownLatch beforeSave = new CountDownLatch(1);
     AtomicInteger calls = new AtomicInteger();
     Bitmap red = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888);
+    red.setHasAlpha(false);
     red.eraseColor(Color.RED);
     main(() -> images.storeDevelopedOwned(id, red, () -> {
       if (Looper.myLooper() != Looper.getMainLooper() && calls.incrementAndGet() == 2) {
@@ -98,6 +101,7 @@ public final class ThumbnailPersistenceInstrumentedTest
   public void testInvalidatedSaveCannotResurrectDeletedLook() throws Exception {
     CountDownLatch beforeSave = new CountDownLatch(1);
     Bitmap red = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888);
+    red.setHasAlpha(false);
     red.eraseColor(Color.RED);
     main(() -> {
       scroll.setVisibility(View.GONE);
@@ -128,6 +132,35 @@ public final class ThumbnailPersistenceInstrumentedTest
     assertEquals("Closed owner cancels receipt", 0, received.get());
   }
 
+  public void testTransparentFilmLookKeepsAlphaOnDiskAndUsesMatteAtHome() throws Exception {
+    Bitmap film = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888);
+    film.eraseColor(0x80334455);
+    film.setPixel(64, 64, Color.TRANSPARENT);
+    CountDownLatch saved = new CountDownLatch(1);
+    main(() -> {
+      images.setDevelopedListener(ready -> {
+        if (id.equals(ready)) saved.countDown();
+      });
+      images.storeDevelopedOwned(id, film, () -> true);
+    });
+    assertTrue("Film preview was published", saved.await(5, TimeUnit.SECONDS));
+    File alpha = HomePhotoImages.alphaLook(developed);
+    assertEquals(alpha, HomePhotoImages.preferredLook(developed));
+    assertFalse("A film preview needs only one file", developed.exists());
+    Bitmap read = BitmapFactory.decodeFile(alpha.getAbsolutePath());
+    assertNotNull(read);
+    assertEquals(0, Color.alpha(read.getPixel(64, 64)));
+    assertEquals(128, Color.alpha(read.getPixel(15, 15)));
+    read.recycle();
+    main(() -> {
+      assertTrue(image.getDrawable() instanceof BitmapDrawable);
+      Bitmap shown = ((BitmapDrawable) image.getDrawable()).getBitmap();
+      assertEquals(255, Color.alpha(shown.getPixel(20, 20)));
+      images.removeDeveloped(id);
+    });
+    assertFalse("Removing the photo clears its alpha look", alpha.exists());
+  }
+
   private void awaitSaved(Bitmap owned, boolean exists) throws Exception {
     long deadline = SystemClock.elapsedRealtime() + 5000;
     while ((!owned.isRecycled() || images.pendingWrites() != 0)
@@ -144,7 +177,10 @@ public final class ThumbnailPersistenceInstrumentedTest
     });
     if (rendererWorker != null) rendererWorker.shutdownNow();
     if (original != null) original.delete();
-    if (developed != null) developed.delete();
+    if (developed != null) {
+      developed.delete();
+      HomePhotoImages.alphaLook(developed).delete();
+    }
     super.tearDown();
   }
 }

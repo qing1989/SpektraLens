@@ -7,6 +7,7 @@ import android.content.*;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageInstaller;
+import android.net.ConnectivityManager;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
@@ -129,6 +130,14 @@ final class UpdateController {
 
   private void download(UpdateManifest manifest) {
     if (busy || closed) return;
+    if (wifiOnly() && !onWifi()) {
+      new Haptics.DialogBuilder(activity)
+          .setTitle("需要 Wi-Fi")
+          .setMessage("已开启「仅 Wi-Fi 下载更新」。连接 Wi-Fi 后重试，或在设置中关闭这个开关。")
+          .setPositiveButton("知道了", null)
+          .show();
+      return;
+    }
     busy = true; cancelled.set(false);
     LinearLayout content = new LinearLayout(activity); content.setOrientation(LinearLayout.VERTICAL);
     int pad = (int) (24 * activity.getResources().getDisplayMetrics().density);
@@ -291,6 +300,20 @@ final class UpdateController {
         apk().delete(); fail("更新未完成", "无法安装更新，请确认安装包与当前应用使用相同签名。", e);
       }
     });
+  }
+
+  private boolean wifiOnly() {
+    return activity.getSharedPreferences("darkroom", Context.MODE_PRIVATE)
+        .getBoolean("wifi_only_updates", true);
+  }
+
+  private boolean onWifi() {
+    ConnectivityManager manager =
+        (ConnectivityManager) activity.getSystemService(Context.CONNECTIVITY_SERVICE);
+    if (manager == null) return false;
+    // "Only on Wi-Fi" exists to avoid mobile data. Treat any non-metered network as
+    // allowed so Wi-Fi behind a VPN or a wired network is not blocked by mistake.
+    return !manager.isActiveNetworkMetered();
   }
 
   private void message(String title, String text) {

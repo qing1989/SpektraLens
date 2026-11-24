@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 """Validate bundled black-and-white data and Java policy; optionally render with upstream Metal."""
 import argparse
 import json

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import java.nio.file.Files;
@@ -80,6 +82,9 @@ public final class FilmStockPolicyTest {
       check(!wire.containsKey("y_filter_shift"), "Color edits retained");
       check(!wire.containsKey("camera_filter"), "Color suppresses hidden monochrome filters");
       check(!wire.containsKey("halation_headroom_ev"), "Only CineStill exposes headroom");
+      check(
+          Boolean.TRUE.equals(wire.get("extended_dynamic_range")),
+          "Color papers enable calibrated EDR highlight expansion");
       check(
           !wire.containsKey("grain_sublayers_active"),
           "Color keeps the 0.4.6 grain-layer behavior unchanged");

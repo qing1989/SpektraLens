@@ -27,6 +27,7 @@ final class AboutPage extends LinearLayout {
   private final Runnable close, licenses, sponsor;
   private final TextView title;
   private final ScrollView overview, statement;
+  private final FrameLayout overviewWrap, statementWrap;
   private UpdateBadge updateBadge;
   private boolean showingStatement;
 
@@ -51,7 +52,7 @@ final class AboutPage extends LinearLayout {
     LinearLayout header = new LinearLayout(activity);
     header.setGravity(Gravity.CENTER_VERTICAL);
     header.setPadding(dp(16), dp(8), dp(16), dp(8));
-    ImageButton back = AppStyle.iconButton(activity, R.drawable.ic_ui_back, "返回上一页", android.graphics.Color.WHITE);
+    ImageButton back = AppStyle.iconButton(activity, R.drawable.ic_ui_back, "返回上一页", AppStyle.INK);
     back.setOnClickListener(v -> navigateBack());
     header.addView(back, new LayoutParams(dp(44), dp(44)));
     title = text("关于", AppStyle.TYPE_HEADING, AppStyle.INK);
@@ -66,18 +67,20 @@ final class AboutPage extends LinearLayout {
     addView(body, new LayoutParams(-1, 0, 1));
     overview = scroll();
     statement = scroll();
-    body.addView(overview, new FrameLayout.LayoutParams(-1, -1));
-    body.addView(statement, new FrameLayout.LayoutParams(-1, -1));
-    statement.setVisibility(GONE);
     buildOverview(version, checkUpdates, diagnostics);
     buildStatement();
+    overviewWrap = AppStyle.wrapScrollFade(activity, overview, AppStyle.BG, 32, 28, false);
+    statementWrap = AppStyle.wrapScrollFade(activity, statement, AppStyle.BG, 32, 28, false);
+    body.addView(overviewWrap, new FrameLayout.LayoutParams(-1, -1));
+    body.addView(statementWrap, new FrameLayout.LayoutParams(-1, -1));
+    statementWrap.setVisibility(GONE);
   }
 
   void navigateBack() {
     if (showingStatement) {
       showingStatement = false;
-      statement.setVisibility(GONE);
-      overview.setVisibility(VISIBLE);
+      statementWrap.setVisibility(GONE);
+      overviewWrap.setVisibility(VISIBLE);
       announcePage("关于");
     } else close.run();
   }
@@ -88,8 +91,8 @@ final class AboutPage extends LinearLayout {
 
   private void openStatement() {
     showingStatement = true;
-    overview.setVisibility(GONE);
-    statement.setVisibility(VISIBLE);
+    overviewWrap.setVisibility(GONE);
+    statementWrap.setVisibility(VISIBLE);
     statement.scrollTo(0, 0);
     announcePage("免责声明");
   }
@@ -105,13 +108,18 @@ final class AboutPage extends LinearLayout {
     identity.setGravity(Gravity.CENTER_HORIZONTAL);
     identity.setPadding(dp(12), dp(24), dp(12), dp(12));
 
+    FrameLayout iconBox = new FrameLayout(activity);
+    iconBox.setBackground(AppStyle.shape(activity, AppStyle.SURFACE, 18f, true));
+    iconBox.setClipToOutline(true);
+    iconBox.setElevation(dp(8));
     ImageView icon = new ImageView(activity);
     // 自适应图标当普通图片绘制时不会套遮罩，会露出整块 108 dp 出血并让图形缩到 72/108。
     // 这里改用带圆角、已裁掉出血的 logo 资源，观感与桌面图标一致。
     icon.setImageResource(R.drawable.ic_spektra_film_s_logo);
-    icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+    icon.setScaleType(ImageView.ScaleType.CENTER_CROP);
     icon.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
-    identity.addView(icon, new LayoutParams(dp(88), dp(88)));
+    iconBox.addView(icon, new FrameLayout.LayoutParams(-1, -1));
+    identity.addView(iconBox, new LayoutParams(dp(74), dp(74)));
     gap(identity, 18);
     TextView name = text(activity.getString(R.string.app_name), AppStyle.TYPE_BRAND, AppStyle.INK);
     AppStyle.setTypeface(name, AppStyle.FONT_SEMIBOLD);
@@ -122,11 +130,12 @@ final class AboutPage extends LinearLayout {
 
     LinearLayout badges = new LinearLayout(activity);
     badges.setGravity(Gravity.CENTER);
-    TextView versionBadge = badge("v" + version, AppStyle.GOLD, AppStyle.CONTROL);
+    TextView versionBadge = badge("v" + version, AppStyle.GOLD, AppStyle.ACCENT_SOFT, true);
     AppStyle.setNumericTypeface(versionBadge);
     badges.addView(versionBadge, new LayoutParams(-2, -2));
-    TextView licenseBadge = badge("GPL-3.0+", AppStyle.MUTED, AppStyle.CONTROL);
-    AppStyle.pillAction(licenseBadge, AppStyle.MUTED, AppStyle.CONTROL);
+    TextView licenseBadge = badge("GPL-3.0+", AppStyle.MUTED, AppStyle.CONTROL, false);
+    AppStyle.action(licenseBadge, AppStyle.MUTED, AppStyle.CONTROL, AppStyle.R_SMALL);
+    licenseBadge.setPadding(dp(12), dp(7), dp(12), dp(7));
     licenseBadge.setContentDescription("GPL-3.0-or-later，查看许可全文");
     licenseBadge.setOnClickListener(v -> licenses.run());
     LayoutParams licenseParams = new LayoutParams(-2, -2);
@@ -246,7 +255,7 @@ final class AboutPage extends LinearLayout {
             + "颗粒、光晕、片边与日期水印属于模拟或呈现效果，日期文字不作为拍摄时间的证明。\n\n"
             + "RAW 使用 LibRaw 解码；编辑预览最长边为 1024 像素，导出重新读取原文件，支持 sRGB JPEG、16 位 PNG 与 16 位 TIFF。"
             + "极大图和高强度效果仍受设备内存、GPU 与系统限制，无法保证所有设备的处理速度与稳定性。"
-            + "当前未开放裁切、批量处理和专业输出色域，场景纬度映射未移植。");
+            + "当前未开放批量处理和专业输出色域，场景纬度映射未移植。");
     statementSection(
         content,
         5,
@@ -259,18 +268,18 @@ final class AboutPage extends LinearLayout {
         content,
         6,
         "开源来源与致谢",
-        "原始模型与彩色配置：Andrea Volpato / spektrafilm。\n"
-            + "原生引擎：Hanze Qiu 与 SpektraLab 贡献者。\n"
+        "原始模型与彩色配置：Andrea Volpato / spektrafilm（https://github.com/andreavolpato/spektrafilm）。\n"
+            + "原生引擎：Hanze Qiu 与 SpektraLab 贡献者（https://github.com/JamesQiu2005/SpektraLab）。\n"
             + "黑白胶片、相纸与 CineStill alias 数据：Hanze Qiu / SpektraLab，根据厂家公开技术资料建立。\n"
             + "移动 GPU 参考：SAINTTaiYi / SpektraLab-Android v1.3.3j。\n"
             + "界面功能图标：Google Material Icons，Apache-2.0。\n"
             + "Android 客户端与 JNI：本项目移植。\n\n"
-            + "程序使用 GPL-3.0-or-later；原始 spektrafilm 配置与 LUT 使用 CC BY-SA 4.0。"
-            + "黑白产品数据保留 SpektraLab 原始来源说明；所有配置数据均未经修改。"
+            + "程序代码使用 GPL-3.0-or-later；原始 spektrafilm 配置与 LUT 使用 CC BY-SA 4.0（仅作用于配置与 LUT 本身，你拍摄或导出的成品照片不受 CC BY-SA 4.0 约束）。"
+            + "黑白产品数据保留 SpektraLab 原始来源说明；所有上游配置数据均未经修改。"
             + "LibRaw、SwiftShader、Vulkan、Material Icons 及其他依赖保留各自许可证和原作者声明。\n\n"
             + "内置示例照片由项目作者提供。"
             + "胶卷图标由 SpektraLens 根据各款型号独立绘制，不包含历史第三方 PNG 图标。"
-            + "完整版权、署名与授权文本可在下方「许可全文」中查看。");
+            + "完整版权、署名、NOTICE、CITATION 与授权文本可在下方「许可全文」中查看。");
     statementSection(
         content,
         7,
@@ -279,21 +288,22 @@ final class AboutPage extends LinearLayout {
             + "在适用法律允许的范围内，担保与责任限制以相关许可证为准。"
             + "本说明不限制开源许可证授予的权利，也不排除法律规定不得排除的责任。");
     gap(content, 24);
-    TextView fullLicense = action("许可全文", AppStyle.INK, AppStyle.CONTROL);
+    TextView fullLicense = action("查看许可全文", AppStyle.INK, AppStyle.CONTROL);
     fullLicense.setPadding(dp(24), dp(14), dp(24), dp(14));
     fullLicense.setOnClickListener(v -> licenses.run());
     content.addView(fullLicense, new LayoutParams(-1, -2));
   }
 
   private void statementSection(LinearLayout parent, int number, String heading, String body) {
-    gap(parent, 28);
+    gap(parent, 24);
     LinearLayout row = new LinearLayout(activity);
     row.setGravity(Gravity.CENTER_VERTICAL);
-    TextView count = text(String.valueOf(number), AppStyle.TYPE_TITLE, AppStyle.MUTED);
+    TextView count = text(String.format(java.util.Locale.ROOT, "%02d", number), AppStyle.TYPE_MICRO, AppStyle.GOLD);
     AppStyle.setNumericTypeface(count);
+    AppStyle.setTypeface(count, AppStyle.FONT_BOLD);
     count.setGravity(Gravity.CENTER);
-    count.setBackground(AppStyle.shape(activity, AppStyle.SURFACE, AppStyle.R_MEDIUM, false));
-    row.addView(count, new LayoutParams(dp(32), dp(32)));
+    count.setBackground(AppStyle.shape(activity, AppStyle.CONTROL, 7f, true));
+    row.addView(count, new LayoutParams(dp(24), dp(24)));
     TextView label = text(heading, AppStyle.TYPE_HEADING, AppStyle.INK);
     AppStyle.setTypeface(label, AppStyle.FONT_BOLD);
     label.setAccessibilityHeading(true);
@@ -349,16 +359,17 @@ final class AboutPage extends LinearLayout {
 
   private LinearLayout card() {
     LinearLayout card = column();
-    card.setBackground(AppStyle.shape(activity, AppStyle.SURFACE, AppStyle.R_LARGE, false));
+    card.setBackground(AppStyle.shape(activity, AppStyle.SURFACE, AppStyle.R_MEDIUM, true));
+    card.setClipToOutline(true);
     return card;
   }
 
   private void sectionLabel(LinearLayout parent, String name) {
-    gap(parent, 22);
-    TextView label = text(name, AppStyle.TYPE_HEADING, AppStyle.MUTED);
+    gap(parent, 18);
+    TextView label = text(name, AppStyle.TYPE_MICRO, AppStyle.MUTED);
     AppStyle.setTypeface(label, AppStyle.FONT_BOLD);
     label.setAccessibilityHeading(true);
-    label.setPadding(dp(4), 0, dp(4), dp(12));
+    label.setPadding(dp(4), 0, dp(4), dp(8));
     parent.addView(label, new LayoutParams(-1, -2));
   }
 
@@ -369,9 +380,9 @@ final class AboutPage extends LinearLayout {
     row.setMinimumHeight(dp(76));
     row.setBackground(
         new android.graphics.drawable.RippleDrawable(
-            android.content.res.ColorStateList.valueOf(0x24ffffff),
+            android.content.res.ColorStateList.valueOf(AppStyle.RIPPLE),
             null,
-            AppStyle.shape(activity, android.graphics.Color.WHITE, AppStyle.R_LARGE, false)));
+            AppStyle.shape(activity, android.graphics.Color.WHITE, AppStyle.R_MEDIUM, false)));
     row.setFocusable(true);
     row.setOnClickListener(v -> click.run());
     LinearLayout copy = column();
@@ -403,10 +414,13 @@ final class AboutPage extends LinearLayout {
     parent.addView(line, params);
   }
 
-  private TextView badge(String label, int color, int fill) {
+  private TextView badge(String label, int color, int fill, boolean accentBorder) {
     TextView view = text(label, AppStyle.TYPE_LABEL, color);
-    view.setPadding(dp(14), dp(9), dp(14), dp(9));
-    view.setBackground(AppStyle.pill(activity, fill, false));
+    view.setPadding(dp(12), dp(7), dp(12), dp(7));
+    android.graphics.drawable.GradientDrawable bg =
+        AppStyle.shape(activity, fill, AppStyle.R_SMALL, !accentBorder);
+    if (accentBorder) bg.setStroke(Math.max(1, dp(1)), AppStyle.ACCENT_BORDER);
+    view.setBackground(bg);
     return view;
   }
 

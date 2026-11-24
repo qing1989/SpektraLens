@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 package app.spektrafilm;
 
 import java.util.Collections;
@@ -106,7 +108,7 @@ final class FilmStockPolicy {
     result.put("print_stock", paperFor(film, target, paper));
     result.put("grain_amount", grain);
     result.put("grain_active", grain > 0);
-    result.put("extended_dynamic_range", false);
+    result.put("extended_dynamic_range", !silver);
     double exposure = Double.isFinite(printBrightness) ? Math.pow(2, -printBrightness) : 1;
     if (silver) {
       String grade = paperGrade(film, selectedPaperGrade);

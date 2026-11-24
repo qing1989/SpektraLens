@@ -230,13 +230,16 @@ public final class EditorInteractionInstrumentedTest
         () -> {
           View shuffle = tagged("editor.light_leak.shuffle");
           assertNotNull(shuffle);
-          View strengthRow = (View) bar(amount).getParent();
-          assertEquals(strengthRow.getLeft(), shuffle.getLeft());
-          assertEquals(strengthRow.getRight(), shuffle.getRight());
+          LinearLayout strengthRow = (LinearLayout) bar(amount).getParent();
+          View strengthHeader = strengthRow.getChildAt(0);
+          assertEquals(strengthRow.getLeft() + strengthHeader.getLeft()
+              + strengthHeader.getPaddingLeft(), shuffle.getLeft());
+          assertEquals(strengthRow.getLeft() + strengthHeader.getRight()
+              - strengthHeader.getPaddingRight(), shuffle.getRight());
           assertTrue(shuffle.performClick());
           int first = settings().getInt(seed);
-          assertEquals(25, bar(amount).getProgress());
-          assertEquals(25, settings().getInt(amount));
+          assertEquals(50, bar(amount).getProgress());
+          assertEquals(50, settings().getInt(amount));
           assertEquals(1, history("undoStack").size());
           change(bar(amount));
           assertEquals(100, settings().getInt(amount));
@@ -270,15 +273,15 @@ public final class EditorInteractionInstrumentedTest
           assertTrue(tagged("editor.light_leak.first_roll").performClick());
           assertEquals(0, bar("light_leak_amount").getProgress());
           assertTrue(tagged("editor.light_leak.shuffle").performClick());
-          assertEquals(25, bar("light_leak_amount").getProgress());
+          assertEquals(50, bar("light_leak_amount").getProgress());
           assertEquals("first_roll", settings().getString("light_leak_mode"));
           int seed = settings().getInt("light_leak_seed");
           assertTrue(tagged("editor.light_leak.color").performClick());
-          assertEquals(25, bar("light_leak_amount").getProgress());
+          assertEquals(50, bar("light_leak_amount").getProgress());
           assertEquals(seed, settings().getInt("light_leak_seed"));
           historyStep(false);
           assertTrue(tagged("editor.light_leak.first_roll").isSelected());
-          assertEquals(25, bar("light_leak_amount").getProgress());
+          assertEquals(50, bar("light_leak_amount").getProgress());
           assertEquals(seed, settings().getInt("light_leak_seed"));
         });
   }

@@ -15,7 +15,8 @@ import android.view.ViewConfiguration;
 /** Both the before/after canvas and saved file use encoded sRGB pixels. */
 public final class PhotoView extends View {
   private static final float FRAME_PAD_DP = 12;
-  private static final float FRAME_SHADOW_DP = 4;
+  /** Snappy double-tap window (vs Android's legacy 300ms) so single-tap preview toggle feels crisp. */
+  private static final long SINGLE_TAP_CONFIRM_MS = 155L;
   private static final float DIVIDER_STROKE_DP = 2;
   private static final float DIVIDER_GRAB_DP = 24;
   private static final float KNOB_RADIUS_DP = 13;
@@ -31,6 +32,7 @@ public final class PhotoView extends View {
   private static final String LABEL_DEVELOPED = "显影";
 
   private final Paint paint = new Paint(3);
+  private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
   private final RectF frame = new RectF();
   private final RectF visibleFrame = new RectF();
   private Bitmap before, after;
@@ -41,15 +43,27 @@ public final class PhotoView extends View {
   private boolean scaleGesture;
   private boolean pendingSingleTapCanceled;
   private boolean dragging, dragDivider, showingOriginal;
-  private float downX, downY;
-  private final int touchSlop;
+  private boolean doubleTapHandled, awaitingSecondTap;
+  private float downX, downY, firstTapX, firstTapY;
+  private long firstTapUpEventTime;
+  private final int touchSlop, doubleTapSlop;
+  private final android.os.Handler tapHandler =
+      new android.os.Handler(android.os.Looper.getMainLooper());
+  private final Runnable confirmSingleTap =
+      () -> {
+        awaitingSecondTap = false;
+        if (pendingSingleTapCanceled) return;
+        performClick();
+      };
   private final ScaleGestureDetector scale;
   private final GestureDetector taps;
 
   public PhotoView(Context c) {
     super(c);
     paint.setTypeface(AppStyle.typeface(c, AppStyle.FONT_MEDIUM));
-    touchSlop = ViewConfiguration.get(c).getScaledTouchSlop();
+    ViewConfiguration config = ViewConfiguration.get(c);
+    touchSlop = config.getScaledTouchSlop();
+    doubleTapSlop = config.getScaledDoubleTapSlop();
     setContentDescription(
         "照片预览；单击收起或恢复参数面板，未开启对比时长按查看原图，双指缩放，双击放大或复位；对比时拖动分界线，放大后拖动其他位置平移照片");
     scale =
@@ -58,7 +72,7 @@ public final class PhotoView extends View {
             new ScaleGestureDetector.SimpleOnScaleGestureListener() {
               @Override
               public boolean onScaleBegin(ScaleGestureDetector detector) {
-                pendingSingleTapCanceled = true;
+                cancelPendingSingleTapInternal();
                 lastFocusX = detector.getFocusX();
                 lastFocusY = detector.getFocusY();
                 return true;
@@ -89,7 +103,7 @@ public final class PhotoView extends View {
 
               @Override
               public void onLongPress(MotionEvent e) {
-                pendingSingleTapCanceled = true;
+                cancelPendingSingleTapInternal();
                 if (!compare
                     && !scaleGesture
                     && !dragging
@@ -100,32 +114,30 @@ public final class PhotoView extends View {
                     && visibleFrame.contains(e.getX(), e.getY())) {
                   showingOriginal = true;
                   invalidate();
-                  performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                  Haptics.longPress(PhotoView.this);
                 }
               }
-
-              @Override
-              public boolean onSingleTapConfirmed(MotionEvent e) {
-                if (pendingSingleTapCanceled) return true;
-                performClick();
-                return true;
-              }
-
-              @Override
-              public boolean onDoubleTap(MotionEvent e) {
-                pendingSingleTapCanceled = true;
-                if (zoom > 1) resetZoom();
-                else zoomAt(2, e.getX(), e.getY(), e.getX(), e.getY());
-                return true;
-              }
             },
-            new android.os.Handler(android.os.Looper.getMainLooper()));
+            tapHandler);
+    taps.setOnDoubleTapListener(null);
+  }
+
+  private void cancelPendingSingleTapInternal() {
+    pendingSingleTapCanceled = true;
+    awaitingSecondTap = false;
+    tapHandler.removeCallbacks(confirmSingleTap);
   }
 
   /** Suppresses a tap whose single-tap confirmation has not fired yet. */
   public void cancelPendingSingleTap() {
-    pendingSingleTapCanceled = true;
+    cancelPendingSingleTapInternal();
     finishHeldOriginal();
+  }
+
+  @Override
+  protected void onDetachedFromWindow() {
+    cancelPendingSingleTap();
+    super.onDetachedFromWindow();
   }
 
   /** Keeps the current zoom/pan for a quick photo switch; only clamps it into the new image. */
@@ -187,26 +199,22 @@ public final class PhotoView extends View {
   @Override
   protected void onDraw(Canvas c) {
     super.onDraw(c);
-    c.drawColor(Color.BLACK);
+    c.drawColor(AppStyle.STAGE_BG);
     Bitmap image = showingOriginal && before != null ? before : after != null ? after : before;
     if (image == null) return;
     updateFrame();
     if (frame.isEmpty()) return;
     float density = density();
-    float shadow = FRAME_SHADOW_DP * density;
-    paint.setColor(Color.BLACK);
-    c.drawRect(
-        frame.left + shadow * .75f,
-        frame.top + shadow,
-        frame.right + shadow * .75f,
-        frame.bottom + shadow,
-        paint);
-    c.drawBitmap(image, null, frame, paint);
+    if (image == after && image.hasAlpha()) {
+      paint.setColor(FrameStyle.BACKING_COLOR);
+      c.drawRect(frame, paint);
+    }
+    c.drawBitmap(image, null, frame, bitmapPaint);
     if (compare && before != null && after != null) {
       float x = dividerX();
       c.save();
       c.clipRect(frame.left, frame.top, x, frame.bottom);
-      c.drawBitmap(before, null, frame, paint);
+      c.drawBitmap(before, null, frame, bitmapPaint);
       c.restore();
       paint.setColor(0xddffffff);
       paint.setStrokeWidth(DIVIDER_STROKE_DP * density);
@@ -293,21 +301,38 @@ public final class PhotoView extends View {
     int action = e.getActionMasked();
     if (action == MotionEvent.ACTION_DOWN) {
       finishHeldOriginal();
-      pendingSingleTapCanceled = false;
       scaleGesture = false;
       dragging = false;
+      doubleTapHandled = false;
       downX = lastX = e.getX();
       downY = lastY = e.getY();
       updateFrame();
       dragDivider =
           compare
               && (zoom == 1 || Math.abs(e.getX() - dividerX()) <= DIVIDER_GRAB_DP * density());
+      long sinceFirstUp = e.getEventTime() - firstTapUpEventTime;
+      float dx = downX - firstTapX, dy = downY - firstTapY;
+      boolean isDoubleTap =
+          awaitingSecondTap
+              && sinceFirstUp >= 0
+              && sinceFirstUp <= SINGLE_TAP_CONFIRM_MS
+              && dx * dx + dy * dy <= (float) doubleTapSlop * doubleTapSlop;
+      tapHandler.removeCallbacks(confirmSingleTap);
+      awaitingSecondTap = false;
+      if (isDoubleTap) {
+        pendingSingleTapCanceled = true;
+        doubleTapHandled = true;
+        if (zoom > 1) resetZoom();
+        else zoomAt(2, downX, downY, downX, downY);
+      } else {
+        pendingSingleTapCanceled = false;
+      }
     }
     scale.onTouchEvent(e);
     taps.onTouchEvent(e);
     if (e.getPointerCount() > 1) {
       finishHeldOriginal();
-      pendingSingleTapCanceled = true;
+      cancelPendingSingleTapInternal();
       scaleGesture = true;
       intercept(true);
       return true;
@@ -322,14 +347,14 @@ public final class PhotoView extends View {
     }
     if (action == MotionEvent.ACTION_CANCEL) {
       finishHeldOriginal();
-      pendingSingleTapCanceled = true;
+      cancelPendingSingleTapInternal();
       intercept(false);
       return true;
     }
     if (action == MotionEvent.ACTION_MOVE) {
       if (!dragging && Math.hypot(e.getX() - downX, e.getY() - downY) <= touchSlop) return true;
       finishHeldOriginal();
-      pendingSingleTapCanceled = true;
+      cancelPendingSingleTapInternal();
       dragging = true;
       intercept(true);
       updateFrame();
@@ -350,6 +375,14 @@ public final class PhotoView extends View {
     if (action == MotionEvent.ACTION_UP) {
       finishHeldOriginal();
       intercept(false);
+      if (!pendingSingleTapCanceled && !doubleTapHandled && !dragging && !scaleGesture) {
+        firstTapX = downX;
+        firstTapY = downY;
+        firstTapUpEventTime = e.getEventTime();
+        awaitingSecondTap = true;
+        tapHandler.removeCallbacks(confirmSingleTap);
+        tapHandler.postDelayed(confirmSingleTap, SINGLE_TAP_CONFIRM_MS);
+      }
       return true;
     }
     return true;

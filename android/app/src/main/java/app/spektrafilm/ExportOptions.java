@@ -5,6 +5,7 @@ package app.spektrafilm;
 final class ExportOptions {
   static final int JPEG = 0, PNG = 1, TIFF = 2, SHARE_JPEG = 3;
   static final int HIGH = 95, RECOMMENDED = 90, COMPACT = 85;
+  private static final long FIXED_MEMORY = 128L * 1024 * 1024;
 
   final int mode;
   final int jpegQuality;
@@ -50,7 +51,13 @@ final class ExportOptions {
 
   /** Conservative peak-memory budget used before starting a full-size export. */
   static long estimateBytes(int width, int height) {
-    return (long) width * height * 100 + 128L * 1024 * 1024;
+    return (long) width * height * 100 + FIXED_MEMORY;
+  }
+
+  static long estimateBytes(int width, int height, int outputWidth, int outputHeight) {
+    // Additional 16-bit working pixels and encoding buffers outside the source image.
+    long extraPixels = Math.max(0, (long) outputWidth * outputHeight - (long) width * height);
+    return estimateBytes(width, height) + extraPixels * 28;
   }
 
   /** Preserve aspect ratio; 0 means the source resolution. */
@@ -69,9 +76,13 @@ final class ExportOptions {
    * device cannot fit even a 1024px export.
    */
   static int safeLongEdge(int width, int height, long availableBytes) {
-    double budget = availableBytes * .80 - 128.0 * 1024 * 1024;
+    return safeLongEdge(width, height, availableBytes, estimateBytes(width, height));
+  }
+
+  static int safeLongEdge(int width, int height, long availableBytes, long estimate) {
+    double budget = availableBytes * .80 - FIXED_MEMORY;
     if (budget <= 0) return 0;
-    double scale = Math.sqrt(budget / (100.0 * width * height));
+    double scale = Math.sqrt(budget / (estimate - FIXED_MEMORY));
     int edge = Math.min(Math.max(width, height),
                         (int) Math.floor(Math.max(width, height) * scale));
     return edge >= 1024 ? edge : 0;

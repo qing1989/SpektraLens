@@ -77,8 +77,10 @@ public final class ExportSheetInstrumentedTest
     assertEquals(View.VISIBLE, view("export.progress").getVisibility());
     assertEquals(View.GONE, view("export.actions").getVisibility());
     assertEquals(
-        AppStyle.dp(getActivity(), 8), view("export.progress.bar").getLayoutParams().height);
+        AppStyle.dp(getActivity(), 6), view("export.progress.bar").getLayoutParams().height);
+    assertEquals(View.VISIBLE, view("export.progress.dot").getVisibility());
     assertEquals("正在导出照片…", ((TextView) view("export.progress.label")).getText().toString());
+    assertEquals("JPEG · 推荐", ((TextView) view("export.progress.meta")).getText().toString());
     assertEquals("导出进度", view("export.progress.bar").getContentDescription().toString());
     main(sheet::finishExport);
     assertFalse(sheet.isShowing());

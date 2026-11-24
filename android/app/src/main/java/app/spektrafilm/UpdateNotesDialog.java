@@ -46,33 +46,55 @@ final class UpdateNotesDialog extends Dialog {
     setCanceledOnTouchOutside(true);
     root = new BodyAndActions();
     root.setTag("update.dialog");
-    AppStyle.surface(root, AppStyle.SURFACE, AppStyle.R_LARGE, false);
+    AppStyle.surface(root, AppStyle.SURFACE, AppStyle.R_LARGE, true);
 
     ScrollView scroll = new ScrollView(getContext());
     scroll.setTag("update.scroll");
     scroll.setFillViewport(false);
     LinearLayout body = column();
-    body.setPadding(dp(22), dp(24), dp(22), dp(22));
-    TextView title = text("发现新版本", AppStyle.TYPE_HEADING, AppStyle.INK);
+    body.setPadding(dp(20), dp(20), dp(20), dp(16));
+    LinearLayout topRow = new LinearLayout(getContext());
+    topRow.setOrientation(LinearLayout.HORIZONTAL);
+    topRow.setGravity(Gravity.CENTER_VERTICAL);
+    LinearLayout titles = column();
+    TextView title = text("发现新版本", AppStyle.TYPE_TITLE, AppStyle.INK);
     AppStyle.setTypeface(title, AppStyle.FONT_BOLD);
     title.setAccessibilityHeading(true);
-    body.addView(title);
-    gap(body, 4);
-    TextView version = text("v" + manifest.versionName, AppStyle.TYPE_BRAND, AppStyle.INK);
-    AppStyle.setTypeface(version, AppStyle.FONT_SEMIBOLD);
+    titles.addView(title);
+    gap(titles, 2);
+    TextView version = text("v" + manifest.versionName, 22, AppStyle.INK);
+    AppStyle.setTypeface(version, AppStyle.FONT_BOLD);
     version.setFontFeatureSettings("tnum");
-    body.addView(version);
-    gap(body, 4);
-    String size = manifest.sizeBytes == UpdateManifest.MAX_APK_BYTES ? ""
-        : String.format(Locale.CHINA, " · 更新包 %.1f MiB", manifest.sizeBytes / 1048576.0);
+    version.setLetterSpacing(-.03f);
+    titles.addView(version);
+    topRow.addView(titles, new LinearLayout.LayoutParams(0, -2, 1));
+    if (manifest.sizeBytes != UpdateManifest.MAX_APK_BYTES) {
+      TextView sizePill =
+          text(
+              String.format(Locale.CHINA, "%.1f MiB", manifest.sizeBytes / 1048576.0),
+              AppStyle.TYPE_MICRO,
+              AppStyle.GOLD);
+      AppStyle.setNumericTypeface(sizePill);
+      AppStyle.setTypeface(sizePill, AppStyle.FONT_SEMIBOLD);
+      sizePill.setPadding(dp(10), dp(4), dp(10), dp(4));
+      android.graphics.drawable.GradientDrawable pillBg =
+          AppStyle.shape(getContext(), AppStyle.ACCENT_SOFT, 7f, false);
+      pillBg.setStroke(Math.max(1, dp(.85f)), AppStyle.ACCENT_BORDER);
+      sizePill.setBackground(pillBg);
+      topRow.addView(sizePill, new LinearLayout.LayoutParams(-2, -2));
+    }
+    body.addView(topRow, new LinearLayout.LayoutParams(-1, -2));
+    gap(body, 6);
     TextView currentInfo =
-        text("当前 v" + current + size, AppStyle.TYPE_LABEL, AppStyle.MUTED);
+        text("当前 v" + current + " · 校验 SHA-256 后由系统确认安装", AppStyle.TYPE_MICRO, AppStyle.MUTED);
     AppStyle.setNumericTypeface(currentInfo);
     body.addView(currentInfo);
-    gap(body, 22);
-    TextView notes = text("", AppStyle.TYPE_TITLE, AppStyle.VALUE);
+    gap(body, 14);
+    TextView notes = text("", AppStyle.TYPE_BODY, AppStyle.INK);
     notes.setTag("update.notes");
     notes.setLineSpacing(dp(5), 1);
+    notes.setPadding(dp(12), dp(10), dp(12), dp(10));
+    notes.setBackground(AppStyle.shape(getContext(), AppStyle.CONTROL, 9f, true));
     SpannableStringBuilder paragraphs = new SpannableStringBuilder();
     for (UpdateNotes.Line line : UpdateNotes.parse(manifest.releaseNotes)) {
       if (paragraphs.length() > 0) paragraphs.append("\n\n");
@@ -99,7 +121,7 @@ final class UpdateNotesDialog extends Dialog {
     notes.setText(paragraphs);
     body.addView(notes, new LinearLayout.LayoutParams(-1, -2));
     scroll.addView(body, new ScrollView.LayoutParams(-1, -2));
-    root.addView(scroll);
+    root.addView(AppStyle.wrapScrollFade(getContext(), scroll, AppStyle.SURFACE, 28, 28, true));
 
     LinearLayout footer = column();
     footer.setTag("update.actions");
@@ -154,9 +176,9 @@ final class UpdateNotesDialog extends Dialog {
     AppStyle.pillAction(
         button,
         primary ? AppStyle.ON_PRIMARY : AppStyle.INK,
-        primary ? AppStyle.PRIMARY : Color.TRANSPARENT);
+        primary ? AppStyle.PRIMARY : AppStyle.CONTROL);
     AppStyle.setTypeface(
-        button, primary ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
+        button, primary ? AppStyle.FONT_BOLD : AppStyle.FONT_SEMIBOLD);
     button.setOnClickListener(view -> click.run());
     button.setAccessibilityDelegate(new View.AccessibilityDelegate() {
       @Override
@@ -199,7 +221,7 @@ final class UpdateNotesDialog extends Dialog {
     window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
     window.setGravity(Gravity.CENTER);
     window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-    window.setDimAmount(.58f);
+    window.setDimAmount(AppStyle.DIM_AMOUNT);
     activity.getWindow().getDecorView().addOnLayoutChangeListener(windowChanged);
     resize();
   }

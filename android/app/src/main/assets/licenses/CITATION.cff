@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+title: "SpektraLens Android"
+message: "Credit the original model and native engine authors as well as this Android port. See UPSTREAMS.md and the preserved upstream citation files."
+type: software
+authors:
+  - name: "SpektraLens contributors"
+version: 0.5.6
+license: GPL-3.0-or-later
+repository-code: "https://github.com/qing1989/SpektraLens"
+url: "https://github.com/qing1989/SpektraLens"
+references:
+  - type: software
+    title: "spektrafilm: spectral simulation of analog photography"
+    authors:
+      - family-names: Volpato
+        given-names: Andrea
+    repository-code: "https://github.com/andreavolpato/spektrafilm"
+    url: "https://github.com/andreavolpato/spektrafilm"
+    license: GPL-3.0-or-later
+  - type: software
+    title: "SpektraLab"
+    authors:
+      - family-names: Qiu
+        given-names: Hanze
+    repository-code: "https://github.com/JamesQiu2005/SpektraLab"
+    url: "https://github.com/JamesQiu2005/SpektraLab"
+    license: GPL-3.0-or-later

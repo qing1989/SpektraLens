@@ -57,9 +57,10 @@ final class ExportSheet extends Dialog {
   private LinearLayout content;
   private TextView dimensionsText;
   private TextView lossless, description, size, sizeNote, share, cancelButton, progressLabel;
-  private View progressBar;
+  private TextView progressMeta;
+  private View progressBar, progressDot;
   private ImportProgressDrawable progressDrawable;
-  private ValueAnimator progressAnimator;
+  private ValueAnimator progressAnimator, dotAnimator;
   private float progressFraction;
   private int format = ExportOptions.JPEG, quality = ExportOptions.RECOMMENDED;
   private boolean estimationFinished, submitted, exporting;
@@ -116,8 +117,9 @@ final class ExportSheet extends Dialog {
 
   private void build(String dimensions) {
     root = column();
-    root.setPadding(dp(20), dp(12), dp(20), dp(12));
-    AppStyle.surface(root, AppStyle.SURFACE, AppStyle.R_LARGE, false);
+    root.setPadding(dp(18), dp(16), dp(18), dp(18));
+    root.setBackground(AppStyle.topRounded(getContext(), AppStyle.SURFACE, AppStyle.R_LARGE, true));
+    root.setClipToOutline(true);
 
     header = new LinearLayout(getContext());
     header.setGravity(Gravity.CENTER_VERTICAL);
@@ -126,9 +128,11 @@ final class ExportSheet extends Dialog {
     header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
     cancelButton =
         action("取消", "export.cancel", AppStyle.MUTED, Color.TRANSPARENT, this::dismiss);
+    cancelButton.setTextSize(AppStyle.TYPE_BODY);
+    AppStyle.setTypeface(cancelButton, AppStyle.FONT_SEMIBOLD);
     header.addView(cancelButton, new LinearLayout.LayoutParams(-2, -2));
     root.addView(header);
-    dimensionsText = text("原尺寸 · " + dimensions, AppStyle.TYPE_LABEL, AppStyle.MUTED);
+    dimensionsText = text("原尺寸 · " + dimensions, AppStyle.TYPE_MICRO, AppStyle.MUTED);
     AppStyle.setNumericTypeface(dimensionsText);
     dimensionsText.setTag("export.dimensions");
     root.addView(dimensionsText);
@@ -137,25 +141,45 @@ final class ExportSheet extends Dialog {
     progressFooter.setTag("export.progress");
     progressFooter.setVisibility(View.GONE);
     progressFooter.setPadding(0, dp(12), 0, 0);
-    progressLabel = text("正在导出照片…", AppStyle.TYPE_BODY, AppStyle.MUTED);
+    LinearLayout progressStatusRow = new LinearLayout(getContext());
+    progressStatusRow.setOrientation(LinearLayout.HORIZONTAL);
+    progressStatusRow.setGravity(Gravity.CENTER_VERTICAL);
+    progressDot = new View(getContext());
+    progressDot.setTag("export.progress.dot");
+    progressDot.setBackground(buildProgressDotDrawable());
+    LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(dp(12), dp(12));
+    dotParams.rightMargin = dp(5);
+    progressStatusRow.addView(progressDot, dotParams);
+    progressLabel = text("正在导出照片…", AppStyle.TYPE_BODY, AppStyle.INK);
+    AppStyle.setTypeface(progressLabel, AppStyle.FONT_MEDIUM);
     progressLabel.setTag("export.progress.label");
-    progressFooter.addView(progressLabel);
+    progressStatusRow.addView(progressLabel, new LinearLayout.LayoutParams(0, -2, 1));
+    progressMeta = text("", AppStyle.TYPE_MICRO, AppStyle.MUTED);
+    AppStyle.setTypeface(progressMeta, AppStyle.FONT_MEDIUM);
+    AppStyle.setNumericTypeface(progressMeta);
+    progressMeta.setTag("export.progress.meta");
+    progressStatusRow.addView(progressMeta, new LinearLayout.LayoutParams(-2, -2));
+    progressFooter.addView(progressStatusRow, new LinearLayout.LayoutParams(-1, -2));
     gap(progressFooter, 8);
     progressBar = new View(getContext());
     progressBar.setTag("export.progress.bar");
-    progressDrawable = new ImportProgressDrawable(getContext());
+    progressDrawable = ImportProgressDrawable.compactTrack(getContext());
     progressBar.setBackground(progressDrawable);
     progressBar.setContentDescription("导出进度");
-    progressFooter.addView(progressBar, new LinearLayout.LayoutParams(-1, dp(8)));
+    progressFooter.addView(progressBar, new LinearLayout.LayoutParams(-1, dp(6)));
     root.addView(progressFooter);
 
-    gap(root, 18);
+    gap(root, 6);
 
     ScrollView scroll = new ScrollView(getContext());
+    scroll.setVerticalScrollBarEnabled(false);
     scroll.setClipToPadding(false);
     content = column();
+    content.setPadding(0, dp(12), 0, dp(12));
     scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
-    root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    root.addView(
+        AppStyle.wrapScrollFade(getContext(), scroll, AppStyle.SURFACE, 26, 26, false),
+        new LinearLayout.LayoutParams(-1, 0, 1));
     content.addView(heading("文件格式"));
     gap(content, 10);
     String[] formats = {"JPEG\n8 位", "PNG\n16 位", "TIFF\n16 位"};
@@ -209,19 +233,24 @@ final class ExportSheet extends Dialog {
     lossless.setTag("export.lossless");
     lossless.setLineSpacing(dp(6), 1);
     content.addView(lossless);
-    gap(content, 22);
-    content.addView(text("预计大小", AppStyle.TYPE_LABEL, AppStyle.MUTED));
-    gap(content, 8);
-    size = text("", AppStyle.TYPE_HEADING, AppStyle.VALUE);
+    gap(content, 16);
+    LinearLayout estBox = column();
+    estBox.setPadding(dp(14), dp(12), dp(14), dp(12));
+    estBox.setBackground(AppStyle.shape(getContext(), AppStyle.CONTROL, AppStyle.R_MEDIUM, true));
+    estBox.addView(text("预计大小", AppStyle.TYPE_MICRO, AppStyle.MUTED));
+    gap(estBox, 4);
+    size = text("", 20, AppStyle.VALUE);
     AppStyle.setNumericTypeface(size);
+    AppStyle.setTypeface(size, AppStyle.FONT_BOLD);
     size.setTag("export.estimate");
-    content.addView(size);
-    gap(content, 8);
-    sizeNote = text("", AppStyle.TYPE_LABEL, AppStyle.MUTED);
+    estBox.addView(size);
+    gap(estBox, 4);
+    sizeNote = text("", AppStyle.TYPE_MICRO, AppStyle.MUTED);
     AppStyle.setNumericTypeface(sizeNote);
     sizeNote.setLineSpacing(dp(3), 1);
-    content.addView(sizeNote);
-    gap(content, 12);
+    estBox.addView(sizeNote);
+    content.addView(estBox, new LinearLayout.LayoutParams(-1, -2));
+    gap(content, 10);
 
     idleFooter = column();
     idleFooter.setPadding(0, dp(12), 0, 0);
@@ -248,14 +277,14 @@ final class ExportSheet extends Dialog {
   private LinearLayout rail(LinearLayout parent) {
     LinearLayout rail = new LinearLayout(getContext());
     rail.setPadding(dp(4), dp(4), dp(4), dp(4));
-    AppStyle.surface(rail, AppStyle.CONTROL, AppStyle.R_MEDIUM, false);
+    AppStyle.surface(rail, AppStyle.CONTROL, AppStyle.R_MEDIUM, true);
     parent.addView(rail, new LinearLayout.LayoutParams(-1, -2));
     return rail;
   }
 
   private TextView heading(String value) {
-    TextView view = text(value, AppStyle.TYPE_TITLE, AppStyle.INK);
-    AppStyle.setTypeface(view, AppStyle.FONT_BOLD);
+    TextView view = text(value, AppStyle.TYPE_MICRO, AppStyle.MUTED);
+    AppStyle.setTypeface(view, AppStyle.FONT_SEMIBOLD);
     return view;
   }
 
@@ -337,16 +366,44 @@ final class ExportSheet extends Dialog {
   }
 
   private void selected(TextView button, boolean selected) {
-    if (button.isSelected() == selected) return;
     button.setSelected(selected);
-    AppStyle.action(
-        button, selected ? AppStyle.GOLD : AppStyle.MUTED,
-        selected ? AppStyle.SURFACE : Color.TRANSPARENT, AppStyle.R_MEDIUM);
+    if (selected) {
+      android.graphics.drawable.GradientDrawable bg =
+          AppStyle.shape(getContext(), AppStyle.SELECTED, AppStyle.R_SMALL, false);
+      bg.setStroke(Math.max(1, dp(.95f)), AppStyle.GOLD);
+      button.setBackground(
+          new android.graphics.drawable.RippleDrawable(
+              android.content.res.ColorStateList.valueOf(AppStyle.RIPPLE),
+              bg,
+              AppStyle.shape(getContext(), Color.WHITE, AppStyle.R_SMALL, false)));
+      button.setTextColor(AppStyle.INK);
+    } else {
+      AppStyle.action(button, AppStyle.MUTED, Color.TRANSPARENT, AppStyle.R_SMALL);
+    }
     AppStyle.setTypeface(
-        button, selected ? AppStyle.FONT_BOLD : AppStyle.FONT_REGULAR);
-    if (button.getTag() != null
-        && button.getTag().toString().startsWith("export.format."))
+        button, selected ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_MEDIUM);
+    String raw = button.getText().toString();
+    int newline = raw.indexOf('\n');
+    if (newline > 0) {
+      android.text.SpannableStringBuilder styled = new android.text.SpannableStringBuilder(raw);
+      styled.setSpan(
+          new android.text.style.ForegroundColorSpan(selected ? AppStyle.INK : AppStyle.MUTED),
+          0,
+          newline,
+          android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+      styled.setSpan(
+          new android.text.style.ForegroundColorSpan(selected ? AppStyle.GOLD : AppStyle.MUTED),
+          newline + 1,
+          raw.length(),
+          android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+      styled.setSpan(
+          new android.text.style.RelativeSizeSpan(.82f),
+          newline + 1,
+          raw.length(),
+          android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+      button.setText(styled);
       button.setFontFeatureSettings("tnum");
+    }
   }
 
   private void submit(boolean sharing) {
@@ -356,6 +413,50 @@ final class ExportSheet extends Dialog {
         new ExportOptions(sharing ? ExportOptions.SHARE_JPEG : format, quality);
     beginExport(sharing);
     if (!listener.export(options)) dismiss();
+  }
+
+  private android.graphics.drawable.Drawable buildProgressDotDrawable() {
+    boolean light = AppStyle.isLight();
+    android.graphics.drawable.GradientDrawable halo = new android.graphics.drawable.GradientDrawable();
+    halo.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+    halo.setColor(AppStyle.withAlpha(AppStyle.GOLD, light ? .15f : .22f));
+    android.graphics.drawable.GradientDrawable core = new android.graphics.drawable.GradientDrawable();
+    core.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+    core.setColor(AppStyle.GOLD);
+    android.graphics.drawable.LayerDrawable layers =
+        new android.graphics.drawable.LayerDrawable(
+            new android.graphics.drawable.Drawable[] {halo, core});
+    int inset = dp(3);
+    layers.setLayerInset(1, inset, inset, inset, inset);
+    return layers;
+  }
+
+  private String activeSpecSummary() {
+    if (format == ExportOptions.PNG) return "PNG · 16 位";
+    if (format == ExportOptions.TIFF) return "TIFF · 16 位";
+    return "JPEG · " + ExportOptions.qualityLabel(quality);
+  }
+
+  private void startDotPulse() {
+    stopDotPulse();
+    if (progressDot == null) return;
+    progressDot.setVisibility(View.VISIBLE);
+    progressDot.setAlpha(1f);
+    if (!ValueAnimator.areAnimatorsEnabled()) return;
+    dotAnimator = ValueAnimator.ofFloat(1f, .42f);
+    dotAnimator.setDuration(800);
+    dotAnimator.setRepeatMode(ValueAnimator.REVERSE);
+    dotAnimator.setRepeatCount(ValueAnimator.INFINITE);
+    dotAnimator.addUpdateListener(a -> progressDot.setAlpha((float) a.getAnimatedValue()));
+    dotAnimator.start();
+  }
+
+  private void stopDotPulse() {
+    if (dotAnimator != null) {
+      dotAnimator.cancel();
+      dotAnimator = null;
+    }
+    if (progressDot != null) progressDot.setAlpha(1f);
   }
 
   private void beginExport(boolean sharing) {
@@ -374,6 +475,8 @@ final class ExportSheet extends Dialog {
     idleFooter.setVisibility(View.GONE);
     progressFooter.setVisibility(View.VISIBLE);
     progressLabel.setText(sharing ? "正在准备分享…" : "正在导出照片…");
+    progressMeta.setText(activeSpecSummary());
+    startDotPulse();
     resize();
     progressFraction = 0f;
     progressDrawable.setFraction(0f);
@@ -421,6 +524,8 @@ final class ExportSheet extends Dialog {
       progressAnimator.cancel();
       progressAnimator = null;
     }
+    stopDotPulse();
+    if (progressDot != null) progressDot.setVisibility(View.GONE);
     progressLabel.setText("导出完成");
     progressFraction = 1f;
     progressDrawable.setFraction(1f);
@@ -435,6 +540,7 @@ final class ExportSheet extends Dialog {
       progressAnimator.cancel();
       progressAnimator = null;
     }
+    stopDotPulse();
     progressDrawable.setAnimating(false);
     progressFraction = 0f;
     progressDrawable.setFraction(0f);
@@ -467,7 +573,7 @@ final class ExportSheet extends Dialog {
         int height = Math.max(1, (int) Math.round(preview.getHeight() * scale));
         snapshot = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(snapshot);
-        canvas.drawColor(Color.BLACK);
+        canvas.drawColor(preview.hasAlpha() ? FrameStyle.BACKING_COLOR : Color.BLACK);
         canvas.drawBitmap(
             preview, null, new Rect(0, 0, width, height),
             new Paint(Paint.FILTER_BITMAP_FLAG));
@@ -597,8 +703,8 @@ final class ExportSheet extends Dialog {
     window.setGravity(Gravity.BOTTOM);
     window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     WindowManager.LayoutParams attributes = window.getAttributes();
-    attributes.dimAmount = .58f;
-    attributes.y = dp(10);
+    attributes.dimAmount = AppStyle.DIM_AMOUNT;
+    attributes.y = 0;
     window.setAttributes(attributes);
     activity.getWindow().getDecorView().addOnLayoutChangeListener(windowChanged);
     resize();
@@ -613,7 +719,7 @@ final class ExportSheet extends Dialog {
       width = getContext().getResources().getDisplayMetrics().widthPixels;
       height = getContext().getResources().getDisplayMetrics().heightPixels - dp(48);
     }
-    int windowWidth = Math.min(dp(560), Math.max(dp(200), width - dp(24)));
+    int windowWidth = Math.min(dp(560), Math.max(dp(200), width));
     int maxHeight =
         Math.min(Math.max(dp(240), height - dp(20)), dp(format == ExportOptions.JPEG ? 560 : 460));
     int windowHeight = maxHeight;
@@ -649,6 +755,7 @@ final class ExportSheet extends Dialog {
       progressAnimator.cancel();
       progressAnimator = null;
     }
+    stopDotPulse();
     if (progressDrawable != null) progressDrawable.setAnimating(false);
     estimator.shutdown();
     main.removeCallbacksAndMessages(null);
