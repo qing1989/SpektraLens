@@ -61,7 +61,9 @@ final class AboutPage extends LinearLayout {
     title.setAccessibilityHeading(true);
     header.addView(title, new LayoutParams(0, -2, 1));
     header.addView(new View(activity), new LayoutParams(dp(44), 1));
-    addView(header, new LayoutParams(-1, -2));
+    addView(
+        FoldableUi.wrapCenteredMaxWidth(activity, header, FoldableLayout::readingPageMaxDp),
+        new LayoutParams(-1, -2));
 
     FrameLayout body = new FrameLayout(activity);
     addView(body, new LayoutParams(-1, 0, 1));
@@ -332,21 +334,17 @@ final class AboutPage extends LinearLayout {
   }
 
   private LinearLayout content(ScrollView scroll) {
-    // A centered column keeps both small phones and landscape/tablet text readable.
-    FrameLayout centered =
-        new FrameLayout(activity) {
-          @Override
-          protected void onMeasure(int widthSpec, int heightSpec) {
-            View child = getChildAt(0);
-            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) child.getLayoutParams();
-            params.width = Math.min(MeasureSpec.getSize(widthSpec), dp(600));
-            super.onMeasure(widthSpec, heightSpec);
-          }
-        };
+    // A centered column keeps both small phones and foldables/tablets readable.
     LinearLayout content = column();
     content.setPadding(dp(20), dp(8), dp(20), dp(32));
-    centered.addView(
-        content, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
+    FrameLayout centered =
+        FoldableUi.wrapCenteredMaxWidth(
+            activity,
+            content,
+            widthDp -> {
+              int max = FoldableLayout.readingPageMaxDp(widthDp);
+              return max > 0 ? max : 600;
+            });
     scroll.addView(centered, new ScrollView.LayoutParams(-1, -2));
     return content;
   }

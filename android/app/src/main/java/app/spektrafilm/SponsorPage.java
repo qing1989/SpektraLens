@@ -154,11 +154,13 @@ final class SponsorPage extends FrameLayout {
     later.setOnClickListener(view -> close.run());
     content.addView(later, new LinearLayout.LayoutParams(-1, dp(44)));
 
+    int widthDp = FoldableUi.windowWidthDp(activity);
+    int sheetMaxDp = FoldableLayout.sponsorSheetMaxDp(widthDp);
+    int sheetW =
+        FoldableUi.constrainedWidthPx(
+            activity, getResources().getDisplayMetrics().widthPixels, sheetMaxDp, 12);
     FrameLayout.LayoutParams sheetLayout =
-        new FrameLayout.LayoutParams(
-            Math.min(getResources().getDisplayMetrics().widthPixels - dp(24), dp(600)),
-            -2,
-            Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        new FrameLayout.LayoutParams(sheetW, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
     sheetLayout.setMargins(dp(12), 0, dp(12), dp(10));
     addView(sheetWrap, sheetLayout);
   }
@@ -182,33 +184,30 @@ final class SponsorPage extends FrameLayout {
     back.setOnClickListener(view -> showIntro());
     header.addView(back, new LinearLayout.LayoutParams(dp(44), dp(44)));
 
-    page.addView(header, new LinearLayout.LayoutParams(-1, -2));
+    page.addView(
+        FoldableUi.wrapCenteredMaxWidth(activity, header, FoldableLayout::readingPageMaxDp),
+        new LinearLayout.LayoutParams(-1, -2));
 
     ScrollView scroll = new ScrollView(activity);
     scroll.setFillViewport(true);
     scroll.setClipToPadding(false);
     scroll.setVerticalScrollBarEnabled(false);
 
+    LinearLayout content = vertical();
+    content.setGravity(Gravity.CENTER_HORIZONTAL);
+    content.setPadding(dp(24), dp(16), dp(24), dp(34));
     FrameLayout centered =
-        new FrameLayout(activity) {
-          @Override
-          protected void onMeasure(int widthSpec, int heightSpec) {
-            View child = getChildAt(0);
-            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) child.getLayoutParams();
-            params.width = Math.min(MeasureSpec.getSize(widthSpec), dp(600));
-            super.onMeasure(widthSpec, heightSpec);
-          }
-        };
+        FoldableUi.wrapCenteredMaxWidth(
+            activity,
+            content,
+            widthDp -> {
+              int max = FoldableLayout.readingPageMaxDp(widthDp);
+              return max > 0 ? max : 600;
+            });
     scroll.addView(centered, new ScrollView.LayoutParams(-1, -2));
     page.addView(
         AppStyle.wrapScrollFade(activity, scroll, AppStyle.BG, 32, 28, false),
         new LinearLayout.LayoutParams(-1, 0, 1));
-
-    LinearLayout content = vertical();
-    content.setGravity(Gravity.CENTER_HORIZONTAL);
-    content.setPadding(dp(24), dp(16), dp(24), dp(34));
-    centered.addView(
-        content, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
 
     TextView heading = text("感谢你支持 SpektraLens", AppStyle.TYPE_HEADING, AppStyle.INK);
     heading.setGravity(Gravity.CENTER);

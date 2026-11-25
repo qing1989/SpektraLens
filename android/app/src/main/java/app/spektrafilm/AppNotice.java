@@ -112,7 +112,8 @@ final class AppNotice {
       AppStyle.setTypeface(this, AppStyle.FONT_SEMIBOLD);
       setIncludeFontPadding(false);
       setGravity(Gravity.CENTER_VERTICAL);
-      setMaxWidth(AppStyle.dp(context, 320));
+      setMaxWidth(
+          AppStyle.dp(context, FoldableLayout.noticeMaxDp(FoldableUi.windowWidthDp(context))));
       setMaxLines(4);
       setEllipsize(TextUtils.TruncateAt.END);
       int dotSize = AppStyle.dp(context, 6);

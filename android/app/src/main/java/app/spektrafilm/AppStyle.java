@@ -753,11 +753,15 @@ final class AppStyle {
               public boolean onPreDraw() {
                 if (!dialog.isShowing()) return true;
                 decor.getViewTreeObserver().removeOnPreDrawListener(this);
+                Context dialogCtx = dialog.getContext();
+                int dialogMaxDp =
+                    FoldableLayout.alertDialogMaxDp(
+                        FoldableUi.windowWidthDp(dialogCtx), dialog.getListView() != null);
                 int width =
                     Math.min(
-                        dp(dialog.getContext(), 480),
-                        dialog.getContext().getResources().getDisplayMetrics().widthPixels
-                            - dp(dialog.getContext(), 32));
+                        dp(dialogCtx, dialogMaxDp),
+                        dialogCtx.getResources().getDisplayMetrics().widthPixels
+                            - dp(dialogCtx, 32));
                 window.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT);
                 final int titleId =
                     dialog

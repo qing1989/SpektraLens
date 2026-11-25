@@ -237,7 +237,8 @@ final class UpdateNotesDialog extends Dialog {
     }
     root.maxHeight = Math.max(1, Math.round(height * .72f));
     root.requestLayout();
-    getWindow().setLayout(Math.min(dp(480), Math.max(1, width - dp(32))), -2);
+    int maxDp = FoldableLayout.updateDialogMaxDp(FoldableUi.windowWidthDp(activity));
+    getWindow().setLayout(FoldableUi.constrainedWidthPx(getContext(), width, maxDp, 16), -2);
   }
 
   @Override
