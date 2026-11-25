@@ -226,6 +226,23 @@ tasks.register('testThumbnailPolicy', JavaExec) {
 }
 tasks.named('check').configure { dependsOn 'testThumbnailPolicy' }
 
+def foldableLayoutTestClasses = layout.buildDirectory.dir('foldable-layout-tests')
+tasks.register('compileFoldableLayoutTests', JavaCompile) {
+    source 'src/main/java/app/spektrafilm/FoldableLayout.java',
+            'src/test/java/app/spektrafilm/FoldableLayoutTest.java'
+    classpath = files()
+    destinationDirectory = foldableLayoutTestClasses
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+    options.encoding = 'UTF-8'
+}
+tasks.register('testFoldableLayout', JavaExec) {
+    dependsOn 'compileFoldableLayoutTests'
+    classpath = files(foldableLayoutTestClasses)
+    mainClass = 'app.spektrafilm.FoldableLayoutTest'
+}
+tasks.named('check').configure { dependsOn 'testFoldableLayout' }
+
 gradle.taskGraph.whenReady { graph ->
     if (graph.allTasks.any { it.name.toLowerCase().contains('release') }
             && !keystorePropertiesFile.exists()) {

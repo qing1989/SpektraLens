@@ -310,7 +310,7 @@ final class GallerySheet extends Dialog {
     FrameLayout body = new FrameLayout(getContext());
     photosPanel = new FrameLayout(getContext());
     grid = new GridView(getContext());
-    grid.setNumColumns(3);
+    grid.setNumColumns(FoldableLayout.galleryColumns(FoldableUi.windowWidthDp(activity)));
     grid.setHorizontalSpacing(dp(4));
     grid.setVerticalSpacing(dp(4));
     grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
@@ -453,7 +453,14 @@ final class GallerySheet extends Dialog {
         visible.width() > 0
             ? visible.width()
             : activity.getResources().getDisplayMetrics().widthPixels;
-    int sheetWidth = Math.min(dp(720), Math.max(dp(240), availableWidth));
+    int widthDp = FoldableUi.windowWidthDp(activity);
+    int maxDp = FoldableLayout.gallerySheetMaxDp(widthDp);
+    int sheetWidth =
+        FoldableUi.constrainedWidthPx(getContext(), Math.max(dp(240), availableWidth), maxDp, 0);
+    if (grid != null) {
+      int cols = FoldableLayout.galleryColumns(widthDp);
+      if (grid.getNumColumns() != cols) grid.setNumColumns(cols);
+    }
     int expandedHeight = Math.max(dp(250), Math.round(available * .84f));
     getWindow().setLayout(sheetWidth, expandedHeight);
   }

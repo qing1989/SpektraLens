@@ -247,7 +247,10 @@ final class CropPage extends LinearLayout {
     LayoutParams barParams = new LayoutParams(-1, dp(AppStyle.TOUCH_MIN));
     deck.addView(angleBar, barParams);
 
-    addView(deck, new LayoutParams(-1, -2));
+    FrameLayout deckHost =
+        FoldableUi.wrapCenteredMaxWidth(activity, deck, FoldableLayout::cropDeckMaxDp);
+    deckHost.setBackgroundColor(AppStyle.SURFACE);
+    addView(deckHost, new LayoutParams(-1, -2));
 
     cropView.setOnChangeListener(this::updateDimensions);
     updateRatioChips();

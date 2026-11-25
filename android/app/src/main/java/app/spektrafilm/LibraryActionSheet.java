@@ -333,7 +333,9 @@ final class LibraryActionSheet extends Dialog {
     }
     root.maxHeight = Math.max(1, height - dp(20));
     root.requestLayout();
-    getWindow().setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT);
+    int maxDp = FoldableLayout.actionSheetMaxDp(FoldableUi.windowWidthDp(activity));
+    int sheetWidth = FoldableUi.constrainedWidthPx(getContext(), width, maxDp, 0);
+    getWindow().setLayout(sheetWidth, WindowManager.LayoutParams.WRAP_CONTENT);
   }
 
   @Override

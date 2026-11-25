@@ -13,6 +13,7 @@ import android.graphics.*;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.InsetDrawable;
 import android.net.Uri;
 import android.os.*;
 import android.provider.MediaStore;
@@ -190,6 +191,7 @@ public final class MainActivity extends Activity {
   private final Map<String, ImageView> thumbTargets = new HashMap<>();
   // 面板重建后引擎可能还没就绪，缩略图请求会被跳过；就绪/渲染完成后要能再补一次。
   private HorizontalScrollView filmScrollRef;
+  private View filmGridRef;
   private List<ImageView> thumbViewsRef = new ArrayList<>();
   private List<String> thumbStocksRef = new ArrayList<>();
   private int thumbStridePx, thumbSizePx;
@@ -1058,8 +1060,8 @@ public final class MainActivity extends Activity {
   }
 
   private boolean wideEditor() {
-    android.content.res.Configuration configuration = getResources().getConfiguration();
-    return configuration.screenWidthDp >= 600 && configuration.screenHeightDp < 500;
+    return FoldableLayout.useSplitEditor(
+        FoldableUi.windowWidthDp(this), FoldableUi.windowHeightDp(this));
   }
 
   private boolean updatingEditorLayout;
@@ -1078,9 +1080,18 @@ public final class MainActivity extends Activity {
       panelSpacer.setVisibility(wide ? View.GONE : View.VISIBLE);
       panel.setVisibility(panelCollapsed ? View.GONE : View.VISIBLE);
       if (wide) {
-        // 横屏平板：预览和工具列左右分栏，各占一份权重。
-        previewColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1.1f));
-        toolsColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1));
+        int panelWidthDp = FoldableLayout.editorPanelWidthDp(FoldableUi.windowWidthDp(this));
+        if (panelWidthDp > 0) {
+          // 折叠屏展开态：左侧预览自适应避开折痕，右侧工具栏锁定 296/336dp 满高。
+          previewColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1f));
+          LinearLayout.LayoutParams toolLp = new LinearLayout.LayoutParams(dp(panelWidthDp), -1);
+          toolLp.leftMargin = dp(10);
+          toolsColumn.setLayoutParams(toolLp);
+        } else {
+          // 横屏手机：保持原有权重分栏。
+          previewColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1.1f));
+          toolsColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1));
+        }
       } else {
         // 收起时横屏也切为上下布局：照片使用全宽，导航仍在底部。
         previewColumn.setLayoutParams(new LinearLayout.LayoutParams(-1, previewHeightPx()));
@@ -1381,7 +1392,8 @@ public final class MainActivity extends Activity {
     scroll.setFillViewport(true);
     scroll.setVerticalScrollBarEnabled(false);
     LinearLayout content = homeContent = vertical();
-    content.setPadding(dp(18), dp(18), dp(18), dp(96));
+    int homePad = dp(FoldableLayout.homePaddingDp(FoldableUi.windowWidthDp(this)));
+    content.setPadding(homePad, dp(18), homePad, dp(96));
     scroll.addView(content);
     homeScrollWrap = AppStyle.wrapScrollFade(this, scroll, AppStyle.BG, 32, 0, false);
     homeStage.addView(homeScrollWrap, new FrameLayout.LayoutParams(-1, -1));
@@ -1502,7 +1514,9 @@ public final class MainActivity extends Activity {
     emptyImpLp.topMargin = dp(16);
     welcomeBody.addView(homeEmptyImportHost, emptyImpLp);
     add(welcomeCard, welcomeBody, -1, -2);
-    add(homeEmptyWelcome, welcomeCard, -1, -2);
+    FrameLayout welcomeCentered =
+        FoldableUi.wrapCenteredMaxWidth(this, welcomeCard, FoldableLayout::homeConstrainedMaxDp);
+    add(homeEmptyWelcome, welcomeCentered, -1, -2);
 
     TextView privacy =
         homePrivacyView =
@@ -1643,7 +1657,9 @@ public final class MainActivity extends Activity {
     manageActionRow = manageActions;
     barStack.addView(batchActions, new FrameLayout.LayoutParams(-1, -2));
     barStack.addView(manageActions, new FrameLayout.LayoutParams(-1, -2));
-    batchPasteShell.addView(barStack, new FrameLayout.LayoutParams(-1, -2));
+    FrameLayout centeredBar =
+        FoldableUi.wrapCenteredMaxWidth(this, barStack, FoldableLayout::homeConstrainedMaxDp);
+    batchPasteShell.addView(centeredBar, new FrameLayout.LayoutParams(-1, -2));
     batchPasteShell.addOnLayoutChangeListener(
         (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
           if (bottom - top != oldBottom - oldTop) updateBatchPasteInsets();
@@ -2156,8 +2172,10 @@ public final class MainActivity extends Activity {
     shown.alpha = 1f;
     window.setAttributes(shown);
     window.getDecorView().setAlpha(1f);
+    int maxDp = FoldableLayout.exitConfirmMaxDp(FoldableUi.windowWidthDp(this));
     int width =
-        Math.min(dp(480), getResources().getDisplayMetrics().widthPixels - dp(24));
+        FoldableUi.constrainedWidthPx(
+            this, getResources().getDisplayMetrics().widthPixels, maxDp, 12);
     window.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT);
   }
 
@@ -2385,6 +2403,21 @@ public final class MainActivity extends Activity {
     }
   }
 
+  /**
+   * Draws the selected-film stroke fully inside the thumbnail. A plain foreground stroke is
+   * centred on the frame edge, so half of it gets clipped and the ring looks about 1dp thick.
+   */
+  private void setFilmSelectionRing(FrameLayout frame, boolean selected) {
+    if (!selected) {
+      frame.setForeground(null);
+      return;
+    }
+    GradientDrawable ring = box(Color.TRANSPARENT, 8f);
+    ring.setStroke(dp(2), GOLD);
+    int inset = Math.max(1, dp(1));
+    frame.setForeground(new InsetDrawable(ring, inset, inset, inset, inset));
+  }
+
   private void buildPanel() {
     buildPanel(false);
   }
@@ -2411,6 +2444,7 @@ public final class MainActivity extends Activity {
     clearFavoriteMenu();
     panel.removeAllViews();
     filmScrollRef = null;
+    filmGridRef = null;
     thumbTargets.clear();
     thumbViewsRef = new ArrayList<>();
     thumbStocksRef = new ArrayList<>();
@@ -2587,10 +2621,111 @@ public final class MainActivity extends Activity {
         add(editor, empty, -1, Math.max(cardHeight, 160));
         pendingFilmScrollX = -1;
         filmScrollRef = null;
+        filmGridRef = null;
         thumbViewsRef = new ArrayList<>();
         thumbStocksRef = new ArrayList<>();
         thumbStridePx = 0;
         thumbSizePx = dp(thumbSize);
+      } else if (wideEditor()
+          && !panelCollapsed
+          && FoldableLayout.editorFilmGridColumns(FoldableUi.windowWidthDp(this)) > 0) {
+        int gridCols = FoldableLayout.editorFilmGridColumns(FoldableUi.windowWidthDp(this));
+        int panelInnerDp =
+            Math.max(240, FoldableLayout.editorPanelWidthDp(FoldableUi.windowWidthDp(this)) - 28);
+        int cellGapDp = 8;
+        int gridThumbDp = Math.max(72, (panelInnerDp - cellGapDp * (gridCols - 1)) / gridCols);
+        LinearLayout grid = vertical();
+        for (int rowStart = 0; rowStart < visibleStocks.size(); rowStart += gridCols) {
+          LinearLayout row = horizontal();
+          row.setGravity(Gravity.TOP);
+          for (int c = 0; c < gridCols; c++) {
+            int idx = rowStart + c;
+            if (idx >= visibleStocks.size()) {
+              LinearLayout.LayoutParams spacerLp = new LinearLayout.LayoutParams(0, 1, 1f);
+              if (c > 0) spacerLp.leftMargin = dp(cellGapDp);
+              row.addView(new View(this), spacerLp);
+              continue;
+            }
+            Stock stock = visibleStocks.get(idx);
+            boolean selected = stock.id.equals(settings.optString("film_stock"));
+            LinearLayout card = vertical();
+            card.setSelected(selected);
+            card.setFocusable(true);
+            card.setGravity(Gravity.CENTER_HORIZONTAL);
+
+            FrameLayout frame = new FrameLayout(this);
+            setFilmSelectionRing(frame, selected);
+            ImageView thumb = new ImageView(this);
+            thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            thumb.setTag(stock.id);
+            thumb.setBackground(box(AppStyle.CONTROL, 9f));
+            thumb.setClipToOutline(true);
+            frame.addView(thumb, new FrameLayout.LayoutParams(-1, -1));
+            add(card, frame, gridThumbDp, gridThumbDp);
+
+            if (isFavoriteFilm(stock.id) && !filmCategory.equals("收藏")) {
+              ImageView badge = favoriteBadgeView();
+              FrameLayout.LayoutParams badgeParams =
+                  new FrameLayout.LayoutParams(dp(14), dp(14), Gravity.TOP | Gravity.END);
+              badgeParams.topMargin = dp(5);
+              badgeParams.rightMargin = dp(5);
+              frame.addView(badge, badgeParams);
+              filmBadges.put(stock.id, badge);
+            }
+            filmFrames.put(stock.id, frame);
+
+            TextView name =
+                text(shortName(stock.name), AppStyle.TYPE_MICRO, selected ? GOLD : MUTED);
+            AppStyle.setTypeface(
+                name, selected ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_REGULAR);
+            name.setSingleLine(true);
+            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            name.setGravity(Gravity.CENTER);
+            name.setPadding(dp(2), 0, dp(2), 0);
+            LinearLayout.LayoutParams nameLayout =
+                new LinearLayout.LayoutParams(-1, dp(labelHeight));
+            nameLayout.topMargin = dp(5);
+            card.addView(name, nameLayout);
+
+            card.setContentDescription(
+                "胶片 " + stock.name
+                    + (selected ? "，已选" : "")
+                    + (isFavoriteFilm(stock.id) ? "，已收藏" : ""));
+            card.setOnClickListener(
+                v -> {
+                  clearFavoriteMenu();
+                  String keepCategory = filmCategory;
+                  set("film_stock", stock.id);
+                  filmCategory = keepCategory;
+                  scheduleRender();
+                  buildPanel();
+                });
+            card.setOnLongClickListener(
+                v -> {
+                  Haptics.longPress(card);
+                  openFavoriteMenu(stock.id, frame);
+                  return true;
+                });
+            controls.add(card);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
+            if (c > 0) lp.leftMargin = dp(cellGapDp);
+            row.addView(card, lp);
+            thumbViews.add(thumb);
+            thumbStocks.add(stock.id);
+            thumbTargets.put(stock.id, thumb);
+          }
+          LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+          if (rowStart > 0) rowLp.topMargin = dp(8);
+          grid.addView(row, rowLp);
+        }
+        add(editor, grid, -1, -2);
+        filmScrollRef = null;
+        filmGridRef = grid;
+        thumbViewsRef = thumbViews;
+        thumbStocksRef = thumbStocks;
+        thumbStridePx = dp(gridThumbDp + cellGapDp);
+        thumbSizePx = dp(gridThumbDp);
+        grid.post(() -> fillGridThumbs(thumbViews, thumbStocks));
       } else {
         HorizontalScrollView filmScroll = new HorizontalScrollView(this);
         AppStyle.hideScrollBars(filmScroll);
@@ -2608,10 +2743,7 @@ public final class MainActivity extends Activity {
           card.setFocusable(true);
 
           FrameLayout frame = new FrameLayout(this);
-          GradientDrawable ring = box(Color.TRANSPARENT, 9f);
-          if (selected) ring.setStroke(dp(2), GOLD);
-          // The image and its inset stroke share the same bounds/radius.
-          frame.setForeground(ring);
+          setFilmSelectionRing(frame, selected);
           ImageView thumb = new ImageView(this);
           thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
           thumb.setTag(stock.id);
@@ -3542,6 +3674,65 @@ public final class MainActivity extends Activity {
       FrameStyle.WARM_135, FrameStyle.SILVER_135, FrameStyle.MEDIUM_120,
       FrameStyle.WHITE, FrameStyle.INSTANT
     };
+    int borderGridCols =
+        wideEditor() && !panelCollapsed
+            ? FoldableLayout.editorBorderGridColumns(FoldableUi.windowWidthDp(this))
+            : 0;
+    if (borderGridCols > 0) {
+      LinearLayout grid = vertical();
+      grid.setTag("editor.frame.styles");
+      for (int rowStart = 0; rowStart < styles.length; rowStart += borderGridCols) {
+        LinearLayout row = horizontal();
+        row.setGravity(Gravity.TOP);
+        for (int c = 0; c < borderGridCols; c++) {
+          int idx = rowStart + c;
+          if (idx >= styles.length) {
+            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(0, 1, 1f);
+            if (c > 0) sp.leftMargin = dp(7);
+            row.addView(new View(this), sp);
+            continue;
+          }
+          FrameStyle style = styles[idx];
+          boolean active = style == selected;
+          LinearLayout tile = vertical();
+          tile.setTag("editor.frame.style." + style.id);
+          tile.setGravity(Gravity.CENTER);
+          tile.setMinimumHeight(dp(62));
+          tile.setPadding(dp(3), dp(7), dp(3), dp(6));
+          tile.setFocusable(true);
+          tile.setSelected(active);
+          tile.setContentDescription(style.label);
+          GradientDrawable background =
+              AppStyle.shape(this, active ? AppStyle.ACCENT_SOFT : AppStyle.CONTROL, 9, true);
+          if (active) background.setStroke(Math.max(1, dp(1)), GOLD);
+          tile.setBackground(new android.graphics.drawable.RippleDrawable(
+              ColorStateList.valueOf(AppStyle.RIPPLE), background, null));
+          add(tile, frameStyleGlyph(style), 40, 28);
+          gap(tile, 4);
+          TextView label = text(style.cardLabel, AppStyle.TYPE_MICRO, active ? GOLD : MUTED);
+          AppStyle.setTypeface(label, AppStyle.FONT_SEMIBOLD);
+          label.setGravity(Gravity.CENTER);
+          label.setMaxLines(2);
+          label.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+          add(tile, label, -1, -2);
+          tile.setOnClickListener(v -> {
+            if (style == selected || exporting || activeImport != null) return;
+            set("edge_style", style.id);
+            scheduleRender();
+            buildPanel();
+          });
+          controls.add(tile);
+          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
+          if (c > 0) lp.leftMargin = dp(7);
+          row.addView(tile, lp);
+        }
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+        if (rowStart > 0) rowLp.topMargin = dp(7);
+        grid.addView(row, rowLp);
+      }
+      add(parent, grid, -1, -2);
+      return;
+    }
     HorizontalScrollView scroll = new HorizontalScrollView(this);
     scroll.setTag("editor.frame.styles");
     AppStyle.hideScrollBars(scroll);
@@ -3742,6 +3933,15 @@ public final class MainActivity extends Activity {
   public void onConfigurationChanged(android.content.res.Configuration c) {
     super.onConfigurationChanged(c);
     if (photo != null) photo.cancelPendingSingleTap();
+    if (homeContent != null) {
+      int homePad = dp(FoldableLayout.homePaddingDp(FoldableUi.windowWidthDp(this)));
+      homeContent.setPadding(
+          homePad, homeContent.getPaddingTop(), homePad, homeContent.getPaddingBottom());
+      homeContent.post(this::refreshHistory);
+    }
+    if (lightTablePage != null) {
+      lightTablePage.onWindowConfigChanged();
+    }
     if (panel != null) {
       updateEditorLayout();
       editorScreen.post(
@@ -4301,11 +4501,13 @@ public final class MainActivity extends Activity {
   }
 
   private boolean galleryVisible() {
+    boolean hostShown =
+        (filmScrollRef != null && filmScrollRef.isShown())
+            || (filmGridRef != null && filmGridRef.isShown());
     return !destroyed
         && selectedTab == 0
         && editorScreen.getVisibility() == View.VISIBLE
-        && filmScrollRef != null
-        && filmScrollRef.isShown();
+        && hostShown;
   }
 
   private void syncThumbCache() {
@@ -4326,7 +4528,23 @@ public final class MainActivity extends Activity {
   private void refillThumbs() {
     if (!galleryVisible() || thumbViewsRef.isEmpty() || thumbStridePx <= 0) return;
     syncThumbCache();
-    fillVisibleThumbs(filmScrollRef, thumbViewsRef, thumbStocksRef, thumbStridePx, thumbSizePx);
+    if (filmScrollRef != null) {
+      fillVisibleThumbs(filmScrollRef, thumbViewsRef, thumbStocksRef, thumbStridePx, thumbSizePx);
+    } else if (filmGridRef != null) {
+      fillGridThumbs(thumbViewsRef, thumbStocksRef);
+    }
+  }
+
+  private void fillGridThumbs(List<ImageView> views, List<String> stocks) {
+    if (!galleryVisible() || filmGridRef == null) return;
+    syncThumbCache();
+    String active = settings.optString("film_stock");
+    for (int i = 0; i < views.size(); i++) {
+      if (stocks.get(i).equals(active)) requestFilmThumb(stocks.get(i), views.get(i));
+    }
+    for (int i = 0; i < views.size(); i++) {
+      if (!stocks.get(i).equals(active)) requestFilmThumb(stocks.get(i), views.get(i));
+    }
   }
 
   /** Render visible cards plus a 60dp buffer, never all stocks up front. */
@@ -6574,6 +6792,7 @@ public final class MainActivity extends Activity {
       signature.append(frame.id).append(':').append(frame.path).append(':')
           .append(frame.params).append(':').append(frame.favorite).append(':')
           .append(frame.edited).append(';');
+    int homeCols = FoldableLayout.homeColumns(FoldableUi.windowWidthDp(this));
     signature
         .append("clip=")
         .append(clipboard == null ? "" : clipboard.sourceId)
@@ -6581,6 +6800,8 @@ public final class MainActivity extends Activity {
         .append(batchPasteMode)
         .append(";manage=")
         .append(manageMode)
+        .append(";cols=")
+        .append(homeCols)
         .append('|')
         .append(homeFavoritesOnly);
     String current = signature.toString();
@@ -6618,10 +6839,11 @@ public final class MainActivity extends Activity {
       return;
     }
     boolean metadataBackfilled = false;
-    for (int i = 0; i < visibleFrames.size(); i += 2) {
+    for (int i = 0; i < visibleFrames.size(); i += homeCols) {
       LinearLayout row = horizontal();
       row.setGravity(Gravity.TOP);
-      for (int k = i; k < Math.min(i + 2, visibleFrames.size()); k++) {
+      int rowEnd = Math.min(i + homeCols, visibleFrames.size());
+      for (int k = i; k < rowEnd; k++) {
         Frame frame = visibleFrames.get(k);
         boolean selectedForBatch = selectionContains(frame);
         LinearLayout card = vertical();
@@ -6755,11 +6977,14 @@ public final class MainActivity extends Activity {
             });
         controls.add(card);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
-        if (k == i) lp.rightMargin = dp(10);
+        if (k < i + homeCols - 1) lp.rightMargin = dp(10);
         row.addView(card, lp);
       }
-      if (i + 1 == visibleFrames.size())
-        row.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
+      for (int padIdx = rowEnd; padIdx < i + homeCols; padIdx++) {
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(0, 1, 1);
+        if (padIdx < i + homeCols - 1) sp.rightMargin = dp(10);
+        row.addView(new View(this), sp);
+      }
       add(historyList, row, -1, -2);
       gap(historyList, 10);
     }
@@ -8543,6 +8768,7 @@ public final class MainActivity extends Activity {
     filmThumbs.clear();
     thumbTargets.clear();
     filmScrollRef = null;
+    filmGridRef = null;
     if (homeImages != null) homeImages.close();
     if (activeImport != null) {
       activeImport.cancel();

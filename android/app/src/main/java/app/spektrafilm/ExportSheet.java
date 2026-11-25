@@ -719,7 +719,9 @@ final class ExportSheet extends Dialog {
       width = getContext().getResources().getDisplayMetrics().widthPixels;
       height = getContext().getResources().getDisplayMetrics().heightPixels - dp(48);
     }
-    int windowWidth = Math.min(dp(560), Math.max(dp(200), width));
+    int exportMaxDp = FoldableLayout.exportSheetMaxDp(FoldableUi.windowWidthDp(activity));
+    int windowWidth =
+        FoldableUi.constrainedWidthPx(getContext(), Math.max(dp(200), width), exportMaxDp, 0);
     int maxHeight =
         Math.min(Math.max(dp(240), height - dp(20)), dp(format == ExportOptions.JPEG ? 560 : 460));
     int windowHeight = maxHeight;

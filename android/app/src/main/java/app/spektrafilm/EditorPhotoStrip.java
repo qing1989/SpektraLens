@@ -202,12 +202,13 @@ final class EditorPhotoStrip extends HorizontalScrollView {
     cache.evictAll();
   }
 
-  /** Five complete thumbnails fit; larger phones cap at 64dp, narrow screens shrink to stay five. */
+  /** Five complete thumbnails fit on phones/medium; expanded foldables show six. */
   private int computeThumbSize() {
     int width = getWidth();
     if (width <= 0) return dp(MAX_THUMB_DP);
-    int available = width - dp(PAD_DP) * 2 - dp(GAP_DP) * 4;
-    int size = Math.max(dp(MIN_THUMB_DP), available / 5);
+    int cols = FoldableLayout.editorStripColumns(FoldableUi.windowWidthDp(context));
+    int available = width - dp(PAD_DP) * 2 - dp(GAP_DP) * Math.max(1, cols - 1);
+    int size = Math.max(dp(MIN_THUMB_DP), available / Math.max(1, cols));
     return Math.min(dp(MAX_THUMB_DP), size);
   }
 

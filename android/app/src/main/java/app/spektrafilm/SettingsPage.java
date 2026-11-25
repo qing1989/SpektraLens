@@ -93,14 +93,18 @@ final class SettingsPage extends LinearLayout {
     modeBadge.setPadding(dp(8), dp(4), dp(8), dp(4));
     modeBadge.setBackground(AppStyle.shape(activity, AppStyle.CONTROL, 6f, true));
     header.addView(modeBadge, new LayoutParams(-2, -2));
-    addView(header, new LayoutParams(-1, -2));
+    addView(
+        FoldableUi.wrapCenteredMaxWidth(activity, header, FoldableLayout::readingPageMaxDp),
+        new LayoutParams(-1, -2));
 
     ScrollView scroll = new ScrollView(activity);
     scroll.setVerticalScrollBarEnabled(false);
     LinearLayout content = new LinearLayout(activity);
     content.setOrientation(VERTICAL);
     content.setPadding(dp(18), dp(8), dp(18), dp(104));
-    scroll.addView(content);
+    scroll.addView(
+        FoldableUi.wrapCenteredMaxWidth(activity, content, FoldableLayout::readingPageMaxDp),
+        new ScrollView.LayoutParams(-1, -2));
     addView(
         AppStyle.wrapScrollFade(activity, scroll, AppStyle.BG, 32, 0, false),
         new LayoutParams(-1, 0, 1));

@@ -100,6 +100,7 @@ final class LightTablePage extends LinearLayout {
   private static final int EXPORT_POSTER_EDGE = 2400;
   private static final String PREF_EXPORT_THEME = "lighttable_export_theme";
   private static final String PREF_EXPORT_FOOTER = "lighttable_export_footer";
+  private static final String PREF_FOLDABLE_LANDSCAPE = "lighttable_foldable_landscape";
   private static final String POSTER_SLOGAN = "暗房里没有过去，只有正在发生的影像";
 
   enum PosterTheme {
@@ -361,8 +362,14 @@ final class LightTablePage extends LinearLayout {
 
   private LightTableView canvas;
   private FrameLayout canvasHost;
+  private FrameLayout addPopupHost;
+  private View addPopupView;
+  private final AtomicInteger addPopupGen = new AtomicInteger();
+  private LinearLayout orientToggle;
+  private TextView orientLandBtn, orientPortBtn;
+  private boolean landscapeMode;
   private TextView countLabel, exportButton;
-  private ImageButton headerLoupeButton, headerArrangeButton;
+  private ImageButton headerLoupeButton, headerArrangeButton, headerAddButton;
   private LinearLayout contextBar, selectionPill, loupePill;
   private LinearLayout dimmerPill;
   private PowerSwitchView dimmerPowerButton;
@@ -437,6 +444,11 @@ final class LightTablePage extends LinearLayout {
     this.sources = new ArrayList<>();
     if (sources != null) this.sources.addAll(sources);
     this.prefs = activity.getSharedPreferences("darkroom", Activity.MODE_PRIVATE);
+    int initWidthDp = FoldableUi.windowWidthDp(activity);
+    this.landscapeMode =
+        FoldableLayout.isFoldable(initWidthDp)
+            && prefs.getBoolean(
+                PREF_FOLDABLE_LANDSCAPE, FoldableLayout.lightTableDefaultLandscape(initWidthDp));
     setOrientation(VERTICAL);
     setBackgroundColor(palette.pageBg);
     setAccessibilityPaneTitle("观片台");
@@ -446,6 +458,7 @@ final class LightTablePage extends LinearLayout {
     addView(header(), new LayoutParams(-1, -2));
 
     canvasHost = new FrameLayout(activity);
+    canvasHost.setClipChildren(false);
     canvas = new LightTableView(this);
     canvasHost.addView(canvas, new FrameLayout.LayoutParams(-1, -1));
 
@@ -458,16 +471,87 @@ final class LightTablePage extends LinearLayout {
     canvasHost.addView(dimmerPill, dimmerParams);
 
     contextBar = buildContextBar();
-    FrameLayout.LayoutParams contextParams =
-        new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
-    canvasHost.addView(contextBar, contextParams);
+    canvasHost.addView(contextBar, contextBarLayoutParams(initWidthDp));
+
+    addPopupHost = new FrameLayout(activity);
+    addPopupHost.setClipChildren(false);
+    addPopupHost.setVisibility(GONE);
+    addPopupHost.setClickable(true);
+    addPopupHost.setBackgroundColor(Color.TRANSPARENT);
+    addPopupHost.setOnClickListener(v -> closeAddPopup());
+    canvasHost.addView(addPopupHost, new FrameLayout.LayoutParams(-1, -1));
 
     addView(canvasHost, new LayoutParams(-1, 0, 1));
 
+    syncOrientationUi(initWidthDp);
     loadState();
     updateCount();
     updateTools();
     syncDimmerUi();
+  }
+
+  private FrameLayout.LayoutParams contextBarLayoutParams(int widthDp) {
+    int maxDp = FoldableLayout.lightTableContextBarMaxDp(widthDp);
+    if (maxDp <= 0) {
+      return new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+    }
+    int availPx = activity.getResources().getDisplayMetrics().widthPixels;
+    int targetW = FoldableUi.constrainedWidthPx(activity, availPx, maxDp, 0);
+    return new FrameLayout.LayoutParams(targetW, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+  }
+
+  private void syncOrientationUi(int widthDp) {
+    boolean foldable = FoldableLayout.isFoldable(widthDp);
+    if (orientToggle != null) {
+      orientToggle.setVisibility(foldable ? VISIBLE : GONE);
+    }
+    if (orientLandBtn != null && orientPortBtn != null) {
+      orientLandBtn.setBackground(landscapeMode ? AppStyle.selectedShape(activity, 6f) : null);
+      orientLandBtn.setTextColor(landscapeMode ? AppStyle.INK : AppStyle.MUTED);
+      AppStyle.setTypeface(
+          orientLandBtn, landscapeMode ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_MEDIUM);
+      orientPortBtn.setBackground(!landscapeMode ? AppStyle.selectedShape(activity, 6f) : null);
+      orientPortBtn.setTextColor(!landscapeMode ? AppStyle.INK : AppStyle.MUTED);
+      AppStyle.setTypeface(
+          orientPortBtn, !landscapeMode ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_MEDIUM);
+    }
+  }
+
+  private void setLandscapeMode(boolean landscape, boolean persistFoldablePref) {
+    int widthDp = FoldableUi.windowWidthDp(activity);
+    boolean allowed = FoldableLayout.isFoldable(widthDp) && landscape;
+    if (persistFoldablePref && FoldableLayout.isFoldable(widthDp)) {
+      prefs.edit().putBoolean(PREF_FOLDABLE_LANDSCAPE, landscape).apply();
+    }
+    boolean changed = landscapeMode != allowed;
+    landscapeMode = allowed;
+    syncOrientationUi(widthDp);
+    if (changed && canvas != null) {
+      canvas.recomputeAndRebake();
+    }
+  }
+
+  void onWindowConfigChanged() {
+    if (released) return;
+    int widthDp = FoldableUi.windowWidthDp(activity);
+    boolean foldable = FoldableLayout.isFoldable(widthDp);
+    boolean wantLandscape =
+        foldable
+            && prefs.getBoolean(
+                PREF_FOLDABLE_LANDSCAPE, FoldableLayout.lightTableDefaultLandscape(widthDp));
+    setLandscapeMode(wantLandscape, false);
+    if (contextBar != null) {
+      contextBar.setLayoutParams(contextBarLayoutParams(widthDp));
+    }
+    if (addPopupView != null) {
+      if (!FoldableLayout.lightTableAddPopup(widthDp)) {
+        closeAddPopup();
+      } else {
+        attachAddPopupForWidth(widthDp);
+      }
+    } else if (addSheet != null && addSheet.isShowing() && foldable) {
+      addSheet.dismiss();
+    }
   }
 
   private View header() {
@@ -498,6 +582,30 @@ final class LightTablePage extends LinearLayout {
     titleBlock.addView(countLabel, countParams);
     header.addView(titleBlock, new LayoutParams(0, -2, 1));
 
+    orientToggle = new LinearLayout(activity);
+    orientToggle.setOrientation(HORIZONTAL);
+    orientToggle.setGravity(Gravity.CENTER_VERTICAL);
+    orientToggle.setPadding(dp(2), dp(2), dp(2), dp(2));
+    orientToggle.setBackground(AppStyle.shape(activity, AppStyle.CONTROL, AppStyle.R_SMALL, true));
+    orientToggle.setVisibility(GONE);
+    orientLandBtn = text("横 3:2", AppStyle.TYPE_MICRO, AppStyle.MUTED);
+    orientPortBtn = text("竖 2:3", AppStyle.TYPE_MICRO, AppStyle.MUTED);
+    for (TextView opt : new TextView[] {orientLandBtn, orientPortBtn}) {
+      opt.setGravity(Gravity.CENTER);
+      opt.setSingleLine(true);
+      opt.setMinHeight(dp(28));
+      opt.setPadding(dp(9), dp(2), dp(9), dp(2));
+      opt.setClickable(true);
+      opt.setFocusable(true);
+    }
+    orientLandBtn.setOnClickListener(v -> setLandscapeMode(true, true));
+    orientPortBtn.setOnClickListener(v -> setLandscapeMode(false, true));
+    orientToggle.addView(orientLandBtn, new LayoutParams(-2, -2));
+    orientToggle.addView(orientPortBtn, new LayoutParams(-2, -2));
+    LayoutParams orientParams = new LayoutParams(-2, dp(34));
+    orientParams.rightMargin = dp(8);
+    header.addView(orientToggle, orientParams);
+
     headerLoupeButton =
         topActionButton(R.drawable.ic_ui_lt_loupe, "3× 放大镜", this::toggleMagnifier);
     header.addView(headerLoupeButton, new LayoutParams(dp(36), dp(36)));
@@ -508,11 +616,11 @@ final class LightTablePage extends LinearLayout {
     arrangeParams.leftMargin = dp(6);
     header.addView(headerArrangeButton, arrangeParams);
 
-    ImageButton addButton =
+    headerAddButton =
         topActionButton(R.drawable.ic_ui_add, "添加照片", this::showAddPhotos);
     LayoutParams addParams = new LayoutParams(dp(36), dp(36));
     addParams.leftMargin = dp(6);
-    header.addView(addButton, addParams);
+    header.addView(headerAddButton, addParams);
 
     exportButton = button("导出", AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
     exportButton.setTextSize(AppStyle.TYPE_BODY);
@@ -969,6 +1077,30 @@ final class LightTablePage extends LinearLayout {
     }
     if (n == 1) {
       place(table.get(0), .5f, .5f, -2.5f);
+    } else if (landscapeMode) {
+      if (n == 2) {
+        place(table.get(0), .32f, .50f, -3.5f);
+        place(table.get(1), .68f, .50f, 3f);
+      } else if (n == 3) {
+        place(table.get(0), .22f, .48f, -4.5f);
+        place(table.get(1), .50f, .52f, 2.5f);
+        place(table.get(2), .78f, .48f, -2f);
+      } else {
+        int columns = n <= 6 ? 3 : 4;
+        int rows = (n + columns - 1) / columns;
+        for (int i = 0; i < n; i++) {
+          int col = i % columns, row = i / columns;
+          float x =
+              columns == 3
+                  ? (.20f + .30f * col)
+                  : (.16f + .68f * col / (columns - 1f));
+          float y =
+              rows == 2 ? (.30f + .40f * row) : (.22f + .56f * row / Math.max(1f, rows - 1f));
+          place(table.get(i), x, y, (i % 2 == 0 ? -3.2f : 3.2f) + (i % 3 - 1) * 1.4f);
+          if (n > 8) table.get(i).scale = .80f;
+          else if (n > 4) table.get(i).scale = .88f;
+        }
+      }
     } else if (n == 2) {
       place(table.get(0), .48f, .33f, -3.5f);
       place(table.get(1), .52f, .68f, 3f);
@@ -1321,6 +1453,280 @@ final class LightTablePage extends LinearLayout {
   }
 
   private void showAddPhotos() {
+    int widthDp = FoldableUi.windowWidthDp(activity);
+    if (FoldableLayout.lightTableAddPopup(widthDp)) {
+      if (addPopupView != null) {
+        closeAddPopup();
+      } else {
+        openAddPopup(widthDp);
+      }
+      return;
+    }
+    showAddPhotosDialog();
+  }
+
+  private void closeAddPopup() {
+    addPopupGen.incrementAndGet();
+    addPopupView = null;
+    if (addPopupHost != null) {
+      addPopupHost.removeAllViews();
+      addPopupHost.setVisibility(GONE);
+    }
+    if (headerAddButton != null) {
+      headerAddButton.setImageTintList(ColorStateList.valueOf(AppStyle.INK));
+      GradientDrawable bg = AppStyle.shape(activity, AppStyle.SURFACE, 9f, true);
+      headerAddButton.setBackground(
+          new RippleDrawable(
+              ColorStateList.valueOf(AppStyle.RIPPLE),
+              bg,
+              AppStyle.shape(activity, Color.WHITE, 9f, false)));
+    }
+  }
+
+  private void attachAddPopupForWidth(int widthDp) {
+    if (addPopupView == null) return;
+    if (addPopupView.getParent() instanceof ViewGroup parent) {
+      parent.removeView(addPopupView);
+    }
+    if (!FoldableLayout.lightTableAddPopup(widthDp) || addPopupHost == null) {
+      closeAddPopup();
+      return;
+    }
+    int popupW = dp(Math.max(200, FoldableLayout.lightTableAddPopupWidthDp(widthDp)));
+    FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(popupW, -1, Gravity.END);
+    params.topMargin = dp(6);
+    params.rightMargin = dp(18);
+    params.bottomMargin = dp(84);
+    addPopupHost.removeAllViews();
+    addPopupHost.addView(addPopupView, params);
+    addPopupHost.setVisibility(VISIBLE);
+    addPopupHost.bringToFront();
+  }
+
+  private void openAddPopup(int widthDp) {
+    closeAddPopup();
+    final int gen = addPopupGen.incrementAndGet();
+
+    LinearLayout panel = new LinearLayout(activity);
+    panel.setOrientation(VERTICAL);
+    panel.setBackground(AppStyle.shape(activity, AppStyle.SURFACE, 18f, true));
+    panel.setClipToOutline(true);
+    panel.setElevation(dp(18));
+    panel.setClickable(true);
+    panel.setPadding(dp(12), dp(12), dp(12), dp(12));
+    panel.setTag("lighttable.add.popup");
+
+    LinearLayout popupHeader = new LinearLayout(activity);
+    popupHeader.setOrientation(HORIZONTAL);
+    popupHeader.setGravity(Gravity.CENTER_VERTICAL);
+    popupHeader.setPadding(dp(2), 0, 0, dp(10));
+    LinearLayout titleCol = new LinearLayout(activity);
+    titleCol.setOrientation(VERTICAL);
+    TextView heading = text("添加照片", AppStyle.TYPE_TITLE, AppStyle.INK);
+    AppStyle.setTypeface(heading, AppStyle.FONT_BOLD);
+    titleCol.addView(heading, new LayoutParams(-2, -2));
+    TextView sub =
+        text("已添加 " + table.size() + " / " + MAX_PHOTOS + " 张", AppStyle.TYPE_MICRO, AppStyle.GOLD);
+    AppStyle.setNumericTypeface(sub);
+    AppStyle.setTypeface(sub, AppStyle.FONT_SEMIBOLD);
+    LayoutParams subLp = new LayoutParams(-2, -2);
+    subLp.topMargin = dp(2);
+    titleCol.addView(sub, subLp);
+    popupHeader.addView(titleCol, new LayoutParams(0, -2, 1));
+
+    TextView closeBtn = text("×", 18, AppStyle.MUTED);
+    closeBtn.setGravity(Gravity.CENTER);
+    closeBtn.setContentDescription("关闭添加照片面板");
+    closeBtn.setClickable(true);
+    closeBtn.setFocusable(true);
+    closeBtn.setOnClickListener(v -> closeAddPopup());
+    popupHeader.addView(closeBtn, new LayoutParams(dp(34), dp(34)));
+    panel.addView(popupHeader, new LayoutParams(-1, -2));
+
+    ScrollView scroll = new ScrollView(activity);
+    scroll.setVerticalScrollBarEnabled(false);
+    LinearLayout content = new LinearLayout(activity);
+    content.setOrientation(VERTICAL);
+    content.setPadding(0, dp(4), 0, dp(10));
+    scroll.addView(content);
+    FrameLayout scrollWrap =
+        AppStyle.wrapScrollFade(activity, scroll, AppStyle.SURFACE, 20, 20, false);
+
+    final Set<String> tableIds = new HashSet<>();
+    for (TablePhoto photo : table) tableIds.add(photo.source.id);
+    final Set<String> chosen = new HashSet<>();
+    final List<SourcePhoto> visible = sources.size() > 30 ? sources.subList(0, 30) : sources;
+    final List<Runnable> pendingThumbLoads = new ArrayList<>();
+
+    final TextView confirm = button("添加", AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
+    confirm.setTextSize(AppStyle.TYPE_LABEL);
+    AppStyle.setTypeface(confirm, AppStyle.FONT_BOLD);
+    confirm.setMinHeight(dp(42));
+    confirm.setEnabled(false);
+
+    if (visible.isEmpty()) {
+      TextView empty = text("还没有导入照片", AppStyle.TYPE_BODY, AppStyle.MUTED);
+      empty.setGravity(Gravity.CENTER);
+      content.addView(empty, new LayoutParams(-1, dp(160)));
+    } else {
+      LinearLayout row = null;
+      for (int i = 0; i < visible.size(); i++) {
+        if (i % 2 == 0) {
+          row = new LinearLayout(activity);
+          row.setGravity(Gravity.TOP);
+          row.setWeightSum(2f);
+          content.addView(row, new LayoutParams(-1, -2));
+        }
+        SourcePhoto source = visible.get(i);
+        boolean already = tableIds.contains(source.id);
+        LinearLayout cell = new LinearLayout(activity);
+        cell.setOrientation(VERTICAL);
+        cell.setBackground(AppStyle.shape(activity, AppStyle.SURFACE, AppStyle.R_SMALL, false));
+        GradientDrawable cardBorder = new GradientDrawable();
+        cardBorder.setShape(GradientDrawable.RECTANGLE);
+        cardBorder.setColor(Color.TRANSPARENT);
+        cardBorder.setCornerRadius(dp(AppStyle.R_SMALL));
+        cardBorder.setStroke(Math.max(1, dp(.75f)), AppStyle.OUTLINE);
+        cell.setForeground(cardBorder);
+        cell.setClipToOutline(true);
+
+        FrameLayout frame = new FrameLayout(activity);
+        frame.setBackgroundColor(AppStyle.CONTROL);
+        ImageView image = new ImageView(activity);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        image.setBackgroundColor(AppStyle.CONTROL);
+        frame.addView(image, new FrameLayout.LayoutParams(-1, -1));
+        final String thumbKey = thumbCacheKey(source);
+        image.setTag(thumbKey);
+        Bitmap cachedThumb = thumbCache.get(thumbKey);
+        if (cachedThumb != null && !cachedThumb.isRecycled()) {
+          image.setImageBitmap(cachedThumb);
+        } else {
+          pendingThumbLoads.add(() -> loadThumbForPopup(source, thumbKey, image, gen));
+        }
+
+        final ImageView check;
+        if (already) {
+          check = null;
+          TextView badge = text("已添加", 9, AppStyle.NOTICE_INK);
+          AppStyle.setTypeface(badge, AppStyle.FONT_SEMIBOLD);
+          badge.setGravity(Gravity.CENTER);
+          badge.setPadding(dp(5), dp(2), dp(5), dp(2));
+          badge.setBackground(AppStyle.shape(activity, AppStyle.NOTICE_BG, 5f, false));
+          FrameLayout.LayoutParams badgeLp =
+              new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
+          badgeLp.topMargin = dp(5);
+          badgeLp.rightMargin = dp(5);
+          frame.addView(badge, badgeLp);
+        } else {
+          check = new ImageView(activity);
+          check.setImageResource(R.drawable.ic_material_check);
+          check.setImageTintList(ColorStateList.valueOf(AppStyle.ON_ACCENT));
+          check.setPadding(dp(3), dp(3), dp(3), dp(3));
+          styleAddPickBadge(check, false);
+          FrameLayout.LayoutParams checkLp =
+              new FrameLayout.LayoutParams(dp(20), dp(20), Gravity.TOP | Gravity.END);
+          checkLp.topMargin = dp(5);
+          checkLp.rightMargin = dp(5);
+          frame.addView(check, checkLp);
+        }
+        cell.addView(frame, new LayoutParams(-1, dp(78)));
+
+        TextView name = text(PhotoLabels.title(source.name), AppStyle.TYPE_MICRO, AppStyle.INK);
+        AppStyle.setTypeface(name, AppStyle.FONT_MEDIUM);
+        name.setSingleLine(true);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        name.setPadding(dp(6), dp(5), dp(6), dp(6));
+        cell.addView(name, new LayoutParams(-1, -2));
+
+        cell.setAlpha(already ? .55f : 1f);
+        cell.setContentDescription(PhotoLabels.title(source.name) + (already ? "，已添加" : ""));
+        cell.setClickable(!already);
+        cell.setOnClickListener(
+            v -> {
+              boolean picked;
+              if (chosen.remove(source.id)) {
+                picked = false;
+              } else {
+                chosen.add(source.id);
+                picked = true;
+              }
+              cardBorder.setStroke(
+                  Math.max(1, dp(picked ? 2f : .75f)),
+                  picked ? AppStyle.GOLD : AppStyle.OUTLINE);
+              if (check != null) styleAddPickBadge(check, picked);
+              confirm.setText(chosen.isEmpty() ? "添加" : "添加 · " + chosen.size() + " 张");
+              confirm.setEnabled(!chosen.isEmpty());
+            });
+        LinearLayout.LayoutParams cellParams = new LinearLayout.LayoutParams(0, -2, 1);
+        cellParams.bottomMargin = dp(8);
+        if (i % 2 == 0) cellParams.rightMargin = dp(4);
+        else cellParams.leftMargin = dp(4);
+        row.addView(cell, cellParams);
+      }
+      if (visible.size() % 2 == 1 && row != null) {
+        LinearLayout.LayoutParams spacerParams = new LinearLayout.LayoutParams(0, 1, 1);
+        spacerParams.leftMargin = dp(4);
+        row.addView(new View(activity), spacerParams);
+      }
+    }
+    panel.addView(scrollWrap, new LayoutParams(-1, 0, 1));
+
+    LinearLayout actions = new LinearLayout(activity);
+    actions.setOrientation(HORIZONTAL);
+    actions.setGravity(Gravity.CENTER_VERTICAL);
+    actions.setPadding(0, dp(8), 0, 0);
+    TextView cancel = button("取消", AppStyle.INK, AppStyle.CONTROL);
+    cancel.setTextSize(AppStyle.TYPE_LABEL);
+    cancel.setMinHeight(dp(42));
+    cancel.setOnClickListener(v -> closeAddPopup());
+    confirm.setOnClickListener(
+        v -> {
+          List<SourcePhoto> picked = new ArrayList<>();
+          for (SourcePhoto source : visible) {
+            if (chosen.contains(source.id)) picked.add(source);
+          }
+          addPhotos(picked);
+          closeAddPopup();
+        });
+    actions.addView(cancel, new LayoutParams(0, dp(42), 1));
+    LayoutParams confirmLp = new LayoutParams(0, dp(42), 1);
+    confirmLp.leftMargin = dp(8);
+    actions.addView(confirm, confirmLp);
+    panel.addView(actions, new LayoutParams(-1, -2));
+
+    addPopupView = panel;
+    attachAddPopupForWidth(widthDp);
+    if (headerAddButton != null) {
+      headerAddButton.setImageTintList(ColorStateList.valueOf(AppStyle.GOLD));
+      GradientDrawable activeBg = AppStyle.shape(activity, AppStyle.ACCENT_SOFT, 9f, false);
+      activeBg.setStroke(Math.max(1, dp(.85f)), AppStyle.GOLD);
+      headerAddButton.setBackground(
+          new RippleDrawable(
+              ColorStateList.valueOf(AppStyle.RIPPLE),
+              activeBg,
+              AppStyle.shape(activity, Color.WHITE, 9f, false)));
+    }
+    for (Runnable task : pendingThumbLoads) task.run();
+  }
+
+  private void loadThumbForPopup(
+      SourcePhoto source, String key, ImageView image, int expectedGen) {
+    thumbExecutor.execute(
+        () -> {
+          if (released || addPopupGen.get() != expectedGen) return;
+          Bitmap result = cachedThumb(source, key);
+          if (result == null) return;
+          main.post(
+              () -> {
+                if (released || addPopupGen.get() != expectedGen) return;
+                if (!key.equals(image.getTag())) return;
+                if (!result.isRecycled()) image.setImageBitmap(result);
+              });
+        });
+  }
+
+  private void showAddPhotosDialog() {
     if (addSheet != null && addSheet.isShowing()) return;
     Dialog dialog = new Dialog(activity);
     dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -1580,8 +1986,16 @@ final class LightTablePage extends LinearLayout {
           : PosterTheme.LIGHT
     };
     final boolean[] footerState = {prefs.getBoolean(PREF_EXPORT_FOOTER, true)};
+    final boolean exportLandscape = landscapeMode;
     final Bitmap[] previewHolder = new Bitmap[1];
     final boolean[] exporting = {false};
+    final int screenW = activity.getResources().getDisplayMetrics().widthPixels;
+    final int exportWidthDp = FoldableUi.windowWidthDp(activity);
+    final int exportMaxDp = FoldableLayout.lightTableExportSheetMaxDp(exportWidthDp);
+    final int targetSheetW =
+        exportMaxDp > 0
+            ? FoldableUi.constrainedWidthPx(activity, screenW, exportMaxDp, 0)
+            : ViewGroup.LayoutParams.MATCH_PARENT;
 
     LinearLayout sheet = new LinearLayout(activity);
     sheet.setOrientation(VERTICAL);
@@ -1615,8 +2029,17 @@ final class LightTablePage extends LinearLayout {
     previewWell.setClipChildren(false);
 
     int screenH = activity.getResources().getDisplayMetrics().heightPixels;
-    int previewH = Math.min(dp(276), Math.max(dp(176), Math.round(screenH * .32f)));
-    int previewW = Math.round(previewH * (2f / 3f));
+    int previewH;
+    int previewW;
+    if (exportLandscape) {
+      int sheetApproxW = targetSheetW > 0 ? targetSheetW : screenW;
+      int maxPreviewW = Math.min(dp(360), Math.max(dp(220), sheetApproxW - dp(72)));
+      previewH = Math.min(dp(220), Math.max(dp(146), Math.round(maxPreviewW * (2f / 3f))));
+      previewW = Math.round(previewH * 1.5f);
+    } else {
+      previewH = Math.min(dp(276), Math.max(dp(176), Math.round(screenH * .32f)));
+      previewW = Math.round(previewH * (2f / 3f));
+    }
     final ImageView previewImage = new ImageView(activity);
     previewImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
     previewImage.setContentDescription("观片台导出预览");
@@ -1730,7 +2153,8 @@ final class LightTablePage extends LinearLayout {
           darkOption.setTextColor(!isLight ? AppStyle.INK : AppStyle.MUTED);
           AppStyle.setTypeface(darkOption, !isLight ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_MEDIUM);
 
-          metaLabel.setText(footerState[0] ? "1600 × 2400 · JPEG" : "1600 × 2400 · 仅灯箱");
+          String dimLabel = exportLandscape ? "2400 × 1600" : "1600 × 2400";
+          metaLabel.setText(footerState[0] ? (dimLabel + " · JPEG") : (dimLabel + " · 仅灯箱"));
 
           final int gen = exportPreviewGen.incrementAndGet();
           final PosterTheme selectedTheme = themeState[0];
@@ -1741,7 +2165,12 @@ final class LightTablePage extends LinearLayout {
                 if (released || exportPreviewGen.get() != gen) return;
                 Bitmap preview =
                     canvas.renderPosterBitmap(
-                        PREVIEW_POSTER_EDGE, selectedTheme, selectedFooter, snapshot, gen);
+                        PREVIEW_POSTER_EDGE,
+                        exportLandscape,
+                        selectedTheme,
+                        selectedFooter,
+                        snapshot,
+                        gen);
                 if (preview == null) return;
                 main.post(
                     () -> {
@@ -1797,6 +2226,7 @@ final class LightTablePage extends LinearLayout {
           darkOption.setEnabled(false);
           footerSwitch.setEnabled(false);
           saveExportedPoster(
+              exportLandscape,
               themeState[0],
               footerState[0],
               snapshotPieces(),
@@ -1832,11 +2262,11 @@ final class LightTablePage extends LinearLayout {
     dialog.show();
     if (window != null) {
       int maxHeight = Math.round(screenH * .88f);
-      window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+      window.setLayout(targetSheetW, ViewGroup.LayoutParams.WRAP_CONTENT);
       sheet.post(
           () -> {
             if (dialog.isShowing() && sheet.getHeight() > maxHeight) {
-              window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, maxHeight);
+              window.setLayout(targetSheetW, maxHeight);
             }
           });
     }
@@ -1845,6 +2275,7 @@ final class LightTablePage extends LinearLayout {
   }
 
   private void saveExportedPoster(
+      boolean exportLandscape,
       PosterTheme theme,
       boolean showFooter,
       List<RenderPiece> pieces,
@@ -1878,7 +2309,9 @@ final class LightTablePage extends LinearLayout {
                   piece.source, decoded, piece.placeholder,
                   piece.x, piece.y, piece.scale, piece.rotation));
             }
-            bitmap = canvas.renderPosterBitmap(EXPORT_POSTER_EDGE, theme, showFooter, exportPieces, -1);
+            bitmap =
+                canvas.renderPosterBitmap(
+                    EXPORT_POSTER_EDGE, exportLandscape, theme, showFooter, exportPieces, -1);
           } finally {
             for (Bitmap temp : tempBitmaps) Bitmaps.release(temp);
           }
@@ -2016,6 +2449,10 @@ final class LightTablePage extends LinearLayout {
       exportSheet.dismiss();
       return;
     }
+    if (addPopupView != null) {
+      closeAddPopup();
+      return;
+    }
     if (addSheet != null && addSheet.isShowing()) {
       addSheet.dismiss();
       return;
@@ -2080,7 +2517,8 @@ final class LightTablePage extends LinearLayout {
     if (released || !isShown()) return;
     if (!prefs.getBoolean(SettingsPage.PREF_SHAKE_ARRANGE, SettingsPage.DEFAULT_SHAKE_ARRANGE))
       return;
-    if ((addSheet != null && addSheet.isShowing())
+    if (addPopupView != null
+        || (addSheet != null && addSheet.isShowing())
         || (exportSheet != null && exportSheet.isShowing()))
       return;
     if (table.isEmpty()) return;
@@ -2173,6 +2611,7 @@ final class LightTablePage extends LinearLayout {
     }
     updateShakeListening(false);
     exportPreviewGen.incrementAndGet();
+    closeAddPopup();
     io.shutdownNow();
     thumbExecutor.shutdownNow();
     bakeExecutor.shutdownNow();
@@ -2240,17 +2679,31 @@ final class LightTablePage extends LinearLayout {
    * glass loupe overlays off the UI thread so dragging and 3x inspection stay at 60–120fps.
    */
   final class LightTableView extends View {
-    // Physical lightbox geometry in millimetres (matches SpektraLab portrait 2:3 optical bench).
-    private static final float HALF_W_MM = 70.0f;
-    private static final float HALF_H_MM = 105.0f;
+    // Physical lightbox geometry in millimetres (portrait 2:3 = 140×210mm; foldable landscape 3:2 = 210×140mm).
+    private static final float HALF_SHORT_MM = 70.0f;
+    private static final float HALF_LONG_MM = 105.0f;
     private static final float FRAME_W_MM = 4.4f;
     private static final float INNER_R_MM = 4.2f;
     private static final float OUTER_R_MM = INNER_R_MM + FRAME_W_MM;
-    private static final float OUT_W_MM = HALF_W_MM + FRAME_W_MM;
-    private static final float OUT_H_MM = HALF_H_MM + FRAME_W_MM;
     private static final float SPILL_MM = 14.0f;
     private static final float LOUPE_RIM_ZOOM = 1.80f;
     private static final float LOUPE_CORE_ZOOM = 2.85f;
+
+    private float halfWMm(boolean landscape) {
+      return landscape ? HALF_LONG_MM : HALF_SHORT_MM;
+    }
+
+    private float halfHMm(boolean landscape) {
+      return landscape ? HALF_SHORT_MM : HALF_LONG_MM;
+    }
+
+    private float outWMm(boolean landscape) {
+      return halfWMm(landscape) + FRAME_W_MM;
+    }
+
+    private float outHMm(boolean landscape) {
+      return halfHMm(landscape) + FRAME_W_MM;
+    }
 
     // Normalized Gaussian spread radii for hardware/software-identical layered soft drop shadows.
     private static final float[] SOFT_SHADOW_SPREAD = {
@@ -2362,6 +2815,20 @@ final class LightTablePage extends LinearLayout {
       if (magnifier && showLens) showLensAtSelected();
     }
 
+    void recomputeAndRebake() {
+      int w = getWidth(), h = getHeight();
+      if (w <= 0 || h <= 0) {
+        invalidate();
+        return;
+      }
+      finishSnapBackImmediately();
+      computeGeometry(w, h);
+      clampAllInPlace();
+      schedulePrebake();
+      if (magnifier && showLens) showLensAtSelected();
+      invalidate();
+    }
+
     float lightLevel() {
       return lightLevel;
     }
@@ -2408,12 +2875,17 @@ final class LightTablePage extends LinearLayout {
     }
 
     private void computeGeometry(int w, int h) {
+      boolean land = landscapeMode;
+      float halfW = halfWMm(land);
+      float halfH = halfHMm(land);
+      float outW = outWMm(land);
+      float outH = outHMm(land);
       float topPad = dp(8);
       float bottomReserve = dp(134);
       float availW = Math.max(1f, w - dp(28));
       float availH = Math.max(1f, h - topPad - bottomReserve);
-      float outerWmm = OUT_W_MM * 2f;
-      float outerHmm = OUT_H_MM * 2f;
+      float outerWmm = outW * 2f;
+      float outerHmm = outH * 2f;
       ppm = Math.min(availW / outerWmm, availH / outerHmm);
 
       float outerW = outerWmm * ppm;
@@ -2426,8 +2898,8 @@ final class LightTablePage extends LinearLayout {
           boxCy - outerH * .5f,
           boxCx + outerW * .5f,
           boxCy + outerH * .5f);
-      float litW = HALF_W_MM * 2f * ppm;
-      float litH = HALF_H_MM * 2f * ppm;
+      float litW = halfW * 2f * ppm;
+      float litH = halfH * 2f * ppm;
       diffuserRect.set(
           boxCx - litW * .5f,
           boxCy - litH * .5f,
@@ -2441,7 +2913,8 @@ final class LightTablePage extends LinearLayout {
           boxOuterRect.right + spillPx,
           boxOuterRect.bottom + spillPx);
 
-      loupeLensR = clamp(outerW * .175f, dp(52), dp(66));
+      float shortOuter = Math.min(outerW, outerH);
+      loupeLensR = clamp(shortOuter * .175f, dp(52), dp(66));
       loupeRimW = Math.max(dp(6), loupeLensR * .13f);
       loupeTotalR = loupeLensR + loupeRimW;
       loupeBmpHalf = (float) Math.ceil(loupeTotalR + dp(22));
@@ -2451,6 +2924,7 @@ final class LightTablePage extends LinearLayout {
     private void schedulePrebake() {
       if (ppm <= 0f || released) return;
       final int gen = bakeGeneration.incrementAndGet();
+      final boolean bakeLandscape = landscapeMode;
       final int bmpW = Math.max(1, Math.round(backdropDestRect.width()));
       final int bmpH = Math.max(1, Math.round(backdropDestRect.height()));
       final float localCx = bmpW * .5f;
@@ -2470,7 +2944,16 @@ final class LightTablePage extends LinearLayout {
             if (released || bakeGeneration.get() != gen) return;
             Bitmap bakedBackdrop =
                 bakeLightboxBackdrop(
-                    bmpW, bmpH, localCx, localCy, bakePpm, SPILL_MM, true, rulerFont, gen);
+                    bmpW,
+                    bmpH,
+                    localCx,
+                    localCy,
+                    bakePpm,
+                    SPILL_MM,
+                    bakeLandscape,
+                    true,
+                    rulerFont,
+                    gen);
             if (bakedBackdrop == null || released || bakeGeneration.get() != gen) {
               if (bakedBackdrop != null) bakedBackdrop.recycle();
               return;
@@ -2668,13 +3151,20 @@ final class LightTablePage extends LinearLayout {
         Bitmap safeBitmap = bitmap != null && !bitmap.isRecycled() ? bitmap : null;
         float hw = width * .5f, hh = height * .5f;
         boolean transmits = safeBitmap != null && safeBitmap.hasAlpha();
+        // The larger foldable table needs a tighter, lighter shadow than the Compact table.
+        boolean wideTable = LightTableView.this.getWidth() > dp(560);
+        float shadowScale = wideTable ? .78f : 1f;
+        float shadowOpacity = wideTable ? .45f : 1f;
         shadow(c, cx, cy, rotation, hw, hh, transmits,
-            dp(lifted ? 3.25f : 1.1f) * scale, dp(lifted ? 7f : 2.4f) * scale,
-            dp(lifted ? 14f : 5.5f) * scale, lifted ? 0x20160c : 0x1c140c,
-            lifted ? .30f : .22f, SOFT_SHADOW_SPREAD);
+            dp(lifted ? 3.25f : 1.1f) * scale * shadowScale,
+            dp(lifted ? 7f : 2.4f) * scale * shadowScale,
+            dp(lifted ? 14f : 5.5f) * scale * shadowScale,
+            lifted ? 0x20160c : 0x1c140c,
+            (lifted ? .30f : .22f) * shadowOpacity, SOFT_SHADOW_SPREAD);
         shadow(c, cx, cy, rotation, hw, hh, transmits, dp(.2f) * scale, dp(.5f) * scale,
-            dp(lifted ? 2.25f : 1.1f) * scale, lifted ? 0x1a120a : 0x18110a,
-            lifted ? .24f : .34f, CONTACT_SHADOW_SPREAD);
+            dp(lifted ? 2.25f : 1.1f) * scale * shadowScale,
+            lifted ? 0x1a120a : 0x18110a,
+            (lifted ? .24f : .34f) * shadowOpacity, CONTACT_SHADOW_SPREAD);
 
         c.save();
         c.translate(cx, cy);
@@ -2730,13 +3220,14 @@ final class LightTablePage extends LinearLayout {
     }
 
     private void sizeOfBitmap(Bitmap bmp, float cw, float ch, float[] out) {
-      float width = cw * .52f;
+      boolean wide = cw > ch;
+      float width = cw * (wide ? .36f : .52f);
       float ratio =
           bmp == null || bmp.isRecycled() || bmp.getWidth() == 0
               ? .75f
               : bmp.getHeight() / (float) bmp.getWidth();
       float height = width * ratio;
-      float maxHeight = ch * .40f;
+      float maxHeight = ch * (wide ? .52f : .40f);
       if (height > maxHeight) {
         height = maxHeight;
         width = height / ratio;
@@ -2962,8 +3453,8 @@ final class LightTablePage extends LinearLayout {
         outCwCh[0] = Math.max(1f, diffuserRect.width() - pad * 2f);
         outCwCh[1] = Math.max(1f, diffuserRect.height() - pad * 2f);
       } else {
-        outCwCh[0] = HALF_W_MM * 2f;
-        outCwCh[1] = HALF_H_MM * 2f;
+        outCwCh[0] = halfWMm(landscapeMode) * 2f;
+        outCwCh[1] = halfHMm(landscapeMode) * 2f;
       }
     }
 
@@ -3125,41 +3616,48 @@ final class LightTablePage extends LinearLayout {
     }
 
     Bitmap renderToBitmap(int maxEdge) {
-      return renderPosterBitmap(maxEdge, PosterTheme.DARK, false, snapshotPieces(), -1);
+      return renderPosterBitmap(maxEdge, landscapeMode, PosterTheme.DARK, false, snapshotPieces(), -1);
     }
 
     /**
-     * Thread-safe vertical 2:3 brand poster & pure-lightbox renderer. Runs cleanly on background
-     * threads for both 420×630 confirmation previews and 1600×2400 full JPEG exports without
+     * Thread-safe 2:3 / 3:2 brand poster & pure-lightbox renderer. Runs cleanly on background
+     * threads for both confirmation previews and full 1600×2400 / 2400×1600 JPEG exports without
      * mutating UI-thread draw scratch buffers.
      */
     Bitmap renderPosterBitmap(
-        int outH,
+        int longEdge,
+        boolean landscape,
         PosterTheme theme,
         boolean showFooter,
         List<RenderPiece> pieces,
         int expectedPreviewGen) {
-      if (outH <= 0) return null;
-      int outW = Math.max(1, Math.round(outH * (2f / 3f)));
+      if (longEdge <= 0) return null;
+      int outW = landscape ? longEdge : Math.max(1, Math.round(longEdge * (2f / 3f)));
+      int outH = landscape ? Math.max(1, Math.round(longEdge * (2f / 3f))) : longEdge;
+      float halfW = halfWMm(landscape);
+      float halfH = halfHMm(landscape);
+      float outWMmVal = outWMm(landscape);
+      float outHMmVal = outHMm(landscape);
       boolean isDark = theme == PosterTheme.DARK;
 
-      float marginX = outW * .056f;
-      float marginTop = outW * .056f;
-      float footerBandH = showFooter ? outH * .122f : outW * .056f;
+      float baseDim = Math.min(outW, outH);
+      float marginX = baseDim * .056f;
+      float marginTop = baseDim * .056f;
+      float footerBandH = showFooter ? outH * (landscape ? .145f : .122f) : baseDim * .056f;
       float availW = outW - marginX * 2f;
       float availH = outH - marginTop - footerBandH;
-      float exportPpm = Math.min(availW / (2f * OUT_W_MM), availH / (2f * OUT_H_MM));
+      float exportPpm = Math.min(availW / (2f * outWMmVal), availH / (2f * outHMmVal));
       if (exportPpm <= 0f) return null;
 
-      float boxOuterW = 2f * OUT_W_MM * exportPpm;
-      float boxOuterH = 2f * OUT_H_MM * exportPpm;
+      float boxOuterW = 2f * outWMmVal * exportPpm;
+      float boxOuterH = 2f * outHMmVal * exportPpm;
       float exportCx = outW * .5f;
       float exportCy =
           showFooter
               ? (marginTop + boxOuterH * .5f + (availH - boxOuterH) * .42f)
               : (outH * .5f);
 
-      int bakeScaleDiv = outH >= 1200 ? 2 : 1;
+      int bakeScaleDiv = longEdge >= 1200 ? 2 : 1;
       int bakeW = Math.max(1, outW / bakeScaleDiv);
       int bakeH = Math.max(1, outH / bakeScaleDiv);
       float invDiv = 1f / bakeScaleDiv;
@@ -3170,6 +3668,7 @@ final class LightTablePage extends LinearLayout {
               exportCx * invDiv,
               exportCy * invDiv,
               exportPpm * invDiv,
+              landscape,
               isDark,
               expectedPreviewGen);
       if (exportBackdrop == null) return null;
@@ -3182,10 +3681,10 @@ final class LightTablePage extends LinearLayout {
 
       RectF exportLit =
           new RectF(
-              exportCx - HALF_W_MM * exportPpm,
-              exportCy - HALF_H_MM * exportPpm,
-              exportCx + HALF_W_MM * exportPpm,
-              exportCy + HALF_H_MM * exportPpm);
+              exportCx - halfW * exportPpm,
+              exportCy - halfH * exportPpm,
+              exportCx + halfW * exportPpm,
+              exportCy + halfH * exportPpm);
       drawEtchedRuler(
           c,
           exportLit.left,
@@ -3194,6 +3693,8 @@ final class LightTablePage extends LinearLayout {
           exportLit.height(),
           INNER_R_MM * exportPpm,
           exportPpm,
+          halfW,
+          halfH,
           rulerFont);
 
       float refPpm = ppm > 0f ? ppm : (dp(1) * 1.5f);
@@ -3269,7 +3770,8 @@ final class LightTablePage extends LinearLayout {
         Paint localShadowPaint,
         RectF localRect) {
       float footCenterY = boxBottom + (h - boxBottom) * .50f;
-      float iconSize = Math.round(w * .088f);
+      float s = Math.min(w, h);
+      float iconSize = Math.round(s * .088f);
       float iconX = boxLeft;
       float iconY = Math.round(footCenterY - iconSize * .5f);
       float iconRadius = iconSize * .22f;
@@ -3305,25 +3807,25 @@ final class LightTablePage extends LinearLayout {
         Paint border = new Paint(Paint.ANTI_ALIAS_FLAG);
         border.setStyle(Paint.Style.STROKE);
         border.setColor(0x24ffffff);
-        border.setStrokeWidth(Math.max(1f, w * .0014f));
+        border.setStrokeWidth(Math.max(1f, s * .0014f));
         c.drawRoundRect(localRect, iconRadius, iconRadius, border);
       }
 
-      float textX = iconX + iconSize + w * .026f;
+      float textX = iconX + iconSize + s * .026f;
       Paint titlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
       titlePaint.setTypeface(AppStyle.typeface(activity, AppStyle.FONT_BOLD));
-      titlePaint.setTextSize(w * .036f);
+      titlePaint.setTextSize(s * .036f);
       titlePaint.setColor(isDark ? 0xfff5f2ee : 0xff18181b);
       titlePaint.setTextAlign(Paint.Align.LEFT);
       String brandName = activity.getString(R.string.app_name);
-      c.drawText(brandName, textX, footCenterY - w * .005f, titlePaint);
+      c.drawText(brandName, textX, footCenterY - s * .005f, titlePaint);
 
       Paint subPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
       subPaint.setTypeface(AppStyle.typeface(activity, AppStyle.FONT_REGULAR));
-      subPaint.setTextSize(w * .0205f);
+      subPaint.setTextSize(s * .0205f);
       subPaint.setColor(isDark ? 0xff98909a : 0xff6a6a72);
       subPaint.setTextAlign(Paint.Align.LEFT);
-      c.drawText(POSTER_SLOGAN, textX, footCenterY + w * .026f, subPaint);
+      c.drawText(POSTER_SLOGAN, textX, footCenterY + s * .026f, subPaint);
 
       float leftBlockRight =
           textX + Math.max(titlePaint.measureText(brandName), subPaint.measureText(POSTER_SLOGAN));
@@ -3338,31 +3840,31 @@ final class LightTablePage extends LinearLayout {
       String dateText = new SimpleDateFormat("yyyy.MM.dd", Locale.ROOT).format(new Date());
       String botMeta = formatFrameSummary(dateText, frameCount);
 
-      float maxRightWidth = Math.max(w * .22f, boxRight - leftBlockRight - w * .03f);
+      float maxRightWidth = Math.max(s * .22f, boxRight - leftBlockRight - s * .03f);
 
       Paint metaTopPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
       metaTopPaint.setTypeface(AppStyle.typeface(activity, AppStyle.FONT_SEMIBOLD));
       metaTopPaint.setFontFeatureSettings("tnum");
-      metaTopPaint.setTextSize(w * .0225f);
+      metaTopPaint.setTextSize(s * .0225f);
       metaTopPaint.setColor(isDark ? AppStyle.GOLD : 0xff26262b);
       metaTopPaint.setTextAlign(Paint.Align.RIGHT);
       float topMeasured = metaTopPaint.measureText(topMeta);
       if (topMeasured > maxRightWidth && topMeasured > 0f) {
         metaTopPaint.setTextSize(metaTopPaint.getTextSize() * (maxRightWidth / topMeasured));
       }
-      c.drawText(topMeta, boxRight, footCenterY - w * .005f, metaTopPaint);
+      c.drawText(topMeta, boxRight, footCenterY - s * .005f, metaTopPaint);
 
       Paint metaBotPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
       metaBotPaint.setTypeface(AppStyle.typeface(activity, AppStyle.FONT_MEDIUM));
       metaBotPaint.setFontFeatureSettings("tnum");
-      metaBotPaint.setTextSize(w * .0185f);
+      metaBotPaint.setTextSize(s * .0185f);
       metaBotPaint.setColor(isDark ? 0xff8b838e : 0xff7a7a84);
       metaBotPaint.setTextAlign(Paint.Align.RIGHT);
       float botMeasured = metaBotPaint.measureText(botMeta);
       if (botMeasured > maxRightWidth && botMeasured > 0f) {
         metaBotPaint.setTextSize(metaBotPaint.getTextSize() * (maxRightWidth / botMeasured));
       }
-      c.drawText(botMeta, boxRight, footCenterY + w * .025f, metaBotPaint);
+      c.drawText(botMeta, boxRight, footCenterY + s * .025f, metaBotPaint);
     }
 
     private Bitmap bakePosterBackdrop(
@@ -3371,8 +3873,13 @@ final class LightTablePage extends LinearLayout {
         float cx,
         float cy,
         float scalePpm,
+        boolean landscape,
         boolean isDark,
         int expectedPreviewGen) {
+      float halfW = halfWMm(landscape);
+      float halfH = halfHMm(landscape);
+      float outW = outWMm(landscape);
+      float outH = outHMm(landscape);
       int[] pixels = new int[width * height];
       float invPpm = 1f / scalePpm;
       float pxMm = invPpm;
@@ -3400,7 +3907,7 @@ final class LightTablePage extends LinearLayout {
         for (int x = 0; x < width; x++) {
           float px = (x + .5f - cx) * invPpm;
           float absPx = Math.abs(px);
-          float dIn = sdRoundBoxAbs(absPx, absPy, HALF_W_MM, HALF_H_MM, INNER_R_MM);
+          float dIn = sdRoundBoxAbs(absPx, absPy, halfW, halfH, INNER_R_MM);
 
           float r, g, b;
           if (dIn < -pxMm) {
@@ -3408,7 +3915,7 @@ final class LightTablePage extends LinearLayout {
             float fall = smoothstep(0f, 34f, inset);
             float lipShadow = inset < 8f ? (1f - .105f * (float) Math.exp(-inset / .72f)) : 1f;
             float edgeFall = mix(.928f, 1.0f, (float) Math.pow(fall, .68f));
-            float nx = px / HALF_W_MM, ny = py / HALF_H_MM;
+            float nx = px / halfW, ny = py / halfH;
             float centerDome = 1.0f - .026f * (nx * nx + ny * ny);
             float lum = edgeFall * lipShadow * centerDome;
             float grain = (vnoise(px * 4.5f, py * 4.5f) - .5f) * .015f;
@@ -3416,7 +3923,7 @@ final class LightTablePage extends LinearLayout {
             g = clamp(mix(.964f, .996f, fall) * lum + grain, 0f, 1f);
             b = clamp(mix(.926f, .988f, fall) * lum + grain, 0f, 1f);
           } else {
-            float dOut = sdRoundBoxAbs(absPx, absPy, OUT_W_MM, OUT_H_MM, OUTER_R_MM);
+            float dOut = sdRoundBoxAbs(absPx, absPy, outW, outH, OUTER_R_MM);
             r = deskR;
             g = deskG;
             b = deskB;
@@ -3424,8 +3931,8 @@ final class LightTablePage extends LinearLayout {
             // Uniform light anodised aluminium bezel (no outer halo/shadow, no directional light gradient).
             if (dOut < pxMm && dIn > -pxMm) {
               float u = clamp(-dOut / FRAME_W_MM, 0f, 1f);
-              float qx = absPx - OUT_W_MM + OUTER_R_MM;
-              float qy = absPy - OUT_H_MM + OUTER_R_MM;
+              float qx = absPx - outW + OUTER_R_MM;
+              float qy = absPy - outH + OUTER_R_MM;
               float gx, gy;
               if (qx > 0f || qy > 0f) {
                 float mx = (qx > 0f ? qx : 0f) + 1e-5f;
@@ -3475,7 +3982,7 @@ final class LightTablePage extends LinearLayout {
               float fall = smoothstep(0f, 34f, inset);
               float lipShadow = 1f - .105f * (float) Math.exp(-inset / .72f);
               float edgeFall = mix(.928f, 1.0f, (float) Math.pow(fall, .68f));
-              float nx = px / HALF_W_MM, ny = py / HALF_H_MM;
+              float nx = px / halfW, ny = py / halfH;
               float centerDome = 1.0f - .026f * (nx * nx + ny * ny);
               float lum = edgeFall * lipShadow * centerDome;
               float grain = (vnoise(px * 4.5f, py * 4.5f) - .5f) * .015f;
@@ -3536,9 +4043,14 @@ final class LightTablePage extends LinearLayout {
         float cy,
         float scalePpm,
         float spillMm,
+        boolean landscape,
         boolean includeRuler,
         Typeface font,
         int expectedGen) {
+      float halfW = halfWMm(landscape);
+      float halfH = halfHMm(landscape);
+      float outW = outWMm(landscape);
+      float outH = outHMm(landscape);
       int[] pixels = new int[width * height];
       float invPpm = 1f / scalePpm;
       float pxMm = invPpm;
@@ -3553,7 +4065,7 @@ final class LightTablePage extends LinearLayout {
         for (int x = 0; x < width; x++) {
           float px = (x + .5f - cx) * invPpm;
           float absPx = Math.abs(px);
-          float dIn = sdRoundBoxAbs(absPx, absPy, HALF_W_MM, HALF_H_MM, INNER_R_MM);
+          float dIn = sdRoundBoxAbs(absPx, absPy, halfW, halfH, INNER_R_MM);
 
           float r, g, b;
           if (dIn < -pxMm) {
@@ -3562,7 +4074,7 @@ final class LightTablePage extends LinearLayout {
             float fall = smoothstep(0f, 34f, inset);
             float lipShadow = inset < 8f ? (1f - .105f * (float) Math.exp(-inset / .72f)) : 1f;
             float edgeFall = mix(.928f, 1.0f, (float) Math.pow(fall, .68f));
-            float nx = px / HALF_W_MM, ny = py / HALF_H_MM;
+            float nx = px / halfW, ny = py / halfH;
             float centerDome = 1.0f - .026f * (nx * nx + ny * ny);
             float lum = edgeFall * lipShadow * centerDome;
             float grain =
@@ -3571,7 +4083,7 @@ final class LightTablePage extends LinearLayout {
             g = clamp(mix(.964f, .996f, fall) * lum + grain, 0f, 1f);
             b = clamp(mix(.926f, .988f, fall) * lum + grain, 0f, 1f);
           } else {
-            float dOut = sdRoundBoxAbs(absPx, absPy, OUT_W_MM, OUT_H_MM, OUTER_R_MM);
+            float dOut = sdRoundBoxAbs(absPx, absPy, outW, outH, OUTER_R_MM);
             float baseR = Color.red(palette.pageBg) / 255f;
             float baseG = Color.green(palette.pageBg) / 255f;
             float baseB = Color.blue(palette.pageBg) / 255f;
@@ -3584,8 +4096,8 @@ final class LightTablePage extends LinearLayout {
             // Uniform light anodised aluminium chassis (no directional light gradient, dark & light unified).
             if (dOut < pxMm && dIn > -pxMm) {
               float u = clamp(-dOut / FRAME_W_MM, 0f, 1f);
-              float qx = absPx - OUT_W_MM + OUTER_R_MM;
-              float qy = absPy - OUT_H_MM + OUTER_R_MM;
+              float qx = absPx - outW + OUTER_R_MM;
+              float qy = absPy - outH + OUTER_R_MM;
               float gx, gy;
               if (qx > 0f || qy > 0f) {
                 float mx = (qx > 0f ? qx : 0f) + 1e-5f;
@@ -3638,7 +4150,7 @@ final class LightTablePage extends LinearLayout {
               float fall = smoothstep(0f, 34f, inset);
               float lipShadow = 1f - .105f * (float) Math.exp(-inset / .72f);
               float edgeFall = mix(.928f, 1.0f, (float) Math.pow(fall, .68f));
-              float nx = px / HALF_W_MM, ny = py / HALF_H_MM;
+              float nx = px / halfW, ny = py / halfH;
               float centerDome = 1.0f - .026f * (nx * nx + ny * ny);
               float lum = edgeFall * lipShadow * centerDome;
               float grain =
@@ -3666,16 +4178,18 @@ final class LightTablePage extends LinearLayout {
 
       if (includeRuler) {
         Canvas c = new Canvas(bmp);
-        float litLeft = cx - HALF_W_MM * scalePpm;
-        float litTop = cy - HALF_H_MM * scalePpm;
+        float litLeft = cx - halfW * scalePpm;
+        float litTop = cy - halfH * scalePpm;
         drawEtchedRuler(
             c,
             litLeft,
             litTop,
-            HALF_W_MM * 2f * scalePpm,
-            HALF_H_MM * 2f * scalePpm,
+            halfW * 2f * scalePpm,
+            halfH * 2f * scalePpm,
             INNER_R_MM * scalePpm,
             scalePpm,
+            halfW,
+            halfH,
             font);
       }
       return bmp;
@@ -3689,6 +4203,8 @@ final class LightTablePage extends LinearLayout {
         float litH,
         float litR,
         float scalePpm,
+        float halfW,
+        float halfH,
         Typeface font) {
       c.save();
       Path clip = new Path();
@@ -3701,8 +4217,8 @@ final class LightTablePage extends LinearLayout {
       tick.setStrokeCap(Paint.Cap.BUTT);
       tick.setXfermode(multiply);
 
-      int totalMmX = Math.round(HALF_W_MM * 2f);
-      int totalMmY = Math.round(HALF_H_MM * 2f);
+      int totalMmX = Math.round(halfW * 2f);
+      int totalMmY = Math.round(halfH * 2f);
 
       // Top edge 1 / 5 / 10 mm etched ticks.
       for (int mm = 5; mm <= totalMmX - 5; mm++) {
