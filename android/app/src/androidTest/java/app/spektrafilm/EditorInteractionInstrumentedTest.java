@@ -164,12 +164,15 @@ public final class EditorInteractionInstrumentedTest
 
   private void change(AdjustmentSeekBar bar) {
     time += ViewConfiguration.getDoubleTapTimeout() + 50;
-    float x =
+    float startX = bar.thumbCenterX();
+    float targetX =
         bar.getProgress() == bar.getMax()
             ? bar.getPaddingLeft()
             : bar.getWidth() - bar.getPaddingRight();
-    tap(bar, x);
-    bar.finishPendingTap();
+    float y = bar.getHeight() / 2f;
+    event(bar, MotionEvent.ACTION_DOWN, startX, y);
+    event(bar, MotionEvent.ACTION_MOVE, targetX, y);
+    event(bar, MotionEvent.ACTION_UP, targetX, y);
   }
 
   private void setting(String key, Object value) throws Exception {
@@ -259,7 +262,7 @@ public final class EditorInteractionInstrumentedTest
     main(
         () -> {
           int current = settings().getInt(seed);
-          doubleTap(bar(amount), bar(amount).getWidth() / 2f);
+          doubleTap(bar(amount), bar(amount).thumbCenterX());
           assertEquals(0, settings().getInt(amount));
           assertEquals(current, settings().getInt(seed));
         });
@@ -362,7 +365,7 @@ public final class EditorInteractionInstrumentedTest
         () -> {
           assertEquals(2, renderParameters().getDouble("grain_amount"), .00001);
           int undo = history("undoStack").size();
-          doubleTap(bar("grain_amount"), bar("grain_amount").getWidth() / 2f);
+          doubleTap(bar("grain_amount"), bar("grain_amount").thumbCenterX());
           assertEquals(1, settings().getDouble("grain_amount"), .00001);
           assertEquals(1.70, renderParameters().getDouble("grain_amount"), .00001);
           assertEquals(undo + 1, history("undoStack").size());
@@ -495,7 +498,7 @@ public final class EditorInteractionInstrumentedTest
                 assertTrue(key + " changed by native seeking",
                     Math.abs(settings().optDouble(key) - expected) > .00001);
                 int undo = history("undoStack").size(), revision = (Integer) get("revision");
-                doubleTap(bar, bar.getWidth() / 2f);
+                doubleTap(bar, bar.thumbCenterX());
                 assertEquals(key + " reset", expected, settings().optDouble(key), .00001);
                 assertEquals(key + " thumb", progress, bar.getProgress());
                 assertEquals(key + " one render", revision + 1, (int) (Integer) get("revision"));
@@ -503,7 +506,7 @@ public final class EditorInteractionInstrumentedTest
                     Math.min(30, undo + 1), history("undoStack").size());
                 int resetRevision = (Integer) get("revision");
                 String resetHistory = history("undoStack").toString();
-                doubleTap(bar, bar.getPaddingLeft());
+                doubleTap(bar, bar.thumbCenterX());
                 assertEquals(key + " no-op render", resetRevision, (int) (Integer) get("revision"));
                 assertEquals(key + " no-op undo", resetHistory, history("undoStack").toString());
                 checked.add(key);
@@ -527,9 +530,10 @@ public final class EditorInteractionInstrumentedTest
           String prior = settings().toString();
           int undo = history("undoStack").size();
           time += 1000;
-          tap(bar, bar.getPaddingLeft());
-          assertEquals("First tap is buffered", prior, settings().toString());
-          tap(bar, bar.getPaddingLeft());
+          float thumbX = bar.thumbCenterX();
+          tap(bar, thumbX);
+          assertEquals("First tap on thumb leaves value unchanged", prior, settings().toString());
+          tap(bar, thumbX);
           assertEquals(0, settings().optDouble("grade_exposure"), .00001);
           assertEquals(undo + 1, history("undoStack").size());
           historyStep(false);
@@ -587,10 +591,10 @@ public final class EditorInteractionInstrumentedTest
           time += ViewConfiguration.getLongPressTimeout();
           event(bar, MotionEvent.ACTION_UP, x, y);
           time += 1000;
-          tap(bar, bar.getPaddingLeft());
+          tap(bar, bar.thumbCenterX());
           bar.setEnabled(false);
           bar.setEnabled(true);
-          bar.finishPendingTap();
+          tap(bar, bar.thumbCenterX());
           assertEquals(initial, bar.getProgress());
           assertEquals(0, resets[0]);
         });
@@ -611,20 +615,29 @@ public final class EditorInteractionInstrumentedTest
   }
 
   public void testSingleTapConfirmsOnceAfterDoubleTapWindow() throws Exception {
-    int[] revision = new int[1];
     main(
         () -> {
           AdjustmentSeekBar bar = bar("grade_temperature");
-          revision[0] = (Integer) get("revision");
-          tap(bar, bar.getWidth() - bar.getPaddingRight());
-          assertEquals("Don't seek before deciding single/double tap",
-              0, settings().optDouble("grade_temperature", 0), .00001);
-        });
-    Thread.sleep(ViewConfiguration.getDoubleTapTimeout() + 100);
-    main(
-        () -> {
-          assertEquals(100, settings().optDouble("grade_temperature"), .00001);
-          assertEquals(revision[0] + 1, (int) (Integer) get("revision"));
+          int revision = (Integer) get("revision");
+          float right = bar.getWidth() - bar.getPaddingRight();
+          float left = bar.getPaddingLeft();
+          // Rapid taps on the right side step +1 each without triggering double-tap reset.
+          tap(bar, right);
+          assertEquals(1, settings().optDouble("grade_temperature"), .00001);
+          assertEquals(revision + 1, (int) (Integer) get("revision"));
+          tap(bar, right);
+          assertEquals(2, settings().optDouble("grade_temperature"), .00001);
+          assertEquals(revision + 2, (int) (Integer) get("revision"));
+          // Rapid taps on the left side step -1 each.
+          tap(bar, left);
+          assertEquals(1, settings().optDouble("grade_temperature"), .00001);
+          tap(bar, left);
+          assertEquals(0, settings().optDouble("grade_temperature"), .00001);
+          tap(bar, left);
+          assertEquals(-1, settings().optDouble("grade_temperature"), .00001);
+          // Double-tapping the thumb itself resets to default.
+          doubleTap(bar, bar.thumbCenterX());
+          assertEquals(0, settings().optDouble("grade_temperature"), .00001);
         });
   }
 
@@ -632,7 +645,7 @@ public final class EditorInteractionInstrumentedTest
     main(
         () -> {
           AdjustmentSeekBar old = bar("grade_temperature");
-          tap(old, old.getPaddingLeft());
+          tap(old, old.thumbCenterX());
           call("buildPanel");
           old.finishPendingTap();
           assertEquals(0, settings().optDouble("grade_temperature", 0), .00001);
@@ -657,7 +670,7 @@ public final class EditorInteractionInstrumentedTest
             () -> {
               String key = kind + "_" + group + "_saturation";
               AdjustmentSeekBar selected = bar(key);
-              doubleTap(selected, selected.getWidth() / 2f);
+              doubleTap(selected, selected.thumbCenterX());
               assertEquals(key, 0, settings().optDouble(key), .00001);
               assertEquals("Other parameter preserved",
                   17, settings().optDouble(kind + "_" + group + "_luminance"), .00001);
@@ -1032,7 +1045,7 @@ public final class EditorInteractionInstrumentedTest
           tap(bar, bar.getWidth() - bar.getPaddingRight());
           ((LinearLayout) get("tabRow")).getChildAt(1).performClick();
           assertTrue((Boolean) get("panelCollapsed"));
-          assertEquals(100, settings().optDouble("grade_temperature"), .00001);
+          assertEquals(1, settings().optDouble("grade_temperature"), .00001);
           assertEquals(1, history("undoStack").size());
         });
   }

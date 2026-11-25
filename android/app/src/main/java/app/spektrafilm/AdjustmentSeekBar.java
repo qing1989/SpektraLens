@@ -20,11 +20,13 @@ final class AdjustmentSeekBar extends SeekBar {
   private OnSeekBarChangeListener delegate;
   private int lastProgress, detent = Integer.MIN_VALUE;
   private long lastTick;
-  private final int touchSlop, doubleTapSlop;
+  private final int touchSlop, doubleTapSlop, thumbHitHalfWidth;
   private Runnable reset;
-  private MotionEvent touchDown, pendingTap;
-  private boolean dragging, secondTap;
-  private final Runnable confirmTap = this::finishPendingTap;
+  private MotionEvent touchDown;
+  private long lastThumbTapTime = -1;
+  private float lastThumbTapX, lastThumbTapY;
+  private int downZone;
+  private boolean dragging, secondThumbTap;
 
   /** 拖动时每跨一格刻度震一下；过零刻度换成更明确的一下，方便盲拖回默认值。 */
   private final OnSeekBarChangeListener ticker =
@@ -70,6 +72,7 @@ final class AdjustmentSeekBar extends SeekBar {
     setMinHeight(Math.round(14 * density));
     setMaxHeight(Math.round(14 * density));
     int half = thumb.getIntrinsicWidth() / 2;
+    thumbHitHalfWidth = Math.max(half + Math.round(8 * density), Math.round(22 * density));
     // Leave generous thumb travel clearance from both ends so 0% / 100% never hug the screen edge.
     int inset = Math.max(half + Math.round(6 * density), Math.round(14 * density));
     setThumbOffset(half);
@@ -80,14 +83,29 @@ final class AdjustmentSeekBar extends SeekBar {
     reset = listener;
   }
 
+  float thumbCenterX() {
+    int left = getPaddingLeft();
+    int span = Math.max(1, getWidth() - left - getPaddingRight());
+    int max = getMax();
+    float fraction = max <= 0 ? 0f : (float) getProgress() / max;
+    return left + span * fraction;
+  }
+
+  private int tapZone(float x) {
+    float center = thumbCenterX();
+    if (x < center - thumbHitHalfWidth) return -1;
+    if (x > center + thumbHitHalfWidth) return 1;
+    return 0;
+  }
+
   /**
-   * 暂存单击，确认不是双击后才交给原生 SeekBar；拖动一旦越过系统阈值立即交接。
-   * 这样双击不会先跳到点击位置、写入一次历史，再复位。双击也必须在第二次抬手时才生效，
-   * 避免两次快速拖动、长按、竖直滚动或多指触摸误复位。
+   * 交互分层：
+   * 1. 点击游标左侧 / 右侧轨道区域：松手立即向左 / 右步进 1 格，支持快速连点微调且不触发双击复位；
+   * 2. 双击游标本体（中心 ±22dp 热区内）：恢复该参数默认值，不产生中间步进历史；
+   * 3. 任意位置按住横向拖动超过阈值：立即交回原生 SeekBar 跟手连续调节；竖向滑动则交回面板滚动。
    */
   @Override
   public boolean onTouchEvent(MotionEvent event) {
-    if (reset == null) return super.onTouchEvent(event);
     if (!isEnabled()) {
       cancelTouch();
       return false;
@@ -98,14 +116,17 @@ final class AdjustmentSeekBar extends SeekBar {
       return true;
     }
     if (action == MotionEvent.ACTION_DOWN) {
-      long interval = pendingTap == null ? -1 : event.getEventTime() - pendingTap.getEventTime();
-      secondTap =
-          pendingTap != null
+      downZone = tapZone(event.getX());
+      long interval = lastThumbTapTime < 0 ? -1 : event.getEventTime() - lastThumbTapTime;
+      secondThumbTap =
+          downZone == 0
+              && reset != null
+              && lastThumbTapTime >= 0
               && interval >= 0
               && interval <= ViewConfiguration.getDoubleTapTimeout()
-              && distanceSquared(event, pendingTap) <= doubleTapSlop * doubleTapSlop;
-      if (secondTap) discardPendingTap();
-      else finishPendingTap();
+              && distanceSquared(event.getX(), event.getY(), lastThumbTapX, lastThumbTapY)
+                  <= doubleTapSlop * doubleTapSlop;
+      if (secondThumbTap || downZone != 0) clearThumbTap();
       releaseDown();
       touchDown = MotionEvent.obtain(event);
       dragging = false;
@@ -122,7 +143,8 @@ final class AdjustmentSeekBar extends SeekBar {
           return true;
         }
         dragging = true;
-        secondTap = false;
+        secondThumbTap = false;
+        clearThumbTap();
         if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);
         super.onTouchEvent(touchDown);
       }
@@ -132,57 +154,67 @@ final class AdjustmentSeekBar extends SeekBar {
     if (action == MotionEvent.ACTION_UP) {
       if (dragging) {
         super.onTouchEvent(event);
+        clearThumbTap();
       } else if (distanceSquared(event, touchDown) <= touchSlop * touchSlop) {
         boolean shortTap =
             event.getEventTime() - touchDown.getEventTime()
                 < ViewConfiguration.getLongPressTimeout();
-        if (secondTap && shortTap) {
-          reset.run();
-          performClick();
-        } else if (shortTap) {
-          pendingTap = MotionEvent.obtain(event);
-          postDelayed(confirmTap, ViewConfiguration.getDoubleTapTimeout());
+        if (shortTap) {
+          if (downZone != 0) {
+            clearThumbTap();
+            stepBy(downZone);
+          } else if (secondThumbTap && reset != null) {
+            clearThumbTap();
+            reset.run();
+            performClick();
+          } else if (reset != null) {
+            lastThumbTapTime = event.getEventTime();
+            lastThumbTapX = event.getX();
+            lastThumbTapY = event.getY();
+          }
         } else {
-          seekTap(event);
+          clearThumbTap();
         }
       }
       releaseDown();
-      dragging = secondTap = false;
+      dragging = secondThumbTap = false;
       setPressed(false);
       if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
     }
     return true;
   }
 
-  /** 切换/收起工具前提交已经结束的单击，不把它带到下一张照片或另一页。 */
-  void finishPendingTap() {
-    removeCallbacks(confirmTap);
-    MotionEvent tap = pendingTap;
-    pendingTap = null;
-    if (tap == null) return;
-    if (isEnabled() && isShown()) seekTap(tap);
-    tap.recycle();
-  }
-
-  void finishPendingTapOutside(float rawX, float rawY) {
-    if (pendingTap == null) return;
-    int[] position = new int[2];
-    getLocationOnScreen(position);
-    if (rawX < position[0] || rawX >= position[0] + getWidth()
-        || rawY < position[1] || rawY >= position[1] + getHeight()) finishPendingTap();
-  }
-
-  private void seekTap(MotionEvent tap) {
-    MotionEvent down = MotionEvent.obtain(tap);
-    down.setAction(MotionEvent.ACTION_DOWN);
-    super.onTouchEvent(down);
-    super.onTouchEvent(tap);
-    down.recycle();
+  private void stepBy(int delta) {
+    int current = getProgress();
+    int next = Math.max(0, Math.min(getMax(), current + delta));
+    if (next == current) return;
+    if (delegate != null) ticker.onStartTrackingTouch(this);
+    setProgress(next);
+    lastProgress = current;
+    ticker.onProgressChanged(this, next, true);
+    if (delegate != null) ticker.onStopTrackingTouch(this);
     performClick();
   }
 
+  /** 切换/收起工具时清理未完成的游标双击状态。 */
+  void finishPendingTap() {
+    clearThumbTap();
+  }
+
+  void finishPendingTapOutside(float rawX, float rawY) {
+    if (lastThumbTapTime < 0) return;
+    int[] position = new int[2];
+    getLocationOnScreen(position);
+    if (rawX < position[0] || rawX >= position[0] + getWidth()
+        || rawY < position[1] || rawY >= position[1] + getHeight()) clearThumbTap();
+  }
+
   private static float distanceSquared(MotionEvent a, MotionEvent b) {
-    float dx = a.getX() - b.getX(), dy = a.getY() - b.getY();
+    return distanceSquared(a.getX(), a.getY(), b.getX(), b.getY());
+  }
+
+  private static float distanceSquared(float ax, float ay, float bx, float by) {
+    float dx = ax - bx, dy = ay - by;
     return dx * dx + dy * dy;
   }
 
@@ -191,14 +223,12 @@ final class AdjustmentSeekBar extends SeekBar {
     touchDown = null;
   }
 
-  private void discardPendingTap() {
-    removeCallbacks(confirmTap);
-    if (pendingTap != null) pendingTap.recycle();
-    pendingTap = null;
+  private void clearThumbTap() {
+    lastThumbTapTime = -1;
   }
 
   private void cancelTouch() {
-    discardPendingTap();
+    clearThumbTap();
     if (dragging && touchDown != null) {
       MotionEvent cancel = MotionEvent.obtain(touchDown);
       cancel.setAction(MotionEvent.ACTION_CANCEL);
@@ -206,7 +236,7 @@ final class AdjustmentSeekBar extends SeekBar {
       cancel.recycle();
     }
     releaseDown();
-    dragging = secondTap = false;
+    dragging = secondThumbTap = false;
     setPressed(false);
   }
 
@@ -218,7 +248,7 @@ final class AdjustmentSeekBar extends SeekBar {
 
   @Override
   public void setEnabled(boolean enabled) {
-    if (!enabled && reset != null) cancelTouch();
+    if (!enabled) cancelTouch();
     super.setEnabled(enabled);
   }
 

@@ -143,25 +143,30 @@ public final class FloatingUiInstrumentedTest
             throw new RuntimeException(error);
           }
         });
+    final String[] categories = {"全部", "收藏", "彩色负片", "电影胶片", "反转片", "黑白"};
     final View editor = (View) value("editorScreen");
     main(
         () -> {
-          TextView all = (TextView) findText(editor, "全部");
-          TextView colorNegative = (TextView) findText(editor, "彩色负片");
-          TextView monochrome = (TextView) findText(editor, "黑白");
-          assertNotNull(all);
-          assertNotNull(colorNegative);
-          assertNotNull(monochrome);
-          assertTrue(
-              "All category chips share the 0.4.5 equal-width rule",
-              Math.abs(all.getWidth() - colorNegative.getWidth()) <= 1
-                  && Math.abs(colorNegative.getWidth() - monochrome.getWidth()) <= 1);
-          assertTrue(
-              "Four-character label fits without clipping",
-              colorNegative.getPaint().measureText("彩色负片")
-                      + colorNegative.getPaddingLeft()
-                      + colorNegative.getPaddingRight()
-                  <= colorNegative.getWidth() + 1);
+          for (String label : categories) {
+            TextView chip = (TextView) findText(editor, label);
+            assertNotNull("Category chip missing: " + label, chip);
+            assertEquals(
+                "Scrollable wrap-content chip must not enable auto-size: " + label,
+                TextView.AUTO_SIZE_TEXT_TYPE_NONE,
+                chip.getAutoSizeTextType());
+            assertTrue(
+                "Category chip fits without clipping: " + label,
+                chip.getPaint().measureText(label)
+                        + chip.getPaddingLeft()
+                        + chip.getPaddingRight()
+                    <= chip.getWidth() + 1);
+            if (chip.getLayout() != null) {
+              assertEquals(
+                  "Category chip must not ellipsize: " + label,
+                  0,
+                  chip.getLayout().getEllipsisCount(0));
+            }
+          }
         });
     main(
         () -> {
@@ -173,18 +178,21 @@ public final class FloatingUiInstrumentedTest
     main(
         () -> {
           TextView selected = (TextView) findText(selectedEditor, "彩色负片");
-          TextView all = (TextView) findText(selectedEditor, "全部");
           assertNotNull(selected);
-          assertNotNull(all);
           assertTrue(selected.isSelected());
-          assertTrue(
-              "Selection rebuild preserves equal category widths",
-              Math.abs(selected.getWidth() - all.getWidth()) <= 1);
-          assertTrue(
-              selected.getPaint().measureText("彩色负片")
-                      + selected.getPaddingLeft()
-                      + selected.getPaddingRight()
-                  <= selected.getWidth() + 1);
+          for (String label : categories) {
+            TextView chip = (TextView) findText(selectedEditor, label);
+            assertNotNull(chip);
+            assertTrue(
+                "Category chip still fits after selection rebuild: " + label,
+                chip.getPaint().measureText(label)
+                        + chip.getPaddingLeft()
+                        + chip.getPaddingRight()
+                    <= chip.getWidth() + 1);
+            if (chip.getLayout() != null) {
+              assertEquals(0, chip.getLayout().getEllipsisCount(0));
+            }
+          }
         });
   }
 

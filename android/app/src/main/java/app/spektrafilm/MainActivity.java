@@ -198,6 +198,7 @@ public final class MainActivity extends Activity {
   // pendingFilmScrollX 由「点卡片 / 点分类 / 换照片」显式指定，-1 表示本次没有指定。
   private String filmSessionKey = "";
   private final Map<String, Integer> categoryScrollX = new HashMap<>();
+  private int filmCategoryBarScrollX;
   private int pendingFilmScrollX = -1;
   private int paperGradeScrollX;
   private int engineBootGeneration;
@@ -2503,13 +2504,15 @@ public final class MainActivity extends Activity {
     }
     if (selectedTab == 0) {
       HorizontalScrollView categoryScroll = new HorizontalScrollView(this);
+      categoryScroll.setTag("editor.film.categories");
       AppStyle.hideScrollBars(categoryScroll);
       categoryScroll.setClipToPadding(false);
       LinearLayout categoryRow = horizontal();
       categoryRow.setPadding(0, 0, dp(4), 0);
       String[] categories = {"全部", "收藏", "彩色负片", "电影胶片", "反转片", "黑白"};
       TextView selectedChip = null;
-      for (String category : categories) {
+      for (int i = 0; i < categories.length; i++) {
+        String category = categories[i];
         boolean picked = category.equals(filmCategory);
         TextView chip =
             button(
@@ -2517,11 +2520,12 @@ public final class MainActivity extends Activity {
                 picked ? GOLD : MUTED,
                 picked ? AppStyle.ACCENT_SOFT : Color.TRANSPARENT);
         chip.setTextSize(AppStyle.TYPE_MICRO);
-        chip.setPadding(dp(10), 0, dp(10), 0);
-        chip.setMinHeight(0);
+        chip.setPadding(dp(11), dp(6), dp(11), dp(6));
+        chip.setMinWidth(0);
+        chip.setMinHeight(dp(30));
         chip.setSingleLine(true);
-        chip.setAutoSizeTextTypeUniformWithConfiguration(
-            9, 11, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
+        chip.setMaxLines(1);
+        chip.setEllipsize(null);
         chip.setSelected(picked);
         GradientDrawable chipBg =
             AppStyle.shape(
@@ -2544,19 +2548,31 @@ public final class MainActivity extends Activity {
               pendingFilmScrollX = categoryScrollX.getOrDefault(category, 0);
               buildPanel();
             });
-        LinearLayout.LayoutParams chipLayout = new LinearLayout.LayoutParams(-2, dp(30));
-        chipLayout.rightMargin = dp(5);
+        LinearLayout.LayoutParams chipLayout = new LinearLayout.LayoutParams(-2, -2);
+        if (i < categories.length - 1) chipLayout.rightMargin = dp(6);
         categoryRow.addView(chip, chipLayout);
         if (picked) selectedChip = chip;
       }
-      categoryScroll.addView(categoryRow);
-      add(editor, categoryScroll, -1, 30);
+      categoryScroll.addView(categoryRow, new FrameLayout.LayoutParams(-2, -2));
+      categoryScroll.setOnScrollChangeListener((v, x, y, oldX, oldY) -> filmCategoryBarScrollX = x);
+      add(editor, categoryScroll, -1, -2);
       gap(editor, 12);
       final TextView keepSelectedChip = selectedChip;
       categoryScroll.post(
           () -> {
-            if (keepSelectedChip != null)
-              categoryScroll.scrollTo(Math.max(0, keepSelectedChip.getLeft() - dp(6)), 0);
+            int viewport = categoryScroll.getWidth();
+            int maxScroll = Math.max(0, categoryRow.getWidth() - viewport);
+            int target = Math.max(0, Math.min(filmCategoryBarScrollX, maxScroll));
+            if (keepSelectedChip != null && viewport > 0) {
+              int margin = dp(6);
+              if (keepSelectedChip.getLeft() < target + margin) {
+                target = Math.max(0, keepSelectedChip.getLeft() - margin);
+              } else if (keepSelectedChip.getRight() > target + viewport - margin) {
+                target = Math.min(maxScroll, keepSelectedChip.getRight() - viewport + margin);
+              }
+            }
+            filmCategoryBarScrollX = target;
+            categoryScroll.scrollTo(target, 0);
           });
 
       // 画廊式胶片选择：方形缩略图就是「当前这张照片用这卷胶片显影后的样子」，标签在下方，
