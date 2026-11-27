@@ -32,6 +32,9 @@ for source in (destination / 'profiles').glob('*.json'):
         source.unlink()
 for stock in product_profiles:
     shutil.copy2(product / 'profiles' / (stock + '.json'), destination / 'profiles')
+canisters_src = ROOT / 'android/canisters'
+if canisters_src.is_dir():
+    shutil.copytree(canisters_src, destination / 'canisters', dirs_exist_ok=True)
 (destination / 'vulkan').mkdir(exist_ok=True)
 for source in sorted((ENGINE / 'src/shaders/vulkan').glob('*.comp')):
     subprocess.run([str(glslc), '--target-env=vulkan1.0', '-O0',

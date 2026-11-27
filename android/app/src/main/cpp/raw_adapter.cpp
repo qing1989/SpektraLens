@@ -47,6 +47,37 @@ RawImage decode_raw(const std::string &path, uint32_t long_edge) {
     out.width = std::max(1u, uint32_t(std::lround(out.width * scale)));
     out.height = std::max(1u, uint32_t(std::lround(out.height * scale)));
     out.rgb.resize(size_t(out.width) * out.height * 3);
+    if (decoded.width >= out.width * 2 || decoded.height >= out.height * 2) {
+        // Area-average box filter for large downscales to avoid aliasing / moire on 50MP RAW.
+        const double sx_step = double(decoded.width) / out.width;
+        const double sy_step = double(decoded.height) / out.height;
+        for (uint32_t y = 0; y < out.height; y++) {
+            uint32_t y0 = std::min(decoded.height - 1, uint32_t(std::floor(y * sy_step)));
+            uint32_t y1 = std::min(decoded.height, std::max(y0 + 1, uint32_t(std::ceil((y + 1) * sy_step))));
+            for (uint32_t x = 0; x < out.width; x++) {
+                uint32_t x0 = std::min(decoded.width - 1, uint32_t(std::floor(x * sx_step)));
+                uint32_t x1 = std::min(decoded.width, std::max(x0 + 1, uint32_t(std::ceil((x + 1) * sx_step))));
+                float sum[3]{0.f, 0.f, 0.f};
+                uint32_t samples = 0;
+                for (uint32_t sy = y0; sy < y1; sy++) {
+                    const size_t row = size_t(sy) * decoded.width;
+                    for (uint32_t sx = x0; sx < x1; sx++) {
+                        const size_t off = (row + sx) * 3;
+                        sum[0] += decoded.rgb[off + 0];
+                        sum[1] += decoded.rgb[off + 1];
+                        sum[2] += decoded.rgb[off + 2];
+                        samples++;
+                    }
+                }
+                const float inv = 1.f / float(std::max(1u, samples));
+                const size_t dst = (size_t(y) * out.width + x) * 3;
+                out.rgb[dst + 0] = sum[0] * inv;
+                out.rgb[dst + 1] = sum[1] * inv;
+                out.rgb[dst + 2] = sum[2] * inv;
+            }
+        }
+        return out;
+    }
     for (uint32_t y = 0; y < out.height; y++)
         for (uint32_t x = 0; x < out.width; x++) {
             float sx = (x + .5f) * decoded.width / out.width - .5f,

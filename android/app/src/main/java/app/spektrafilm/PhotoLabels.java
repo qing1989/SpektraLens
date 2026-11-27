@@ -11,7 +11,7 @@ import java.util.regex.*;
 final class PhotoLabels {
   private static final Pattern EXT =
       Pattern.compile(
-          "(?i)\\.(jpe?g|png|heic|heif|avif|webp|gif|bmp|dng|nef|arw|cr2|cr3|raf|rw2|orf|pef|srw|tiff?)$");
+          "(?i)\\.(jpe?g|png|heic|heif|avif|webp|gif|bmp|dng|nef|nrw|arw|sr2|srf|cr2|cr3|raf|rw2|orf|pef|srw|3fr|iiq|raw|gpr|dcr|kdc|mrw|x3f|erf|tiff?)$");
 
   static String title(String name) {
     return EXT.matcher(name).replaceFirst("");

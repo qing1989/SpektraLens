@@ -71,12 +71,12 @@ final class GalleryPhotos {
 
   static final class Photo {
     final Uri uri;
-    final String frameId, name, albumId, albumName;
+    final String frameId, name, albumId, albumName, mime;
     final File thumbnail;
     final long timestamp, mediaId;
 
     Photo(Uri uri, String frameId, String name, String albumId, String albumName, File thumbnail) {
-      this(uri, frameId, name, albumId, albumName, thumbnail, 0, 0);
+      this(uri, frameId, name, albumId, albumName, thumbnail, 0, 0, null);
     }
 
     Photo(
@@ -88,6 +88,19 @@ final class GalleryPhotos {
         File thumbnail,
         long timestamp,
         long mediaId) {
+      this(uri, frameId, name, albumId, albumName, thumbnail, timestamp, mediaId, null);
+    }
+
+    Photo(
+        Uri uri,
+        String frameId,
+        String name,
+        String albumId,
+        String albumName,
+        File thumbnail,
+        long timestamp,
+        long mediaId,
+        String mime) {
       this.uri = uri;
       this.frameId = frameId;
       this.name = name;
@@ -96,6 +109,7 @@ final class GalleryPhotos {
       this.thumbnail = thumbnail;
       this.timestamp = timestamp;
       this.mediaId = mediaId;
+      this.mime = mime;
     }
 
     static Photo imported(String id, String name, File thumbnail) {
@@ -169,7 +183,8 @@ final class GalleryPhotos {
                 label == null ? "其他照片" : label,
                 null,
                 photoTime(read.getLong(5), read.getLong(6), read.getLong(7)),
-                read.getLong(0)));
+                read.getLong(0),
+                mime));
       }
     }
     // Vendor providers can ignore the requested sort. Enforce order after normalizing ms/seconds.

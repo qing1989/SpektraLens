@@ -45,7 +45,4 @@
         <item name="android:textColor">#F4F4F6</item>
         <item name="android:fontFamily">@font/noto_sans_sc_variable</item>
     </style>
-    <style name="GallerySheetAnimation">
-        <item name="android:windowEnterAnimation">@anim/gallery_sheet_in</item>
-    </style>
 </resources>

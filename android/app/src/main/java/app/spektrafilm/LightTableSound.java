@@ -27,13 +27,15 @@ final class LightTableSound {
   private final AudioManager audioManager;
   private final SoundPool pool;
   private final ExecutorService loader = Executors.newSingleThreadExecutor();
-  private volatile int switchOnId;
-  private volatile int switchOffId;
-  private volatile int detentId;
-  private volatile boolean switchOnReady;
-  private volatile boolean switchOffReady;
-  private volatile boolean detentReady;
-  private volatile boolean released;
+  private final Object lock = new Object();
+  private final java.util.Set<Integer> loadedIds = new java.util.HashSet<>();
+  private int switchOnId;
+  private int switchOffId;
+  private int detentId;
+  private boolean switchOnReady;
+  private boolean switchOffReady;
+  private boolean detentReady;
+  private boolean released;
   private long lastDetentMs;
 
   LightTableSound(Context context) {
@@ -55,10 +57,14 @@ final class LightTableSound {
       created = new SoundPool.Builder().setMaxStreams(4).setAudioAttributes(attrs).build();
       created.setOnLoadCompleteListener(
           (sp, sampleId, status) -> {
-            if (status != 0 || released) return;
-            if (sampleId == switchOnId) switchOnReady = true;
-            else if (sampleId == switchOffId) switchOffReady = true;
-            else if (sampleId == detentId) detentReady = true;
+            if (status != 0) return;
+            synchronized (lock) {
+              if (released) return;
+              loadedIds.add(sampleId);
+              if (sampleId == switchOnId) switchOnReady = true;
+              else if (sampleId == switchOffId) switchOffReady = true;
+              else if (sampleId == detentId) detentReady = true;
+            }
           });
     } catch (Exception ignored) {
     }
@@ -69,16 +75,29 @@ final class LightTableSound {
       final File dir = new File(app.getCacheDir(), "lt_sound");
       loader.execute(
           () -> {
-            if (released) return;
+            synchronized (lock) {
+              if (released) return;
+            }
             try {
               if (!dir.isDirectory() && !dir.mkdirs()) return;
               File onFile = ensureWav(new File(dir, "lt_sw_on_v2.wav"), synthesizeSwitch(true));
               File offFile = ensureWav(new File(dir, "lt_sw_off_v2.wav"), synthesizeSwitch(false));
               File tickFile = ensureWav(new File(dir, "lt_detent_v2.wav"), synthesizeDetent());
-              if (released) return;
-              if (onFile != null) switchOnId = targetPool.load(onFile.getAbsolutePath(), 1);
-              if (offFile != null) switchOffId = targetPool.load(offFile.getAbsolutePath(), 1);
-              if (tickFile != null) detentId = targetPool.load(tickFile.getAbsolutePath(), 1);
+              synchronized (lock) {
+                if (released) return;
+                if (onFile != null) {
+                  switchOnId = targetPool.load(onFile.getAbsolutePath(), 1);
+                  if (loadedIds.contains(switchOnId)) switchOnReady = true;
+                }
+                if (offFile != null) {
+                  switchOffId = targetPool.load(offFile.getAbsolutePath(), 1);
+                  if (loadedIds.contains(switchOffId)) switchOffReady = true;
+                }
+                if (tickFile != null) {
+                  detentId = targetPool.load(tickFile.getAbsolutePath(), 1);
+                  if (loadedIds.contains(detentId)) detentReady = true;
+                }
+              }
             } catch (Exception ignored) {
             }
           });
@@ -86,38 +105,47 @@ final class LightTableSound {
   }
 
   void playSwitch(boolean on) {
-    if (released || pool == null || isMediaMuted()) return;
-    int id = on ? switchOnId : switchOffId;
-    boolean ready = on ? switchOnReady : switchOffReady;
-    if (id == 0 || !ready) return;
-    float vol = on ? .90f : .85f;
-    try {
-      pool.play(id, vol, vol, 1, 0, 1.0f);
-    } catch (Exception ignored) {
+    if (pool == null || isMediaMuted()) return;
+    final int id;
+    synchronized (lock) {
+      if (released) return;
+      id = on ? switchOnId : switchOffId;
+      boolean ready = on ? switchOnReady : switchOffReady;
+      if (id == 0 || !ready) return;
+      float vol = on ? .90f : .85f;
+      try {
+        pool.play(id, vol, vol, 1, 0, 1.0f);
+      } catch (Exception ignored) {
+      }
     }
   }
 
   void playDetent() {
-    if (released || pool == null || isMediaMuted()) return;
-    if (detentId == 0 || !detentReady) return;
-    long now = SystemClock.elapsedRealtime();
-    if (now - lastDetentMs < MIN_DETENT_GAP_MS) return;
-    lastDetentMs = now;
-    try {
-      pool.play(detentId, .65f, .65f, 1, 0, 1.0f);
-    } catch (Exception ignored) {
+    if (pool == null || isMediaMuted()) return;
+    synchronized (lock) {
+      if (released || detentId == 0 || !detentReady) return;
+      long now = SystemClock.elapsedRealtime();
+      if (now - lastDetentMs < MIN_DETENT_GAP_MS) return;
+      lastDetentMs = now;
+      try {
+        pool.play(detentId, .65f, .65f, 1, 0, 1.0f);
+      } catch (Exception ignored) {
+      }
     }
   }
 
   void release() {
-    released = true;
-    loader.shutdownNow();
-    if (pool != null) {
-      try {
-        pool.release();
-      } catch (Exception ignored) {
+    synchronized (lock) {
+      if (released) return;
+      released = true;
+      if (pool != null) {
+        try {
+          pool.release();
+        } catch (Exception ignored) {
+        }
       }
     }
+    loader.shutdownNow();
   }
 
   private boolean isMediaMuted() {
@@ -131,7 +159,8 @@ final class LightTableSound {
 
   private static File ensureWav(File target, short[] pcm) {
     if (target.isFile() && target.length() == 44L + pcm.length * 2L) return target;
-    File tmp = new File(target.getParentFile(), target.getName() + ".tmp");
+    File tmp =
+        new File(target.getParentFile(), target.getName() + "." + Thread.currentThread().getId() + ".tmp");
     try (FileOutputStream out = new FileOutputStream(tmp)) {
       writeWav(out, pcm);
       out.flush();

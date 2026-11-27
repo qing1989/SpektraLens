@@ -33,6 +33,7 @@ final class UpdateController {
   private boolean checking, manualCheck;
   private File updateFile;
   private AlertDialog progress;
+  private AlertDialog activeDialog;
   private UpdateNotesDialog notice;
   private final String version;
   private final long code;
@@ -51,6 +52,33 @@ final class UpdateController {
     availability =
         new UpdateAvailability(code, Build.VERSION.SDK_INT, noticeCache.getString("manifest", null));
     persistAvailability();
+    cleanStaleUpdateApks();
+  }
+
+  private void cleanStaleUpdateApks() {
+    String keepPending = pending().getString("file", null);
+    String keepCurrent = updateFile.getName();
+    File dir = updateFile.getParentFile();
+    if (dir == null) return;
+    worker.execute(
+        () -> {
+          File[] files = dir.listFiles((d, name) -> name.endsWith(".apk"));
+          if (files == null) return;
+          for (File f : files) {
+            if (!f.getName().equals(keepPending) && !f.getName().equals(keepCurrent)) f.delete();
+          }
+        });
+  }
+
+  private void showDialog(AlertDialog dialog) {
+    if (closed || activity.isFinishing() || activity.isDestroyed()) return;
+    if (activeDialog != null && activeDialog.isShowing()) activeDialog.dismiss();
+    activeDialog = dialog;
+    dialog.setOnDismissListener(
+        d -> {
+          if (activeDialog == dialog) activeDialog = null;
+        });
+    dialog.show();
   }
 
   boolean hasAvailableUpdate() { return availability.available() != null; }
@@ -131,11 +159,12 @@ final class UpdateController {
   private void download(UpdateManifest manifest) {
     if (busy || closed) return;
     if (wifiOnly() && !onWifi()) {
-      new Haptics.DialogBuilder(activity)
-          .setTitle("需要 Wi-Fi")
-          .setMessage("已开启「仅 Wi-Fi 下载更新」。连接 Wi-Fi 后重试，或在设置中关闭这个开关。")
-          .setPositiveButton("知道了", null)
-          .show();
+      showDialog(
+          new Haptics.DialogBuilder(activity)
+              .setTitle("需要 Wi-Fi")
+              .setMessage("已开启「仅 Wi-Fi 下载更新」。连接 Wi-Fi 后重试，或在设置中关闭这个开关。")
+              .setPositiveButton("知道了", null)
+              .create());
       return;
     }
     busy = true; cancelled.set(false);
@@ -217,15 +246,28 @@ final class UpdateController {
   private SharedPreferences pending() { return activity.getSharedPreferences("pending_update", Context.MODE_PRIVATE); }
   private void requestInstall(String hash) {
     if (!activity.getPackageManager().canRequestPackageInstalls()) {
-      new Haptics.DialogBuilder(activity).setTitle("允许安装更新")
-          .setMessage("请在系统设置中允许 SpektraLens 安装未知应用，返回后继续安装。")
-          .setNegativeButton("稍后", (d, n) -> apk().delete())
-          .setPositiveButton("前往设置", (d, n) -> {
-            pending().edit().putString("sha256", hash).putString("file", apk().getName()).apply();
-            try { activity.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                Uri.parse("package:" + activity.getPackageName()))); }
-            catch (Exception e) { pending().edit().clear().apply(); fail("更新未完成", "无法打开安装授权设置。", e); }
-          }).show();
+      AlertDialog dialog =
+          new Haptics.DialogBuilder(activity)
+              .setTitle("允许安装更新")
+              .setMessage("请在系统设置中允许 SpektraLens 安装未知应用，返回后继续安装。")
+              .setNegativeButton("稍后", (d, n) -> apk().delete())
+              .setPositiveButton(
+                  "前往设置",
+                  (d, n) -> {
+                    pending().edit().putString("sha256", hash).putString("file", apk().getName()).apply();
+                    try {
+                      activity.startActivity(
+                          new Intent(
+                              Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                              Uri.parse("package:" + activity.getPackageName())));
+                    } catch (Exception e) {
+                      pending().edit().clear().apply();
+                      fail("更新未完成", "无法打开安装授权设置。", e);
+                    }
+                  })
+              .create();
+      dialog.setOnCancelListener(d -> apk().delete());
+      showDialog(dialog);
     } else install(hash);
   }
 
@@ -239,10 +281,15 @@ final class UpdateController {
     if (activity.getPackageManager().canRequestPackageInstalls()) { install(hash); return; }
     // Retry reuses the verified package instead of asking for another 22 MB download;
     // declining removes it so no unreferenced APK is left behind in the cache.
-    new Haptics.DialogBuilder(activity).setTitle("尚未允许安装")
-        .setMessage("需要允许 SpektraLens 安装应用，才能继续安装已下载的更新。")
-        .setNegativeButton("稍后", (d, n) -> apk().delete())
-        .setPositiveButton("重试", (d, n) -> requestInstall(hash)).show();
+    AlertDialog dialog =
+        new Haptics.DialogBuilder(activity)
+            .setTitle("尚未允许安装")
+            .setMessage("需要允许 SpektraLens 安装应用，才能继续安装已下载的更新。")
+            .setNegativeButton("稍后", (d, n) -> apk().delete())
+            .setPositiveButton("重试", (d, n) -> requestInstall(hash))
+            .create();
+    dialog.setOnCancelListener(d -> apk().delete());
+    showDialog(dialog);
   }
 
   private void install(String hash) {
@@ -317,8 +364,13 @@ final class UpdateController {
   }
 
   private void message(String title, String text) {
-    new Haptics.DialogBuilder(activity).setTitle(title).setMessage(text).setPositiveButton("完成", null)
-        .setNeutralButton("打开发布页", (d, n) -> openReleases(activity)).show();
+    showDialog(
+        new Haptics.DialogBuilder(activity)
+            .setTitle(title)
+            .setMessage(text)
+            .setPositiveButton("完成", null)
+            .setNeutralButton("打开发布页", (d, n) -> openReleases(activity))
+            .create());
   }
   static void openReleases(Activity activity) {
     try { activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES))); }
@@ -346,8 +398,9 @@ final class UpdateController {
     closed = true; cancelled.set(true);
     availabilityChanged = null;
     if (connection != null) workerDisconnect(connection);
-    if (progress != null) progress.dismiss();
-    if (notice != null) notice.dismiss();
+    if (progress != null) { progress.dismiss(); progress = null; }
+    if (activeDialog != null) { activeDialog.dismiss(); activeDialog = null; }
+    if (notice != null) { notice.dismiss(); notice = null; }
     File cacheFile = apk();
     boolean preserve = cacheFile.getName().equals(pending().getString("file", null));
     worker.execute(() -> { if (!preserve) cacheFile.delete(); });

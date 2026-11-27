@@ -18,9 +18,12 @@ struct FrameLayout {
     FrameLayout(uint32_t w, uint32_t h, const spk::Json &edits);
     bool identity() const { return style == "none"; }
     bool acetate() const { return film != FilmBorder::None && film != FilmBorder::Slide; }
+    bool film_card() const { return style == "film_card_white" || style == "film_card_black"; }
 };
 
 void paint_film_base(Image16 &image, const FrameLayout &layout);
 void finish_film_border(Image16 &image, const FrameLayout &layout, const spk::Json &edits,
                         bool transparent);
+void finish_film_card(Image16 &image, const FrameLayout &layout, const spk::Json &edits,
+                      const std::string &resources);
 } // namespace mobile

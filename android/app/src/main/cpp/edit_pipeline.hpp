@@ -22,8 +22,27 @@ struct Geometry {
     void sample(uint32_t ox, uint32_t oy, double &sx, double &sy) const;
     uint32_t source_w = 0, source_h = 0;
 };
+struct FoliageGateMap {
+    uint32_t width = 0, height = 0;
+    // Packed pairs: [gate_q, hue_q] per pixel (2 bytes/pixel, capped at 2048px long edge).
+    // gate_q encodes source foliage weight in [0, 1]; hue_q encodes Oklab source hue in [102, 172] deg.
+    std::vector<uint8_t> data;
+    bool has_green = false;
+
+    bool active() const { return has_green && width > 0 && height > 0 && data.size() == size_t(width) * height * 2; }
+    void clear() {
+        width = height = 0;
+        data.clear();
+        data.shrink_to_fit();
+        has_green = false;
+    }
+};
+FoliageGateMap build_foliage_gate(const float *rgb, uint32_t width, uint32_t height,
+                                  bool linear_prophoto = false);
 Image16 apply_edits(const uint16_t *rgba, uint32_t width, uint32_t height, uint32_t stride,
-                    const spk::Json &edits, bool transparent_frame = false);
+                    const spk::Json &edits, bool transparent_frame = false,
+                    const FoliageGateMap *foliage_gate = nullptr,
+                    const std::string &resources = "");
 spk::Json output_dimensions(uint32_t width, uint32_t height, const spk::Json &edits);
 void write_image(const Image16 &, const std::string &path, const std::string &format,
                  const std::string &resources, const spk::Json &edits);

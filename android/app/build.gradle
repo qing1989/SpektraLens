@@ -23,30 +23,23 @@ if (sponsorQrWasProvided) {
 }
 def sponsorQrEnabled = !publicBuild && sponsorQrSource.isFile()
 def sponsorResDir = layout.buildDirectory.dir('generated/sponsor-res')
-// Opt-in side-by-side package for local UI comparison. The production package and version stay
-// unchanged unless the caller explicitly requests this build.
-def sideBySideTest = (findProperty('sideBySideTest') ?: 'false').toString().toBoolean()
 // Test-only builds must never replace the production install. They use a separate applicationId
 // and label, so they can be installed side by side with app.spektrafilm.
 def testBuild = (findProperty('testBuild') ?: 'false').toString().toBoolean()
-if (testBuild && sideBySideTest) { throw new GradleException('Use either -PtestBuild=true or -PsideBySideTest=true, not both.') }
 
 android {
     namespace 'app.spektrafilm'
     compileSdk 35
     ndkVersion '27.2.12479018'
     defaultConfig {
-        applicationId testBuild ? 'app.spektrafilm.test' : (sideBySideTest ? 'app.spektrafilm.uitest' : 'app.spektrafilm')
+        applicationId testBuild ? 'app.spektrafilm.test' : 'app.spektrafilm'
         minSdk 29
         targetSdk 35
-        // Keep the production identity untouched. Give side-by-side builds their own increasing
-        // code so OEM installers actually replace an older UI Test APK instead of treating it as
-        // the same version.
-        versionCode sideBySideTest ? 2502 : 33
-        versionName sideBySideTest ? '0.4.6-uitest3' : '0.6.0'
+        versionCode 34
+        versionName '0.6.2'
         if (testBuild) versionNameSuffix '-test'
         manifestPlaceholders = [
-            appLabel: testBuild ? 'SpektraLens Test' : (sideBySideTest ? 'SpektraLens UI Test' : '@string/app_name')
+            appLabel: testBuild ? 'SpektraLens Test' : '@string/app_name'
         ]
         // Default ships arm64 only: the x86_64 SwiftShader ICD alone is 22 MB and phones never use
         // it. Emulator builds pass -Pabis=arm64-v8a,x86_64.
@@ -118,7 +111,9 @@ android {
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             if (keystorePropertiesFile.exists()) signingConfig signingConfigs.release
         }
     }
@@ -242,6 +237,23 @@ tasks.register('testFoldableLayout', JavaExec) {
     mainClass = 'app.spektrafilm.FoldableLayoutTest'
 }
 tasks.named('check').configure { dependsOn 'testFoldableLayout' }
+
+def curveMathTestClasses = layout.buildDirectory.dir('curve-math-tests')
+tasks.register('compileCurveMathTests', JavaCompile) {
+    source 'src/main/java/app/spektrafilm/CurveMath.java',
+            'src/test/java/app/spektrafilm/CurveMathTest.java'
+    classpath = files()
+    destinationDirectory = curveMathTestClasses
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+    options.encoding = 'UTF-8'
+}
+tasks.register('testCurveMath', JavaExec) {
+    dependsOn 'compileCurveMathTests'
+    classpath = files(curveMathTestClasses)
+    mainClass = 'app.spektrafilm.CurveMathTest'
+}
+tasks.named('check').configure { dependsOn 'testCurveMath' }
 
 gradle.taskGraph.whenReady { graph ->
     if (graph.allTasks.any { it.name.toLowerCase().contains('release') }

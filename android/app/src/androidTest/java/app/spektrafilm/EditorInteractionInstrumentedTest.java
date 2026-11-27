@@ -343,7 +343,8 @@ public final class EditorInteractionInstrumentedTest
           assertEquals(colorSettings, settings().toString());
           wire = renderParameters();
           assertFalse(wire.has("y_filter_neutral"));
-          assertFalse("Color keeps the 0.4.6 grain-layer default", wire.has("grain_sublayers_active"));
+          assertTrue("Color restores default grain sublayers", wire.getBoolean("grain_sublayers_active"));
+          assertEquals("", wire.getString("camera_filter"));
           assertEquals(.12, wire.getDouble("m_filter_shift"), .00001);
           historyStep(true);
           assertEquals(FilmStockPolicy.SILVER_PAPER, settings().getString("print_stock"));
@@ -444,7 +445,8 @@ public final class EditorInteractionInstrumentedTest
           call("buildPanel");
           assertNull("Color paper does not expose silver grades", tagged("paper_grade_scroll"));
           JSONObject wire = renderParameters();
-          assertFalse(wire.has("camera_filter"));
+          assertEquals("", wire.getString("camera_filter"));
+          assertTrue(wire.getBoolean("grain_sublayers_active"));
           assertEquals(1, wire.getDouble("print_exposure"), .00001);
         });
   }

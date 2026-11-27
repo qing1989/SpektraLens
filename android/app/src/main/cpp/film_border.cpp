@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 SpektraLens contributors. See NOTICE for upstream attribution.
 #include "film_border.hpp"
+#include "stb_image.h"
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
 #include <string_view>
+#include <unordered_map>
 
 namespace mobile {
 namespace {
@@ -348,6 +357,24 @@ FrameLayout::FrameLayout(uint32_t w, uint32_t h, const spk::Json &j)
             bottom = int(std::lround(margin * 1.12f));
         } else if (style == "instant") {
             bottom = top * 3;
+        } else if (style == "film_card_white") {
+            const bool landscape = w >= h;
+            const int pad = std::max(4, int(std::lround(short_edge * (landscape ? .048f : .050f))));
+            left = right = top = pad;
+            bottom = std::max(16, int(std::lround(short_edge * (landscape ? .146f : .152f))));
+        } else if (style == "film_card_black") {
+            const bool landscape = w >= h;
+            if (landscape) {
+                const int pad = std::max(4, int(std::lround(short_edge * .038f)));
+                const int gap_mid = std::max(4, int(std::lround(short_edge * .036f)));
+                const int side_w = std::max(28, int(std::lround(w * .175f)));
+                left = top = bottom = pad;
+                right = gap_mid + side_w + pad;
+            } else {
+                const int pad = std::max(4, int(std::lround(short_edge * .046f)));
+                left = right = top = pad;
+                bottom = std::max(18, int(std::lround(short_edge * .160f)));
+            }
         }
     }
     width = w + left + right;
@@ -454,5 +481,506 @@ void finish_film_border(Image16 &image, const FrameLayout &f, const spk::Json &e
             p[3] = 65535;
         });
     }
+}
+
+namespace {
+struct FilmCardSpec {
+    const char *stock_id;
+    const char *brand;
+    const char *model;
+    const char *full;
+    const char *sub;
+    const char *iso;
+    const char *type;
+    const char *proc;
+};
+
+constexpr FilmCardSpec kFilmCardSpecs[] = {
+    {"fujifilm_c200",                "FUJIFILM",  "C200",          "FUJIFILM C200",          "COLOR NEGATIVE / 35MM",  "200",  "NEGATIVE", "C-41"},
+    {"fujifilm_pro_400h",            "FUJIFILM",  "PRO 400H",      "FUJIFILM PRO 400H",      "COLOR NEGATIVE / 35MM",  "400",  "NEGATIVE", "C-41"},
+    {"fujifilm_xtra_400",            "FUJIFILM",  "X-TRA 400",     "FUJIFILM X-TRA 400",     "COLOR NEGATIVE / 35MM",  "400",  "NEGATIVE", "C-41"},
+    {"kodak_ektar_100",              "KODAK",     "EKTAR 100",     "KODAK EKTAR 100",        "COLOR NEGATIVE / 35MM",  "100",  "NEGATIVE", "C-41"},
+    {"kodak_gold_200",               "KODAK",     "GOLD 200",      "KODAK GOLD 200",         "COLOR NEGATIVE / 35MM",  "200",  "NEGATIVE", "C-41"},
+    {"kodak_portra_160",             "KODAK",     "PORTRA 160",    "KODAK PORTRA 160",       "COLOR NEGATIVE / 35MM",  "160",  "NEGATIVE", "C-41"},
+    {"kodak_portra_400",             "KODAK",     "PORTRA 400",    "KODAK PORTRA 400",       "COLOR NEGATIVE / 35MM",  "400",  "NEGATIVE", "C-41"},
+    {"kodak_portra_800",             "KODAK",     "PORTRA 800",    "KODAK PORTRA 800",       "COLOR NEGATIVE / 35MM",  "800",  "NEGATIVE", "C-41"},
+    {"kodak_portra_800_push1",       "KODAK",     "PORTRA 800 +1", "KODAK PORTRA 800 +1",    "PUSH +1 / COLOR NEGATIVE","1600","PUSH +1",  "C-41"},
+    {"kodak_portra_800_push2",       "KODAK",     "PORTRA 800 +2", "KODAK PORTRA 800 +2",    "PUSH +2 / COLOR NEGATIVE","3200","PUSH +2",  "C-41"},
+    {"kodak_ultramax_400",           "KODAK",     "ULTRAMAX 400",  "KODAK ULTRAMAX 400",     "COLOR NEGATIVE / 35MM",  "400",  "NEGATIVE", "C-41"},
+    {"fujifilm_provia_100f",         "FUJIFILM",  "PROVIA 100F",   "FUJIFILM PROVIA 100F",   "COLOR REVERSAL / E-6",   "100",  "SLIDE",    "E-6"},
+    {"fujifilm_velvia_100",          "FUJIFILM",  "VELVIA 100",    "FUJIFILM VELVIA 100",    "COLOR REVERSAL / E-6",   "100",  "SLIDE",    "E-6"},
+    {"kodak_ektachrome_100",         "KODAK",     "EKTACHROME 100","KODAK EKTACHROME 100",   "COLOR REVERSAL / E-6",   "100",  "SLIDE",    "E-6"},
+    {"kodak_kodachrome_64",          "KODAK",     "KODACHROME 64", "KODAK KODACHROME 64",    "COLOR REVERSAL / K-14",  "64",   "SLIDE",    "K-14"},
+    {"cinestill_800t",               "CINESTILL", "800T",          "CINESTILL 800T",         "MOTION PICTURE / ECN-2", "800",  "TUNGSTEN", "ECN-2"},
+    {"kodak_verita_200d",            "KODAK",     "VERITA 200D",   "KODAK VERITA 200D",      "MOTION PICTURE / ECN-2", "200",  "DAYLIGHT", "ECN-2"},
+    {"kodak_vision3_50d",            "KODAK",     "VISION3 50D",   "KODAK VISION3 50D",      "MOTION PICTURE / ECN-2", "50",   "DAYLIGHT", "ECN-2"},
+    {"kodak_vision3_200t",           "KODAK",     "VISION3 200T",  "KODAK VISION3 200T",     "MOTION PICTURE / ECN-2", "200",  "TUNGSTEN", "ECN-2"},
+    {"kodak_vision3_250d",           "KODAK",     "VISION3 250D",  "KODAK VISION3 250D",     "MOTION PICTURE / ECN-2", "250",  "DAYLIGHT", "ECN-2"},
+    {"kodak_vision3_500t",           "KODAK",     "VISION3 500T",  "KODAK VISION3 500T",     "MOTION PICTURE / ECN-2", "500",  "TUNGSTEN", "ECN-2"},
+    {"fujifilm_neopan_acros_100_ii", "FUJIFILM",  "ACROS II",      "FUJIFILM ACROS II",      "BLACK & WHITE / SILVER", "100",  "B&W",      "SILVER"},
+    {"ilford_hp5_plus_400",          "ILFORD",    "HP5 PLUS 400",  "ILFORD HP5 PLUS 400",    "BLACK & WHITE / SILVER", "400",  "B&W",      "SILVER"},
+    {"kodak_tmax_100",               "KODAK",     "T-MAX 100",     "KODAK T-MAX 100",        "BLACK & WHITE / SILVER", "100",  "B&W",      "SILVER"},
+    {"kodak_tri_x_400",              "KODAK",     "TRI-X 400",     "KODAK TRI-X 400",        "BLACK & WHITE / SILVER", "400",  "B&W",      "SILVER"},
+};
+
+const FilmCardSpec &film_card_spec(std::string_view stock_id) {
+    for (const auto &spec : kFilmCardSpecs)
+        if (stock_id == spec.stock_id) return spec;
+    return kFilmCardSpecs[0];
+}
+
+struct CanisterRgba {
+    int width = 0, height = 0;
+    std::vector<uint8_t> rgba;
+};
+
+struct CardAssetCache {
+    std::mutex mutex;
+    std::string loaded_dir;
+    std::vector<uint8_t> font_bytes;
+    stbtt_fontinfo font{};
+    bool font_ready = false;
+    std::unordered_map<std::string, CanisterRgba> canisters;
+
+    void ensure_font(const std::string &resources) {
+        if (resources.empty()) return;
+        if (loaded_dir == resources && font_ready) return;
+        if (loaded_dir != resources) {
+            canisters.clear();
+            font_bytes.clear();
+            font_ready = false;
+            loaded_dir = resources;
+        }
+        const auto path = std::filesystem::path(resources) / "canisters" / "inter_card.ttf";
+        std::ifstream input(path, std::ios::binary);
+        if (!input) return;
+        font_bytes.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+        if (!font_bytes.empty() && stbtt_InitFont(&font, font_bytes.data(), 0))
+            font_ready = true;
+    }
+
+    const CanisterRgba *canister(const std::string &resources, const std::string &stock_id) {
+        if (resources.empty()) return nullptr;
+        ensure_font(resources);
+        auto it = canisters.find(stock_id);
+        if (it != canisters.end())
+            return it->second.rgba.empty() ? nullptr : &it->second;
+        if (canisters.size() >= 10) canisters.clear();
+        CanisterRgba entry;
+        const auto path = std::filesystem::path(resources) / "canisters" / (stock_id + ".png");
+        int w = 0, h = 0, ch = 0;
+        if (unsigned char *raw = stbi_load(path.string().c_str(), &w, &h, &ch, 4)) {
+            if (w > 0 && h > 0) {
+                entry.width = w;
+                entry.height = h;
+                entry.rgba.assign(raw, raw + size_t(w) * h * 4);
+            }
+            stbi_image_free(raw);
+        }
+        auto [inserted, _] = canisters.emplace(stock_id, std::move(entry));
+        return inserted->second.rgba.empty() ? nullptr : &inserted->second;
+    }
+};
+
+CardAssetCache &card_cache() {
+    static CardAssetCache cache;
+    return cache;
+}
+
+std::string today_card_date(const spk::Json &edits) {
+    std::string value = edits.at("card_date").as_string();
+    if (!value.empty()) return value.substr(0, 20);
+    std::time_t now = std::time(nullptr);
+    std::tm tm_now{};
+#if defined(_WIN32)
+    localtime_s(&tm_now, &now);
+#else
+    localtime_r(&now, &tm_now);
+#endif
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%04d.%02d.%02d",
+                  tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday);
+    return buf;
+}
+
+void draw_hairline_rect(Image16 &im, int x0, int y0, int x1, int y1, const Color &col, float alpha) {
+    auto put = [&](int x, int y) {
+        if (x >= 0 && x < int(im.width) && y >= 0 && y < int(im.height))
+            tint(pixel(im, x, y), col, alpha);
+    };
+    for (int x = x0; x <= x1; ++x) { put(x, y0); put(x, y1); }
+    for (int y = y0 + 1; y < y1; ++y) { put(x0, y); put(x1, y); }
+}
+
+void draw_filled_circle(Image16 &im, float cx, float cy, float r, const Color &col, float alpha) {
+    const int x0 = std::max(0, int(std::floor(cx - r - 1)));
+    const int x1 = std::min(int(im.width) - 1, int(std::ceil(cx + r + 1)));
+    const int y0 = std::max(0, int(std::floor(cy - r - 1)));
+    const int y1 = std::min(int(im.height) - 1, int(std::ceil(cy + r + 1)));
+    for (int y = y0; y <= y1; ++y) {
+        const float dy = y + .5f - cy;
+        for (int x = x0; x <= x1; ++x) {
+            const float dx = x + .5f - cx;
+            const float d = std::sqrt(dx * dx + dy * dy) - r;
+            const float cov = unit(.5f - d);
+            if (cov > 0.f) tint(pixel(im, x, y), col, alpha * cov);
+        }
+    }
+}
+
+void draw_line_seg(Image16 &im, int x0, int y0, int x1, int y1, const Color &col, float alpha) {
+    if (x0 == x1) {
+        if (x0 < 0 || x0 >= int(im.width)) return;
+        for (int y = std::max(0, std::min(y0, y1)); y <= std::min(int(im.height) - 1, std::max(y0, y1)); ++y)
+            tint(pixel(im, x0, y), col, alpha);
+    } else if (y0 == y1) {
+        if (y0 < 0 || y0 >= int(im.height)) return;
+        for (int x = std::max(0, std::min(x0, x1)); x <= std::min(int(im.width) - 1, std::max(x0, x1)); ++x)
+            tint(pixel(im, x, y0), col, alpha);
+    }
+}
+
+// Composite 3D canister PNG with box-area/bilinear filtering and soft elliptical studio contact shadow.
+int blit_canister(Image16 &im, const CanisterRgba *can, int x, int y, int target_h, bool dark_bg) {
+    if (!can || can->width <= 0 || can->height <= 0 || target_h <= 0) {
+        return std::max(1, int(std::lround(target_h * .68f)));
+    }
+    const int target_w = std::max(1, int(std::lround(double(can->width) * target_h / double(can->height))));
+
+    // Subtle soft studio contact shadow right beneath canister bottom rim
+    const float scx = x + target_w * .5f;
+    const float scy = y + target_h * .97f;
+    const float srx = std::max(2.f, target_w * .56f);
+    const float sry = std::max(1.5f, target_h * .085f);
+    const float max_sh = dark_bg ? .48f : .22f;
+    const int sx0 = std::max(0, int(std::floor(scx - srx * 1.6f)));
+    const int sx1 = std::min(int(im.width) - 1, int(std::ceil(scx + srx * 1.6f)));
+    const int sy0 = std::max(0, int(std::floor(scy - sry * 1.8f)));
+    const int sy1 = std::min(int(im.height) - 1, int(std::ceil(scy + sry * 1.8f)));
+    for (int yy = sy0; yy <= sy1; ++yy) {
+        const float ny = (yy + .5f - scy) / sry;
+        for (int xx = sx0; xx <= sx1; ++xx) {
+            const float nx = (xx + .5f - scx) / srx;
+            const float r2 = nx * nx + ny * ny;
+            if (r2 > 3.2f) continue;
+            const float sh = max_sh * std::exp(-1.55f * r2);
+            if (sh > .003f) tint(pixel(im, xx, yy), Color{0.f, 0.f, 0.f}, sh);
+        }
+    }
+
+    // Area-averaged (for downscaling) or bilinear (for upscaling) alpha-over compositing
+    const float scale_x = float(can->width) / float(target_w);
+    const float scale_y = float(can->height) / float(target_h);
+    const bool box = scale_x >= 1.5f && scale_y >= 1.5f;
+    const int dst_x0 = std::max(0, x), dst_x1 = std::min(int(im.width), x + target_w);
+    const int dst_y0 = std::max(0, y), dst_y1 = std::min(int(im.height), y + target_h);
+    for (int yy = dst_y0; yy < dst_y1; ++yy) {
+        const float fy = (yy - y + .5f) * scale_y;
+        for (int xx = dst_x0; xx < dst_x1; ++xx) {
+            const float fx = (xx - x + .5f) * scale_x;
+            float r = 0, g = 0, b = 0, a = 0;
+            if (box) {
+                const int ix0 = std::clamp(int(std::floor(fx - scale_x * .5f)), 0, can->width - 1);
+                const int ix1 = std::clamp(int(std::ceil(fx + scale_x * .5f)), ix0 + 1, can->width);
+                const int iy0 = std::clamp(int(std::floor(fy - scale_y * .5f)), 0, can->height - 1);
+                const int iy1 = std::clamp(int(std::ceil(fy + scale_y * .5f)), iy0 + 1, can->height);
+                float weight_sum = 0, rgb_w = 0;
+                for (int sy = iy0; sy < iy1; ++sy) {
+                    const uint8_t *row = &can->rgba[size_t(sy) * can->width * 4];
+                    for (int sx = ix0; sx < ix1; ++sx) {
+                        const uint8_t *s = row + size_t(sx) * 4;
+                        const float sa = s[3] * (1.f / 255.f);
+                        r += s[0] * (1.f / 255.f) * sa;
+                        g += s[1] * (1.f / 255.f) * sa;
+                        b += s[2] * (1.f / 255.f) * sa;
+                        a += sa;
+                        rgb_w += sa;
+                        weight_sum += 1.f;
+                    }
+                }
+                if (weight_sum > 0.f) a /= weight_sum;
+                if (rgb_w > 1e-6f) { r /= rgb_w; g /= rgb_w; b /= rgb_w; }
+            } else {
+                const float sx = std::clamp(fx - .5f, 0.f, float(can->width - 1));
+                const float sy = std::clamp(fy - .5f, 0.f, float(can->height - 1));
+                const int x0 = int(sx), y0 = int(sy);
+                const int x1 = std::min(x0 + 1, can->width - 1);
+                const int y1 = std::min(y0 + 1, can->height - 1);
+                const float tx = sx - x0, ty = sy - y0;
+                const uint8_t *p00 = &can->rgba[(size_t(y0) * can->width + x0) * 4];
+                const uint8_t *p10 = &can->rgba[(size_t(y0) * can->width + x1) * 4];
+                const uint8_t *p01 = &can->rgba[(size_t(y1) * can->width + x0) * 4];
+                const uint8_t *p11 = &can->rgba[(size_t(y1) * can->width + x1) * 4];
+                const float w00 = (1 - tx) * (1 - ty), w10 = tx * (1 - ty),
+                            w01 = (1 - tx) * ty, w11 = tx * ty;
+                const float a00 = p00[3] / 255.f, a10 = p10[3] / 255.f,
+                            a01 = p01[3] / 255.f, a11 = p11[3] / 255.f;
+                a = w00 * a00 + w10 * a10 + w01 * a01 + w11 * a11;
+                if (a > 1e-5f) {
+                    auto ch_b = [&](int k) {
+                        return (w00 * a00 * p00[k] + w10 * a10 * p10[k]
+                                + w01 * a01 * p01[k] + w11 * a11 * p11[k]) / (255.f * a);
+                    };
+                    r = ch_b(0); g = ch_b(1); b = ch_b(2);
+                }
+            }
+            if (a > .003f) tint(pixel(im, xx, yy), Color{r, g, b}, a);
+        }
+    }
+    return target_w;
+}
+
+enum class TextAlign { Left, Center, Right };
+
+float measure_ttf_width(const stbtt_fontinfo &font, std::string_view text, float scale, float tracking) {
+    float total = 0.f;
+    for (size_t i = 0; i < text.size(); ++i) {
+        int adv = 0, lsb = 0;
+        stbtt_GetCodepointHMetrics(&font, static_cast<unsigned char>(text[i]), &adv, &lsb);
+        total += adv * scale;
+        if (i + 1 < text.size()) {
+            total += stbtt_GetCodepointKernAdvance(
+                         &font, static_cast<unsigned char>(text[i]),
+                         static_cast<unsigned char>(text[i + 1])) * scale + tracking;
+        }
+    }
+    return total;
+}
+
+void draw_card_text(Image16 &im, const stbtt_fontinfo *font, std::string_view text,
+                    float x, float y, float px_height, float tracking,
+                    const Color &col, bool bold, TextAlign align, bool bottom_anchor = false,
+                    float max_width = 0.f) {
+    if (text.empty() || px_height < 2.f) return;
+    if (!font) {
+        // Fallback crisp vector lettering when resources directory is not supplied (e.g. unit test).
+        const BorderPainter p(im);
+        const float h = px_height * .72f;
+        const float max_w = max_width > 4.f ? max_width : float(im.width);
+        const float cy_f = bottom_anchor ? y - h * .5f : y;
+        if (align == TextAlign::Center) {
+            const float w_est = std::min(max_w, .9f * h * float(text.size()));
+            imprint(p, text, x - w_est * .5f, cy_f, h, max_w, col, .95f, false, false);
+        } else {
+            imprint(p, text, x, cy_f, h, max_w, col, .95f, align == TextAlign::Right, false);
+        }
+        return;
+    }
+
+    float h_eff = px_height;
+    float scale = stbtt_ScaleForPixelHeight(font, h_eff);
+    float total_w = measure_ttf_width(*font, text, scale, tracking);
+    if (max_width > 4.f && total_w > max_width) {
+        const float shrink = max_width / total_w;
+        h_eff = std::max(6.f, h_eff * shrink);
+        tracking *= shrink;
+        scale = stbtt_ScaleForPixelHeight(font, h_eff);
+        total_w = measure_ttf_width(*font, text, scale, tracking);
+    }
+
+    int hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
+    stbtt_GetCodepointBitmapBox(font, 'H', scale, scale, &hx0, &hy0, &hx1, &hy1);
+    const float cap_h = std::max(h_eff * .68f, float(-hy0));
+    const float baseline = bottom_anchor ? y : y + cap_h * .5f;
+
+    float pen_x = x;
+    if (align == TextAlign::Center) pen_x -= total_w * .5f;
+    else if (align == TextAlign::Right) pen_x -= total_w;
+
+    const float bold_px = bold ? std::clamp(h_eff * .022f, .35f, 3.2f) : 0.f;
+    const int pad = std::max(4, int(std::ceil(bold_px)) + 2);
+    const float dist_scale = 120.f / float(pad);
+    const float threshold = 128.f - bold_px * dist_scale;
+    const float aa_span = std::max(2.f, 1.15f * dist_scale);
+
+    for (size_t i = 0; i < text.size(); ++i) {
+        const int cp = static_cast<unsigned char>(text[i]);
+        int adv = 0, lsb = 0;
+        stbtt_GetCodepointHMetrics(font, cp, &adv, &lsb);
+        if (cp > 32) {
+            int gw = 0, gh = 0, gxoff = 0, gyoff = 0;
+            if (unsigned char *sdf = stbtt_GetCodepointSDF(
+                    font, scale, cp, pad, 128, dist_scale, &gw, &gh, &gxoff, &gyoff)) {
+                const int ox = int(std::lround(pen_x)) + gxoff;
+                const int oy = int(std::lround(baseline)) + gyoff;
+                for (int gy = 0; gy < gh; ++gy) {
+                    const int dy = oy + gy;
+                    if (dy < 0 || dy >= int(im.height)) continue;
+                    const unsigned char *row = sdf + size_t(gy) * gw;
+                    for (int gx = 0; gx < gw; ++gx) {
+                        const int dx = ox + gx;
+                        if (dx < 0 || dx >= int(im.width)) continue;
+                        const float cov = unit((float(row[gx]) - threshold) / aa_span + .5f);
+                        if (cov > .004f) tint(pixel(im, dx, dy), col, cov);
+                    }
+                }
+                stbtt_FreeSDF(sdf, nullptr);
+            }
+        }
+        pen_x += adv * scale;
+        if (i + 1 < text.size()) {
+            pen_x += stbtt_GetCodepointKernAdvance(
+                         font, cp, static_cast<unsigned char>(text[i + 1])) * scale + tracking;
+        }
+    }
+}
+} // namespace
+
+void finish_film_card(Image16 &image, const FrameLayout &f, const spk::Json &edits,
+                      const std::string &resources) {
+    const std::string stock_id = edits.at("film_stock").as_string();
+    const FilmCardSpec &spec = film_card_spec(stock_id);
+    const std::string date_str = today_card_date(edits);
+    const bool landscape = f.photo_width >= f.photo_height;
+    const float s = float(std::min(f.photo_width, f.photo_height));
+
+    auto &cache = card_cache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    cache.ensure_font(resources);
+    const stbtt_fontinfo *font = cache.font_ready ? &cache.font : nullptr;
+    const CanisterRgba *can = cache.canister(resources, spec.stock_id);
+
+    constexpr float kUnifiedCanisterRatio = .078f;
+
+    if (f.style == "film_card_white") {
+        // Subtle 1px photo edge hairline
+        draw_hairline_rect(image, f.left - 1, f.top - 1,
+                           f.left + f.photo_width, f.top + f.photo_height,
+                           Color{230 / 255.f, 228 / 255.f, 222 / 255.f}, 1.f);
+
+        const Color ink = {22 / 255.f, 22 / 255.f, 26 / 255.f};
+        const Color muted = {98 / 255.f, 98 / 255.f, 106 / 255.f};
+        const Color soft = {146 / 255.f, 144 / 255.f, 138 / 255.f};
+
+        const int cy = f.top + f.photo_height + f.bottom / 2;
+        const int can_h = std::max(10, int(std::lround(s * kUnifiedCanisterRatio)));
+        const int can_w = blit_canister(image, can, f.left, cy - can_h / 2, can_h, false);
+
+        const float tx = float(f.left + can_w) + s * .024f;
+        const float rx = float(f.left + f.photo_width);
+        const float gap = s * .0155f;
+        const float max_left_w = std::max(24.f, float(f.photo_width) * .60f - can_w);
+
+        draw_card_text(image, font, spec.full, tx, cy - gap,
+                       s * (landscape ? .034f : .033f), s * .0016f, ink, true,
+                       TextAlign::Left, false, max_left_w);
+        draw_card_text(image, font, spec.sub, tx, cy + gap + s * .002f,
+                       s * (landscape ? .020f : .019f), s * .0009f, muted, false,
+                       TextAlign::Left, false, max_left_w);
+
+        draw_card_text(image, font, date_str, rx, cy - gap,
+                       s * (landscape ? .023f : .022f), s * .0010f, ink, false,
+                       TextAlign::Right);
+        draw_card_text(image, font, "SPEKTRALENS", rx, cy + gap + s * .002f,
+                       s * (landscape ? .016f : .0155f), s * .0020f, soft, false,
+                       TextAlign::Right);
+    } else if (f.style == "film_card_black") {
+        const Color line = {44 / 255.f, 44 / 255.f, 52 / 255.f};
+        const Color ink = {244 / 255.f, 244 / 255.f, 248 / 255.f};
+        const Color muted = {162 / 255.f, 166 / 255.f, 178 / 255.f};
+        const Color dim = {122 / 255.f, 126 / 255.f, 138 / 255.f};
+        const Color acc = {240 / 255.f, 82 / 255.f, 61 / 255.f};
+
+        draw_hairline_rect(image, f.left - 1, f.top - 1,
+                           f.left + f.photo_width, f.top + f.photo_height, line, 1.f);
+
+        if (landscape) {
+            const int pad = f.left;
+            const int gap_mid = std::max(4, int(std::lround(s * .036f)));
+            const int sx = f.left + f.photo_width + gap_mid;
+            const int side_w = std::max(20, int(image.width) - pad - sx);
+            const int div_x = f.left + f.photo_width + gap_mid / 2;
+            draw_line_seg(image, div_x, f.top, div_x, f.top + f.photo_height, line, 1.f);
+
+            // Top archive badge
+            const float dot_r = std::max(1.5f, s * .0045f);
+            draw_filled_circle(image, sx + dot_r, f.top + s * .010f, dot_r, acc, 1.f);
+            draw_card_text(image, font, "ARCHIVE", sx + dot_r * 2.f + s * .010f,
+                           f.top + s * .010f, s * .0165f, s * .0020f, muted, false,
+                           TextAlign::Left);
+
+            // Sleek centered canister in upper sidebar
+            const int can_h = std::max(14, int(std::lround(f.photo_height * .195f)));
+            const int est_w = can && can->height > 0
+                ? std::max(1, int(std::lround(double(can->width) * can_h / double(can->height))))
+                : int(std::lround(can_h * .68f));
+            const int can_x = sx + (side_w - est_w) / 2;
+            const int can_y = f.top + int(std::lround(f.photo_height * .115f));
+            blit_canister(image, can, can_x, can_y, can_h, true);
+
+            // Centered 2-line stock brand + model (auto-shrunk if long)
+            const float cx = sx + side_w * .5f;
+            const float ny = float(can_y + can_h) + f.photo_height * .050f;
+            draw_card_text(image, font, spec.brand, cx, ny,
+                           s * .0165f, s * .0022f, muted, false, TextAlign::Center, false,
+                           float(side_w));
+            draw_card_text(image, font, spec.model, cx, ny + s * .032f,
+                           s * .030f, s * .0010f, ink, true, TextAlign::Center, false,
+                           float(side_w - 4));
+
+            const int div_y = int(std::lround(ny + s * .072f));
+            draw_line_seg(image, sx, div_y, sx + side_w, div_y, line, 1.f);
+
+            // 3-row fixed film spec table (ISO / TYPE / PROC)
+            const std::array<std::pair<const char *, const char *>, 3> rows = {{
+                {"ISO", spec.iso}, {"TYPE", spec.type}, {"PROC", spec.proc}
+            }};
+            float ry = float(div_y) + s * .044f;
+            const float row_step = s * .048f;
+            for (const auto &[k, v] : rows) {
+                draw_card_text(image, font, k, float(sx), ry,
+                               s * .0155f, s * .0012f, dim, false, TextAlign::Left);
+                draw_card_text(image, font, v, float(sx + side_w), ry,
+                               s * .0205f, s * .0005f, ink, false, TextAlign::Right, false,
+                               float(side_w) * .66f);
+                ry += row_step;
+            }
+
+            // Bottom pinned generation date
+            const int by = f.top + f.photo_height - 2;
+            draw_line_seg(image, sx, by - int(std::lround(s * .068f)),
+                          sx + side_w, by - int(std::lround(s * .068f)), line, 1.f);
+            draw_card_text(image, font, "GENERATED", float(sx), by - s * .038f,
+                           s * .015f, s * .0012f, dim, false, TextAlign::Left);
+            draw_card_text(image, font, date_str, float(sx), float(by - 2),
+                           s * .0215f, s * .0008f, ink, false, TextAlign::Left, true,
+                           float(side_w) * .80f);
+            draw_card_text(image, font, "SL", float(sx + side_w), float(by - 2),
+                           s * .0155f, s * .0008f, acc, true, TextAlign::Right, true);
+        } else {
+            // Portrait: bottom darkroom console with unified 7.8% canister & fine optical vernier ticks
+            const int cy = f.top + f.photo_height + f.bottom / 2 - std::max(2, int(std::lround(s * .004f)));
+            const int tick_y = int(image.height) - std::max(3, int(std::lround(s * .014f)));
+            const Color tick_col = {54 / 255.f, 54 / 255.f, 64 / 255.f};
+            for (int i = 0; i <= 20; ++i) {
+                const int tx_i = f.left + int(std::lround(double(f.photo_width) * i / 20.0));
+                const int th_i = std::max(2, int(std::lround(s * (i % 5 == 0 ? .007f : .0035f))));
+                draw_line_seg(image, tx_i, tick_y, tx_i, tick_y - th_i, tick_col, 1.f);
+            }
+
+            const int can_h = std::max(10, int(std::lround(s * kUnifiedCanisterRatio)));
+            const int can_w = blit_canister(image, can, f.left, cy - can_h / 2, can_h, true);
+
+            const float tx = float(f.left + can_w) + s * .024f;
+            const float rx = float(f.left + f.photo_width);
+            const float gap = s * .0155f;
+            const float dot_r = std::max(1.5f, s * .0042f);
+            const float max_left_w = std::max(24.f, float(f.photo_width) * .60f - can_w);
+
+            draw_filled_circle(image, tx + dot_r, cy - gap, dot_r, acc, 1.f);
+            draw_card_text(image, font, spec.full, tx + dot_r * 2.f + s * .009f, cy - gap,
+                           s * .033f, s * .0014f, ink, true, TextAlign::Left, false,
+                           max_left_w - dot_r * 2.f - s * .009f);
+            draw_card_text(image, font, spec.sub, tx, cy + gap + s * .002f,
+                           s * .019f, s * .0009f, muted, false, TextAlign::Left, false,
+                           max_left_w);
+
+            draw_card_text(image, font, date_str, rx, cy - gap,
+                           s * .022f, s * .0009f, ink, false, TextAlign::Right);
+            draw_card_text(image, font, "SPEKTRALENS", rx, cy + gap + s * .002f,
+                           s * .0155f, s * .0018f, dim, false, TextAlign::Right);
+        }
+    }
+    image.has_alpha = false;
 }
 } // namespace mobile

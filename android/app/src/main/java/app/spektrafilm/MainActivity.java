@@ -57,7 +57,7 @@ public final class MainActivity extends Activity {
   private static final PathInterpolator EDITOR_EASING = new PathInterpolator(.2f, 0f, 0f, 1f);
   private static final int GALLERY_SOURCE_MIN_EDGE = 384;
   private static final int GALLERY_WARM_COUNT = 3;
-  private static final long GALLERY_CACHE_BYTES = 16L * 1024 * 1024;
+  private static final long GALLERY_CACHE_BYTES = 24L * 1024 * 1024;
   private static final String LIGHT_LEAK_AMOUNT = "light_leak_amount";
   private static final String LIGHT_LEAK_SEED = "light_leak_seed";
   private static final String LIGHT_LEAK_MODE = "light_leak_mode";
@@ -163,6 +163,8 @@ public final class MainActivity extends Activity {
       hslBand = "red";
   private volatile boolean destroyed;
   private volatile int revision;
+  private volatile int editRevision;
+  private volatile int frameLoadTicket;
   private long engine; // readiness marker; native engine pointers remain in the renderer process.
   private volatile SpectralRenderer renderer;
   // 画廊只展示原片的默认胶片风格；二次调节仅影响主预览，不使画廊缓存失效。
@@ -192,6 +194,7 @@ public final class MainActivity extends Activity {
   // 面板重建后引擎可能还没就绪，缩略图请求会被跳过；就绪/渲染完成后要能再补一次。
   private HorizontalScrollView filmScrollRef;
   private View filmGridRef;
+  private ScrollView filmGridScrollRef;
   private List<ImageView> thumbViewsRef = new ArrayList<>();
   private List<String> thumbStocksRef = new ArrayList<>();
   private int thumbStridePx, thumbSizePx;
@@ -203,12 +206,13 @@ public final class MainActivity extends Activity {
   private int filmCategoryBarScrollX;
   private int pendingFilmScrollX = -1;
   private int paperGradeScrollX;
+  private int frameStyleScrollX;
   private int engineBootGeneration;
   private long engineBootStarted;
   private boolean engineBootPending;
   private String engineBootStage = "连接计算进程";
   private boolean bootStateReading;
-  private Bitmap openedSource;
+  private volatile Bitmap openedSource;
   private boolean ready, comparing;
   private volatile boolean exporting, batchImportRunning;
   private String filename = "胶片边缘 · 示例照片";
@@ -219,7 +223,7 @@ public final class MainActivity extends Activity {
   private AboutPage aboutPage;
   private SponsorPage sponsorPage;
   private LinearLayout homeScreen, editorScreen, panel, tabRow, filmCards, historyList;
-  private FrameLayout homeStage, homeHeroBox;
+  private FrameLayout homeStage, homeHeroBox, homeNavPill, editorMetaRow;
   private FrameLayout homeEmptyImportHost, homePopulatedImportHost;
   private LinearLayout homeContent, homeTopActions, homeEmptyWelcome, homePopulatedSection;
   private LinearLayout homeFilterBar, homeSelectionHeader;
@@ -659,6 +663,8 @@ public final class MainActivity extends Activity {
 
   private void defaults() {
     putDefault("film_stock", defaultFilmStock());
+    // A null or stale stock id survives has() and would become the literal "null" profile.
+    if (find(films, settings.optString("film_stock")) == null) set("film_stock", defaultFilmStock());
     putDefault("print_stock", "kodak_portra_endura");
     putDefault("exposure_compensation_ev", 0);
     putDefault("print_brightness", 0);
@@ -695,7 +701,7 @@ public final class MainActivity extends Activity {
   }
 
   private void putDefault(String k, Object v) {
-    if (!settings.has(k)) set(k, v);
+    if (!settings.has(k) || settings.isNull(k)) set(k, v);
   }
 
   private static double sliderDefault(String key) {
@@ -909,7 +915,8 @@ public final class MainActivity extends Activity {
     // 预览区高度是从编辑区高度推出来的，编辑区一变（旋转、窗口尺寸、系统栏变化）就重算。
     editorBody.addOnLayoutChangeListener(
         (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
-          if (bottom - top != oldBottom - oldTop) updateEditorLayout();
+          if (bottom - top != oldBottom - oldTop || right - left != oldRight - oldLeft)
+            updateEditorLayout();
         });
     photoStage = new FrameLayout(this);
     previewColumn.addView(photoStage, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -956,6 +963,7 @@ public final class MainActivity extends Activity {
     previewColumn.addView(editorStrip, new LinearLayout.LayoutParams(-1, dp(64)));
     editorStrip.setVisibility(View.GONE);
     FrameLayout meta = new FrameLayout(this);
+    editorMetaRow = meta;
     meta.setPadding(dp(12), 0, dp(12), 0);
     fileLabel = text(filename, AppStyle.TYPE_MICRO, MUTED);
     fileLabel.setSingleLine(true);
@@ -1080,11 +1088,51 @@ public final class MainActivity extends Activity {
       editorBody.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
       panelSpacer.setVisibility(wide ? View.GONE : View.VISIBLE);
       panel.setVisibility(panelCollapsed ? View.GONE : View.VISIBLE);
+      int windowW = FoldableUi.windowWidthDp(this);
+      int panelWidthDp = FoldableLayout.editorPanelWidthDp(windowW);
+      boolean foldableSplit = wide && panelWidthDp > 0;
+      if (photoStage != null) {
+        if (foldableSplit) {
+          photoStage.setBackground(AppStyle.shape(this, AppStyle.STAGE_BG, 12f, false));
+          photoStage.setClipToOutline(true);
+        } else {
+          // Compact outer screen and collapsed fullscreen stay edge-to-edge (v0.6.0 exact).
+          photoStage.setBackground(null);
+          photoStage.setClipToOutline(false);
+        }
+        // PhotoView already applies FRAME_PAD_DP (12dp) inside STAGE_BG; keep padding 0 to avoid
+        // double 24dp insets and touch dead zones.
+        photoStage.setPadding(0, 0, 0, 0);
+      }
+      if (editorMetaRow != null
+          && editorMetaRow.getLayoutParams() instanceof LinearLayout.LayoutParams metaLp) {
+        int desiredMetaBottom = foldableSplit ? 0 : dp(12);
+        if (metaLp.bottomMargin != desiredMetaBottom) {
+          metaLp.bottomMargin = desiredMetaBottom;
+          editorMetaRow.setLayoutParams(metaLp);
+        }
+      }
+      if (tabRow != null && tabRow.getLayoutParams() instanceof LinearLayout.LayoutParams tabLp) {
+        if (panelCollapsed && FoldableLayout.isFoldable(windowW)) {
+          // Folded fullscreen immersive viewing: centered 340dp floating 4-Tab dock.
+          tabLp.width = dp(340);
+          tabLp.gravity = Gravity.CENTER_HORIZONTAL;
+          tabLp.setMargins(dp(12), dp(9), dp(12), dp(14));
+          tabRow.setElevation(dp(6));
+        } else {
+          tabLp.width = -1;
+          tabLp.gravity = Gravity.NO_GRAVITY;
+          tabLp.setMargins(dp(12), dp(9), dp(12), dp(14));
+          tabRow.setElevation(0);
+        }
+        tabRow.setLayoutParams(tabLp);
+      }
       if (wide) {
-        int panelWidthDp = FoldableLayout.editorPanelWidthDp(FoldableUi.windowWidthDp(this));
         if (panelWidthDp > 0) {
-          // 折叠屏展开态：左侧预览自适应避开折痕，右侧工具栏锁定 296/336dp 满高。
-          previewColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1f));
+          // 折叠屏展开态：左侧预览自适应避开折痕，顶部与右栏 panel(4dp) 对齐，右侧锁定 296/336dp 满高。
+          LinearLayout.LayoutParams stageLp = new LinearLayout.LayoutParams(0, -1, 1f);
+          stageLp.setMargins(dp(16), dp(4), 0, dp(14));
+          previewColumn.setLayoutParams(stageLp);
           LinearLayout.LayoutParams toolLp = new LinearLayout.LayoutParams(dp(panelWidthDp), -1);
           toolLp.leftMargin = dp(10);
           toolsColumn.setLayoutParams(toolLp);
@@ -1274,6 +1322,10 @@ public final class MainActivity extends Activity {
       return false;
     if (library.size() <= 1 || findFrame(activeId) == null) return false;
     if (editorBody == null || editorBody.getHeight() <= 0) return true;
+    if (wideEditor() && !panelCollapsed) {
+      // Split layout puts the tools column on the right; previewColumn owns the full body height.
+      return editorBody.getHeight() >= dp(226);
+    }
     int tools = dp(52) + dp(23);
     if (!panelCollapsed) tools += dp(4) + dp(panelMaxHeightForStrip(true));
     return Math.max(0, editorBody.getHeight() - tools) >= dp(226);
@@ -1314,11 +1366,12 @@ public final class MainActivity extends Activity {
   }
 
   /**
-   * 曲线页的图表高度（dp）：面板预算扣掉顶/底内边距 30 + 子页签 30 + 间距 16 + 通道行 36 + 间距 12
-   * 及取整余量，有/无缩略图条时图表都能完整落在可视区内不滚动。
+   * 曲线页的图表高度（dp）：折叠分栏态对齐设计稿 180dp 满宽画布（下方 3 根联动滑杆一屏直出）；
+   * 直板紧凑态按面板预算在 152–184dp 之间收敛，保证画布完整落在首屏且不遮挡下方滑杆入口。
    */
   private int curveChartHeight() {
-    return Math.min(240, Math.max(150, panelMaxHeight() - 134));
+    if (wideEditor()) return 180;
+    return Math.min(184, Math.max(152, panelMaxHeight() - 150));
   }
 
   /**
@@ -1465,10 +1518,13 @@ public final class MainActivity extends Activity {
     // 2. Populated-state top import progress host (shown only while importing with photos present).
     homePopulatedImportHost = new FrameLayout(this);
     homePopulatedImportHost.setVisibility(View.GONE);
+    FrameLayout popImpWrapped =
+        FoldableUi.wrapCenteredMaxWidth(
+            this, homePopulatedImportHost, FoldableLayout::homeConstrainedMaxDp);
     LinearLayout.LayoutParams popImpLp = new LinearLayout.LayoutParams(-1, -2);
     popImpLp.topMargin = dp(10);
     popImpLp.bottomMargin = dp(4);
-    content.addView(homePopulatedImportHost, popImpLp);
+    content.addView(popImpWrapped, popImpLp);
 
     homeImportHint = text("", AppStyle.TYPE_MICRO, MUTED);
     homeImportHint.setLineSpacing(dp(3), 1);
@@ -1685,10 +1741,12 @@ public final class MainActivity extends Activity {
     pill.setClipToOutline(true);
     pill.setElevation(dp(8));
     pill.setClickable(true);
+    homeNavPill = pill;
     HomeTab[] tabs = HomeTab.values();
     int maxNavDp = tabs.length <= 3 ? 276 : 336;
-    int navWidth =
-        Math.min(dp(maxNavDp), getResources().getDisplayMetrics().widthPixels - dp(32));
+    int availW = FoldableUi.visibleWindowWidthPx(this);
+    if (availW <= 0) availW = getResources().getDisplayMetrics().widthPixels;
+    int navWidth = Math.min(dp(maxNavDp), Math.max(dp(180), availW - dp(32)));
     int innerWidth = Math.max(1, navWidth - dp(8));
     homeNavSlotWidth = innerWidth / tabs.length;
 
@@ -1904,6 +1962,7 @@ public final class MainActivity extends Activity {
   }
 
   private void showHome(boolean keepEdits) {
+    ++frameLoadTicket;
     closeCropPage();
     if (photo != null) photo.cancelPendingSingleTap();
     finishPendingSliderTaps();
@@ -2166,18 +2225,32 @@ public final class MainActivity extends Activity {
     attributes.alpha = 1f;
     window.setAttributes(attributes);
     window.setWindowAnimations(0);
-    dialog.setOnDismissListener(d -> editorExitDialog = null);
+    Runnable resizeExitDialog =
+        () -> {
+          if (!dialog.isShowing()) return;
+          int maxDp = FoldableLayout.exitConfirmMaxDp(FoldableUi.windowWidthDp(this));
+          // Add 24dp for inset left/right padding so the visible card matches 460/480dp.
+          int windowMaxDp = maxDp > 0 ? maxDp + 24 : maxDp;
+          int avail = FoldableUi.visibleWindowWidthPx(this);
+          if (avail <= 0) avail = getResources().getDisplayMetrics().widthPixels;
+          int width = FoldableUi.constrainedWidthPx(this, avail, windowMaxDp, 0);
+          window.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT);
+        };
+    View hostDecor = getWindow().getDecorView();
+    View.OnLayoutChangeListener exitResize =
+        (v, l, t, r, b, ol, ot, or, ob) -> {
+          if (dialog.isShowing() && (r - l != or - ol || b - t != ob - ot)) resizeExitDialog.run();
+        };
+    dialog.setOnDismissListener(
+        d -> {
+          hostDecor.removeOnLayoutChangeListener(exitResize);
+          if (editorExitDialog == dialog) editorExitDialog = null;
+        });
     editorExitDialog = dialog;
     dialog.show();
-    WindowManager.LayoutParams shown = window.getAttributes();
-    shown.alpha = 1f;
-    window.setAttributes(shown);
-    window.getDecorView().setAlpha(1f);
-    int maxDp = FoldableLayout.exitConfirmMaxDp(FoldableUi.windowWidthDp(this));
-    int width =
-        FoldableUi.constrainedWidthPx(
-            this, getResources().getDisplayMetrics().widthPixels, maxDp, 12);
-    window.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT);
+    FoldableUi.stabilizeSheetWindow(window, card);
+    hostDecor.addOnLayoutChangeListener(exitResize);
+    resizeExitDialog.run();
   }
 
   private void discardEditorSession() {
@@ -2263,6 +2336,7 @@ public final class MainActivity extends Activity {
       for (SeekBar bar : sliders.values())
         if (bar instanceof AdjustmentSeekBar)
           ((AdjustmentSeekBar) bar).finishPendingTapOutside(event.getRawX(), event.getRawY());
+      if (cropPage != null) cropPage.finishPendingTapOutside(event.getRawX(), event.getRawY());
     }
     return super.dispatchTouchEvent(event);
   }
@@ -2393,9 +2467,9 @@ public final class MainActivity extends Activity {
     if (favorite && badge == null) {
       badge = favoriteBadgeView();
       FrameLayout.LayoutParams params =
-          new FrameLayout.LayoutParams(dp(16), dp(16), Gravity.TOP | Gravity.END);
-      params.topMargin = dp(6);
-      params.rightMargin = dp(6);
+          new FrameLayout.LayoutParams(dp(14), dp(14), Gravity.TOP | Gravity.END);
+      params.topMargin = dp(5);
+      params.rightMargin = dp(5);
       frame.addView(badge, params);
       filmBadges.put(stockId, badge);
     } else if (!favorite && badge != null) {
@@ -2405,17 +2479,20 @@ public final class MainActivity extends Activity {
   }
 
   /**
-   * Draws the selected-film stroke fully inside the thumbnail. A plain foreground stroke is
-   * centred on the frame edge, so half of it gets clipped and the ring looks about 1dp thick.
+   * Draws the selected-film stroke in the 3dp gutter around the thumbnail, so it never covers
+   * image pixels. A plain foreground stroke is centred on the frame edge and half of it gets
+   * clipped; keeping {@code inset = max(0, dp(3) - dp(2))} prevents 1px bleed on fractional
+   * densities (1.75x / 2.75x).
    */
   private void setFilmSelectionRing(FrameLayout frame, boolean selected) {
     if (!selected) {
       frame.setForeground(null);
       return;
     }
-    GradientDrawable ring = box(Color.TRANSPARENT, 8f);
-    ring.setStroke(dp(2), GOLD);
-    int inset = Math.max(1, dp(1));
+    GradientDrawable ring = box(Color.TRANSPARENT, 12f);
+    int stroke = dp(2);
+    ring.setStroke(stroke, GOLD);
+    int inset = Math.max(0, dp(3) - stroke);
     frame.setForeground(new InsetDrawable(ring, inset, inset, inset, inset));
   }
 
@@ -2440,11 +2517,14 @@ public final class MainActivity extends Activity {
       categoryScrollX.clear();
       filmCategory = "全部";
       pendingFilmScrollX = 0;
+      frameStyleScrollX = 0;
     }
     controls.removeIf(v -> descendant(v, panel));
     clearFavoriteMenu();
     panel.removeAllViews();
     filmScrollRef = null;
+    filmGridRef = null;
+    filmGridScrollRef = null;
     filmGridRef = null;
     thumbTargets.clear();
     thumbViewsRef = new ArrayList<>();
@@ -2669,7 +2749,8 @@ public final class MainActivity extends Activity {
             card.setFocusable(true);
             card.setGravity(Gravity.CENTER_HORIZONTAL);
 
-            FrameLayout frame = new FrameLayout(this);
+            SquareFrameLayout frame = new SquareFrameLayout(this);
+            frame.setPadding(dp(3), dp(3), dp(3), dp(3));
             setFilmSelectionRing(frame, selected);
             ImageView thumb = new ImageView(this);
             thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -2677,7 +2758,7 @@ public final class MainActivity extends Activity {
             thumb.setBackground(box(AppStyle.CONTROL, 9f));
             thumb.setClipToOutline(true);
             frame.addView(thumb, new FrameLayout.LayoutParams(-1, -1));
-            add(card, frame, gridThumbDp, gridThumbDp);
+            card.addView(frame, new LinearLayout.LayoutParams(-1, -2));
 
             if (isFavoriteFilm(stock.id) && !filmCategory.equals("收藏")) {
               ImageView badge = favoriteBadgeView();
@@ -2737,6 +2818,12 @@ public final class MainActivity extends Activity {
         add(editor, grid, -1, -2);
         filmScrollRef = null;
         filmGridRef = grid;
+        filmGridScrollRef = findAncestorScrollView(grid);
+        if (filmGridScrollRef != null) {
+          filmGridScrollRef.setOnScrollChangeListener(
+              (v, scrollX, scrollY, oldScrollX, oldScrollY) ->
+                  fillGridThumbs(thumbViews, thumbStocks));
+        }
         thumbViewsRef = thumbViews;
         thumbStocksRef = thumbStocks;
         thumbStridePx = dp(gridThumbDp + cellGapDp);
@@ -2759,6 +2846,7 @@ public final class MainActivity extends Activity {
           card.setFocusable(true);
 
           FrameLayout frame = new FrameLayout(this);
+          frame.setPadding(dp(3), dp(3), dp(3), dp(3));
           setFilmSelectionRing(frame, selected);
           ImageView thumb = new ImageView(this);
           thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -3292,7 +3380,7 @@ public final class MainActivity extends Activity {
       groups.addView(tab, tabParams);
     }
     add(editor, groups, -1, 30);
-    gap(editor, 16);
+    gap(editor, gradeSection.equals("曲线") ? 12 : 16);
     if (gradeSection.equals("基础")) {
       slider("grade_temperature", "色温", -100, 100, 1, "");
       slider("grade_tint", "色调", -100, 100, 1, "");
@@ -3305,68 +3393,7 @@ public final class MainActivity extends Activity {
       slider("grade_white", "白点", 0, 50, 1, " %");
       slider("grade_saturation", "饱和度", -100, 100, 1, "");
     } else if (gradeSection.equals("曲线")) {
-      String[] ids = {"rgb", "luma", "r", "g", "b"},
-          names = {"RGB 总曲线", "亮度曲线", "红通道", "绿通道", "蓝通道"};
-      // 通道按钮和「重置」并成一行。重置原来单占 36dp 一整行，为一个低频按钮付一整行代价，
-      // 曲线底下因此空出一截；挪到行尾做小字按钮，通道名也能占到更宽的宽度。
-      LinearLayout channelRow = horizontal();
-      TextView channel =
-          button(
-              names[Math.max(0, Arrays.asList(ids).indexOf(curveChannel))] + "",
-              INK,
-              AppStyle.CONTROL);
-      channelRow.addView(channel, new LinearLayout.LayoutParams(0, dp(36), 1));
-      channel.setOnClickListener(
-          v ->
-              new Haptics.DialogBuilder(this)
-                  .setTitle("曲线通道")
-                  .setItems(
-                      names,
-                      (d, n) -> {
-                        curveChannel = ids[n];
-                        buildPanel();
-                      })
-                  .show());
-      String key = "curve_" + curveChannel;
-      TextView clear = button("重置", MUTED, BG);
-      clear.setTextSize(AppStyle.TYPE_LABEL);
-      clear.setPadding(dp(6), 0, dp(4), 0);
-      clear.setMinHeight(0);
-      clear.setContentDescription("重置当前曲线");
-      clear.setOnClickListener(
-          v -> {
-            set(
-                key,
-                new JSONArray()
-                    .put(new JSONArray().put(0).put(0))
-                    .put(new JSONArray().put(1).put(1)));
-            scheduleRender();
-            buildPanel();
-          });
-      channelRow.addView(clear, new LinearLayout.LayoutParams(dp(48), dp(36)));
-      add(editor, channelRow, -1, 36);
-      gap(editor, 12);
-      int color =
-          curveChannel.equals("r")
-              ? AppStyle.CURVE_R
-              : curveChannel.equals("g")
-                  ? AppStyle.CURVE_G
-                  : curveChannel.equals("b") ? AppStyle.CURVE_B : INK;
-      final CurveEditor[] holder = new CurveEditor[1];
-      holder[0] =
-          new CurveEditor(
-              this,
-              settings.optJSONArray(key),
-              color,
-              () -> {
-                set(key, holder[0].value());
-                scheduleRender();
-              });
-      // 图表高度跟着面板预算走：矮屏机器上图表自己矮一点，好过被面板底边切掉半截——
-      // 图里那截曲线是拖点用的，切掉了等于这页没法用。
-      add(editor, holder[0], -1, curveChartHeight());
-      controls.add(holder[0]);
-      showCurveHint();
+      buildCurveSection();
     } else if (gradeSection.equals("颜色分级")) {
       String[] ids = {"master", "shadows", "midtones", "highlights"},
           names = {"全局", "阴影", "中间调", "高光"};
@@ -3423,6 +3450,284 @@ public final class MainActivity extends Activity {
     }
   }
 
+  private int curveChannelColor(String channel) {
+    return switch (channel) {
+      case "r" -> AppStyle.CURVE_R;
+      case "g" -> AppStyle.CURVE_G;
+      case "b" -> AppStyle.CURVE_B;
+      case "luma" -> INK;
+      default -> GOLD;
+    };
+  }
+
+  private int curveChipAccent(String channel) {
+    return switch (channel) {
+      case "r" -> AppStyle.CURVE_R;
+      case "g" -> AppStyle.CURVE_G;
+      case "b" -> AppStyle.CURVE_B;
+      default -> GOLD;
+    };
+  }
+
+  private boolean isCurveChannelIdentity(String channel) {
+    JSONArray arr = settings.optJSONArray("curve_" + channel);
+    if (arr == null || arr.length() < 2) return true;
+    int n = Math.min(arr.length(), CurveMath.MAX_POINTS);
+    float[] xs = new float[n];
+    float[] ys = new float[n];
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+      JSONArray pt = arr.optJSONArray(i);
+      if (pt == null) continue;
+      xs[count] = Math.max(0f, Math.min(1f, (float) pt.optDouble(0)));
+      ys[count] = Math.max(0f, Math.min(1f, (float) pt.optDouble(1)));
+      count++;
+    }
+    return CurveMath.isIdentity(xs, ys, count);
+  }
+
+  private void buildCurveSection() {
+    String[] ids = {"rgb", "luma", "r", "g", "b"};
+    String[] labels = {"RGB", "亮度", "红", "绿", "蓝"};
+    String[] descriptions = {"RGB 总曲线", "亮度曲线", "红通道曲线", "绿通道曲线", "蓝通道曲线"};
+    float[] weights = {1.15f, 1.15f, 0.9f, 0.9f, 0.9f};
+
+    LinearLayout channelRow = horizontal();
+    LinearLayout chips = horizontal();
+    for (int i = 0; i < ids.length; i++) {
+      final String id = ids[i];
+      boolean picked = curveChannel.equals(id);
+      int accent = curveChipAccent(id);
+      TextView chip = button(labels[i], picked ? accent : MUTED, BG);
+      chip.setTextSize(AppStyle.TYPE_MICRO);
+      chip.setPadding(0, 0, 0, 0);
+      chip.setMinHeight(0);
+      chip.setSelected(picked);
+      chip.setContentDescription(descriptions[i]);
+      chip.setAutoSizeTextTypeUniformWithConfiguration(
+          9, 11, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
+      if (picked) {
+        int softFill =
+            accent == GOLD
+                ? AppStyle.ACCENT_SOFT
+                : AppStyle.withAlpha(accent, AppStyle.isLight() ? 0.11f : 0.16f);
+        GradientDrawable bg = AppStyle.shape(this, softFill, AppStyle.R_SMALL, false);
+        bg.setStroke(Math.max(1, dp(.85f)), accent);
+        chip.setBackground(
+            new android.graphics.drawable.RippleDrawable(
+                ColorStateList.valueOf(AppStyle.RIPPLE),
+                bg,
+                AppStyle.shape(this, Color.WHITE, AppStyle.R_SMALL, false)));
+      } else if (!isCurveChannelIdentity(id)) {
+        int dotSize = dp(4);
+        GradientDrawable dot = new GradientDrawable();
+        dot.setShape(GradientDrawable.OVAL);
+        dot.setColor(curveChannelColor(id));
+        dot.setBounds(0, 0, dotSize, dotSize);
+        android.text.SpannableStringBuilder sb =
+            new android.text.SpannableStringBuilder("  " + labels[i]);
+        sb.setSpan(
+            new android.text.style.ImageSpan(
+                dot, android.text.style.DynamicDrawableSpan.ALIGN_CENTER),
+            0,
+            1,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        chip.setText(sb);
+      }
+      AppStyle.setTypeface(chip, picked ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_MEDIUM);
+      chip.setOnClickListener(
+          v -> {
+            if (!curveChannel.equals(id)) {
+              curveChannel = id;
+              buildPanel();
+            }
+          });
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(30), weights[i]);
+      if (i > 0) lp.leftMargin = dp(4);
+      chips.addView(chip, lp);
+    }
+    channelRow.addView(chips, new LinearLayout.LayoutParams(0, dp(30), 1));
+
+    String key = "curve_" + curveChannel;
+    TextView clear = button("重置", MUTED, BG);
+    clear.setTextSize(AppStyle.TYPE_MICRO);
+    AppStyle.setTypeface(clear, AppStyle.FONT_MEDIUM);
+    clear.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+    clear.setPadding(dp(6), 0, dp(2), 0);
+    clear.setMinHeight(0);
+    clear.setMinWidth(dp(38));
+    clear.setContentDescription("重置当前曲线");
+    LinearLayout.LayoutParams clearLp = new LinearLayout.LayoutParams(-2, dp(30));
+    clearLp.leftMargin = dp(8);
+    channelRow.addView(clear, clearLp);
+    add(editor, channelRow, -1, 30);
+    gap(editor, 10);
+
+    final CurveEditor[] holder = new CurveEditor[1];
+    final float[] anchors = {
+      CurveMath.ANCHOR_SHADOWS, CurveMath.ANCHOR_MIDTONES, CurveMath.ANCHOR_HIGHLIGHTS
+    };
+    final String[] sliderLabels = {"阴影控制点", "中间调控制点", "高光控制点"};
+    final AdjustmentSeekBar[] zoneBars = new AdjustmentSeekBar[3];
+    final TextView[] zoneValues = new TextView[3];
+    final boolean[] syncing = {false};
+
+    Runnable refreshReset =
+        () -> {
+          boolean active = holder[0] != null && !holder[0].isIdentity();
+          clear.setEnabled(active);
+          clear.setTextColor(active ? INK : MUTED);
+          clear.setAlpha(active ? 1f : 0.42f);
+        };
+
+    Runnable syncSlidersFromCurve =
+        () -> {
+          if (holder[0] == null) return;
+          syncing[0] = true;
+          for (int i = 0; i < 3; i++) {
+            if (zoneBars[i] == null || zoneValues[i] == null) continue;
+            int v = holder[0].readAnchorSlider(anchors[i]);
+            zoneBars[i].setProgress(v - CurveMath.SLIDER_MIN);
+            String formatted = CurveMath.formatSliderValue(v);
+            zoneValues[i].setText(formatted);
+            if (Build.VERSION.SDK_INT >= 30) zoneBars[i].setStateDescription(formatted);
+          }
+          syncing[0] = false;
+          refreshReset.run();
+        };
+
+    holder[0] =
+        new CurveEditor(
+            this,
+            settings.optJSONArray(key),
+            curveChannelColor(curveChannel),
+            syncSlidersFromCurve,
+            () -> {
+              set(key, holder[0].value());
+              scheduleRender();
+            });
+    add(editor, holder[0], -1, curveChartHeight());
+    controls.add(holder[0]);
+    gap(editor, 14);
+
+    int[] neutralTrack = new int[] {AppStyle.SLIDER_TRACK, AppStyle.SLIDER_TRACK};
+    int span = CurveMath.SLIDER_MAX - CurveMath.SLIDER_MIN;
+    int zeroProgress = -CurveMath.SLIDER_MIN;
+    for (int i = 0; i < 3; i++) {
+      final int idx = i;
+      final float anchorX = anchors[i];
+      LinearLayout row = vertical();
+      LinearLayout header = horizontal();
+      header.setMinimumHeight(dp(16));
+      TextView name = text(sliderLabels[i], AppStyle.TYPE_BODY, INK);
+      AppStyle.setTypeface(name, AppStyle.FONT_MEDIUM);
+      name.setMaxLines(1);
+      name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+      LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(0, -2, 1);
+      nameLp.setMarginEnd(dp(8));
+      header.addView(name, nameLp);
+      TextView valView = text("0", AppStyle.TYPE_LABEL, AppStyle.VALUE);
+      AppStyle.setNumericTypeface(valView);
+      AppStyle.setTypeface(valView, AppStyle.FONT_SEMIBOLD);
+      valView.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+      valView.setSingleLine(true);
+      add(header, valView, -2, -2);
+      add(row, header, -1, -2);
+
+      AdjustmentSeekBar bar = new AdjustmentSeekBar(this, neutralTrack);
+      bar.setMax(span);
+      bar.setDetentProgress(zeroProgress);
+      bar.setContentDescription(sliderLabels[i]);
+      zoneBars[i] = bar;
+      zoneValues[i] = valView;
+      controls.add(bar);
+      add(row, bar, -1, AppStyle.TOUCH_PRIMARY);
+      LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+      if (i < 2) rowLp.bottomMargin = dp(8);
+      editor.addView(row, rowLp);
+
+      bar.setOnResetListener(
+          () -> {
+            if (exporting || activeImport != null || destroyed) return;
+            if (holder[0].readAnchorSlider(anchorX) == 0) return;
+            holder[0].applyAnchorSlider(anchorX, 0);
+            syncSlidersFromCurve.run();
+            set(key, holder[0].value());
+            if (Haptics.enabled) {
+              bar.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
+            }
+            scheduleRender();
+          });
+
+      bar.setOnSeekBarChangeListener(
+          new SeekBar.OnSeekBarChangeListener() {
+            private String beforeJson;
+            private boolean tracking;
+            private boolean gradeWasEnabled;
+
+            public void onProgressChanged(SeekBar b, int pos, boolean user) {
+              if (!user || syncing[0] || destroyed || exporting || activeImport != null) return;
+              int v = pos + CurveMath.SLIDER_MIN;
+              holder[0].applyAnchorSlider(anchorX, v);
+              String formatted = CurveMath.formatSliderValue(v);
+              valView.setText(formatted);
+              if (Build.VERSION.SDK_INT >= 30) b.setStateDescription(formatted);
+              syncing[0] = true;
+              for (int j = 0; j < 3; j++) {
+                if (j == idx || zoneBars[j] == null || zoneValues[j] == null) continue;
+                int otherVal = holder[0].readAnchorSlider(anchors[j]);
+                zoneBars[j].setProgress(otherVal - CurveMath.SLIDER_MIN);
+                String otherFmt = CurveMath.formatSliderValue(otherVal);
+                zoneValues[j].setText(otherFmt);
+                if (Build.VERSION.SDK_INT >= 30) zoneBars[j].setStateDescription(otherFmt);
+              }
+              syncing[0] = false;
+              refreshReset.run();
+              if (!tracking) {
+                set(key, holder[0].value());
+                scheduleRender();
+              }
+            }
+
+            public void onStartTrackingTouch(SeekBar b) {
+              tracking = true;
+              beforeJson = holder[0].value().toString();
+              gradeWasEnabled = settings.optBoolean("grade_enabled", true);
+            }
+
+            public void onStopTrackingTouch(SeekBar b) {
+              tracking = false;
+              if (destroyed || exporting || activeImport != null) return;
+              String afterJson = holder[0].value().toString();
+              if (!afterJson.equals(beforeJson)) {
+                set(key, holder[0].value());
+                scheduleRender();
+              } else if (!gradeWasEnabled && settings.optBoolean("grade_enabled", true)) {
+                try {
+                  settings.put("grade_enabled", false);
+                } catch (JSONException ignored) {
+                }
+              }
+            }
+          });
+    }
+
+    clear.setOnClickListener(
+        v -> {
+          if (exporting || activeImport != null || destroyed || holder[0].isIdentity()) return;
+          holder[0].resetToIdentity();
+          set(key, holder[0].value());
+          syncSlidersFromCurve.run();
+          if (Haptics.enabled) {
+            clear.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
+          }
+          scheduleRender();
+        });
+
+    syncSlidersFromCurve.run();
+    showCurveHint();
+  }
+
   private String dimensionsLabel() {
     if (fullWidth < 1 || fullHeight < 1) return "读取尺寸后显示";
     try {
@@ -3432,143 +3737,6 @@ public final class MainActivity extends Activity {
     } catch (JSONException e) {
       return "尺寸读取失败";
     }
-  }
-
-  private void buildGeometryPanel() {
-    panelNote(
-        "裁切与几何",
-        "原图 "
-            + fullWidth
-            + " × "
-            + fullHeight
-            + " · 导出 "
-            + dimensionsLabel()
-            + "\n裁切只保存范围，旋转、翻转和拉直会用于预览与导出。");
-    TextView crop =
-        button("打开裁切框", AppStyle.ON_PRIMARY, AppStyle.PRIMARY);
-    AppStyle.setTypeface(crop, AppStyle.FONT_BOLD);
-    add(editor, crop, -1, 43);
-    gap(editor, 10);
-    crop.setOnClickListener(v -> cropDialog());
-    LinearLayout row = horizontal();
-    for (String label : new String[] {"左转 90°", "右转 90°"}) {
-      TextView b = button(label, INK, AppStyle.CONTROL);
-      b.setTextSize(AppStyle.TYPE_LABEL);
-      row.addView(b, new LinearLayout.LayoutParams(0, dp(38), 1));
-      b.setOnClickListener(
-          v -> {
-            int turns = settings.optInt("geo_turns");
-            set("geo_turns", (turns + (label.startsWith("左") ? 3 : 1)) % 4);
-            scheduleRender();
-            buildPanel();
-          });
-    }
-    add(editor, row, -1, 38);
-    gap(editor, 12);
-    toggle("geo_flip_h", "水平翻转", false);
-    toggle("geo_flip_v", "垂直翻转", false);
-    slider("geo_angle", "拉直", -45, 45, .1, " °");
-    TextView reset = button("恢复完整构图", MUTED, AppStyle.CONTROL);
-    add(editor, reset, -1, 39);
-    reset.setOnClickListener(
-        v -> {
-          for (String k : new String[] {"geo_x", "geo_y", "geo_angle", "geo_turns"}) set(k, 0);
-          set("geo_w", 1);
-          set("geo_h", 1);
-          set("geo_flip_h", false);
-          set("geo_flip_v", false);
-          scheduleRender();
-          buildPanel();
-        });
-  }
-
-  private void cropDialog() {
-    if (source == null || exporting) return;
-    LinearLayout body = vertical();
-    body.setPadding(dp(10), dp(8), dp(10), dp(8));
-    body.setBackgroundColor(BG);
-    RectF initial =
-        new RectF(
-            (float) settings.optDouble("geo_x", 0),
-            (float) settings.optDouble("geo_y", 0),
-            (float) (settings.optDouble("geo_x", 0) + settings.optDouble("geo_w", 1)),
-            (float) (settings.optDouble("geo_y", 0) + settings.optDouble("geo_h", 1)));
-    CropEditor crop = new CropEditor(this, source, initial);
-    TextView ratio = button("比例：自由裁切", GOLD, AppStyle.CONTROL);
-    add(body, ratio, -1, 39);
-    ratio.setOnClickListener(
-        v ->
-            new Haptics.DialogBuilder(this)
-                .setTitle("裁切比例")
-                .setItems(
-                    new String[] {
-                      "自由裁切", "原图比例", "1 : 1", "3 : 2", "2 : 3", "4 : 3", "3 : 4", "16 : 9",
-                      "9 : 16"
-                    },
-                    (d, n) -> {
-                      crop.ratio(
-                          new float[] {
-                                0,
-                                source.getWidth() / (float) source.getHeight(),
-                                1,
-                                1.5f,
-                                2 / 3f,
-                                4 / 3f,
-                                .75f,
-                                16 / 9f,
-                                9 / 16f
-                              }
-                              [n]);
-                      ratio.setText(
-                          "比例："
-                              + new String[] {
-                                    "自由裁切", "原图", "1 : 1", "3 : 2", "2 : 3", "4 : 3", "3 : 4",
-                                    "16 : 9", "9 : 16"
-                                  }
-                                  [n]
-                              + "");
-                    })
-                .show());
-    int height =
-        Math.min(
-            390,
-            (int)
-                (getResources().getDisplayMetrics().heightPixels
-                    / getResources().getDisplayMetrics().density
-                    * .48));
-    add(body, crop, -1, height);
-    TextView hint = text("拖动四角调整 · 拖动内部移动 · 应用后可撤销", AppStyle.TYPE_MICRO, MUTED);
-    hint.setSingleLine(true);
-    hint.setEllipsize(android.text.TextUtils.TruncateAt.END);
-    hint.setPadding(dp(6), 0, 0, 0);
-    add(body, hint, -1, 32);
-    new Haptics.DialogBuilder(this)
-        .setTitle("非破坏裁切")
-        .setView(body)
-        .setPositiveButton(
-            "应用裁切",
-            (d, n) -> {
-              RectF r = crop.value();
-              set("geo_x", (double) r.left);
-              set("geo_y", (double) r.top);
-              set("geo_w", (double) r.width());
-              set("geo_h", (double) r.height());
-              scheduleRender();
-              buildPanel();
-              photo.resetZoom();
-            })
-        .setNeutralButton(
-            "完整画面",
-            (d, n) -> {
-              set("geo_x", 0);
-              set("geo_y", 0);
-              set("geo_w", 1);
-              set("geo_h", 1);
-              scheduleRender();
-              buildPanel();
-            })
-        .setNegativeButton("取消", null)
-        .show();
   }
 
   private void editTextValue(String key, String title, int limit, String allowed) {
@@ -3631,11 +3799,12 @@ public final class MainActivity extends Activity {
     add(editor, header, -1, -2);
     gap(editor, 12);
     addFrameStyleCards(editor, style);
-    if (style != FrameStyle.NONE) {
+    boolean resizableFrame = style != FrameStyle.NONE && !style.filmCard();
+    if (resizableFrame) {
       gap(editor, 14);
       slider("edge_amount", "边框宽度", 2, 15, .5, " %");
     }
-    gap(editor, style != FrameStyle.NONE ? 4 : 12);
+    gap(editor, resizableFrame ? 4 : 12);
     View sep = new View(this);
     sep.setBackgroundColor(AppStyle.DIVIDER);
     add(editor, sep, -1, 1);
@@ -3688,57 +3857,35 @@ public final class MainActivity extends Activity {
     FrameStyle[] styles = {
       FrameStyle.NONE, FrameStyle.BLACK_135, FrameStyle.SLIDE, FrameStyle.SHEET,
       FrameStyle.WARM_135, FrameStyle.SILVER_135, FrameStyle.MEDIUM_120,
-      FrameStyle.WHITE, FrameStyle.INSTANT
+      FrameStyle.WHITE, FrameStyle.INSTANT, FrameStyle.FILM_CARD_WHITE, FrameStyle.FILM_CARD_BLACK
     };
+    int widthDp = FoldableUi.windowWidthDp(this);
     int borderGridCols =
-        wideEditor() && !panelCollapsed
-            ? FoldableLayout.editorBorderGridColumns(FoldableUi.windowWidthDp(this))
-            : 0;
+        wideEditor() && !panelCollapsed ? FoldableLayout.editorBorderGridColumns(widthDp) : 0;
+    boolean expandedGrid =
+        borderGridCols > 0 && FoldableLayout.tier(widthDp) == FoldableLayout.Tier.EXPANDED;
+    int glyphW = expandedGrid ? 56 : 52;
+    int glyphH = expandedGrid ? 38 : 36;
+    int minTileHeight = expandedGrid ? 76 : 72;
     if (borderGridCols > 0) {
       LinearLayout grid = vertical();
       grid.setTag("editor.frame.styles");
       for (int rowStart = 0; rowStart < styles.length; rowStart += borderGridCols) {
         LinearLayout row = horizontal();
-        row.setGravity(Gravity.TOP);
+        row.setGravity(Gravity.CENTER_VERTICAL);
         for (int c = 0; c < borderGridCols; c++) {
           int idx = rowStart + c;
           if (idx >= styles.length) {
-            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(0, 1, 1f);
+            // Keep MATCH_PARENT height so horizontal LinearLayout keeps allFillParent=true;
+            // a 1px non-MATCH_PARENT spacer collapses the entire trailing row to 1px tall.
+            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(0, -1, 1f);
             if (c > 0) sp.leftMargin = dp(7);
             row.addView(new View(this), sp);
             continue;
           }
-          FrameStyle style = styles[idx];
-          boolean active = style == selected;
-          LinearLayout tile = vertical();
-          tile.setTag("editor.frame.style." + style.id);
-          tile.setGravity(Gravity.CENTER);
-          tile.setMinimumHeight(dp(62));
-          tile.setPadding(dp(3), dp(7), dp(3), dp(6));
-          tile.setFocusable(true);
-          tile.setSelected(active);
-          tile.setContentDescription(style.label);
-          GradientDrawable background =
-              AppStyle.shape(this, active ? AppStyle.ACCENT_SOFT : AppStyle.CONTROL, 9, true);
-          if (active) background.setStroke(Math.max(1, dp(1)), GOLD);
-          tile.setBackground(new android.graphics.drawable.RippleDrawable(
-              ColorStateList.valueOf(AppStyle.RIPPLE), background, null));
-          add(tile, frameStyleGlyph(style), 40, 28);
-          gap(tile, 4);
-          TextView label = text(style.cardLabel, AppStyle.TYPE_MICRO, active ? GOLD : MUTED);
-          AppStyle.setTypeface(label, AppStyle.FONT_SEMIBOLD);
-          label.setGravity(Gravity.CENTER);
-          label.setMaxLines(2);
-          label.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-          add(tile, label, -1, -2);
-          tile.setOnClickListener(v -> {
-            if (style == selected || exporting || activeImport != null) return;
-            set("edge_style", style.id);
-            scheduleRender();
-            buildPanel();
-          });
-          controls.add(tile);
-          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
+          LinearLayout tile =
+              buildFrameStyleTile(styles[idx], selected, glyphW, glyphH, minTileHeight, null);
+          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1f);
           if (c > 0) lp.leftMargin = dp(7);
           row.addView(tile, lp);
         }
@@ -3753,97 +3900,161 @@ public final class MainActivity extends Activity {
     scroll.setTag("editor.frame.styles");
     AppStyle.hideScrollBars(scroll);
     LinearLayout row = horizontal();
-    row.setGravity(Gravity.TOP);
+    row.setGravity(Gravity.CENTER_VERTICAL);
     scroll.addView(row, new FrameLayout.LayoutParams(-2, -2));
-    View checked = null;
-    for (FrameStyle style : styles) {
-      boolean active = style == selected;
-      LinearLayout tile = vertical();
-      tile.setTag("editor.frame.style." + style.id);
-      tile.setGravity(Gravity.CENTER);
-      tile.setMinimumHeight(dp(62));
-      tile.setPadding(dp(3), dp(7), dp(3), dp(6));
-      tile.setFocusable(true);
-      tile.setSelected(active);
-      tile.setContentDescription(style.label);
-      GradientDrawable background =
-          AppStyle.shape(this, active ? AppStyle.ACCENT_SOFT : AppStyle.CONTROL, 9, true);
-      if (active) background.setStroke(Math.max(1, dp(1)), GOLD);
-      tile.setBackground(new android.graphics.drawable.RippleDrawable(
-          ColorStateList.valueOf(AppStyle.RIPPLE), background, null));
-      add(tile, frameStyleGlyph(style), 40, 28);
-      gap(tile, 4);
-      TextView label = text(style.cardLabel, AppStyle.TYPE_MICRO, active ? GOLD : MUTED);
-      AppStyle.setTypeface(label, AppStyle.FONT_SEMIBOLD);
-      label.setGravity(Gravity.CENTER);
-      label.setMaxLines(2);
-      label.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-      add(tile, label, -1, -2);
-      tile.setOnClickListener(v -> {
-        if (style == selected || exporting || activeImport != null) return;
-        set("edge_style", style.id);
-        scheduleRender();
-        buildPanel();
-      });
-      controls.add(tile);
-      LinearLayout.LayoutParams tileLayout = new LinearLayout.LayoutParams(dp(64), -2);
+    int selectedIndex = 0;
+    for (int i = 0; i < styles.length; i++) {
+      final int index = i;
+      FrameStyle style = styles[i];
+      if (style == selected) selectedIndex = i;
+      Runnable beforeRebuild =
+          () -> {
+            int viewport = scroll.getWidth();
+            int total = row.getChildCount();
+            if (viewport <= 0 || index < 0 || index >= total) return;
+            int base = scroll.getScrollX();
+            int first = 0;
+            for (int c = 0; c < total; c++) {
+              if (row.getChildAt(c).getRight() > base + 1) {
+                first = c;
+                break;
+              }
+            }
+            int last = total - 1;
+            int rightEdge = base + viewport;
+            for (int c = total - 1; c >= 0; c--) {
+              if (row.getChildAt(c).getLeft() < rightEdge - 1) {
+                last = c;
+                break;
+              }
+            }
+            int target = base;
+            if (index == first && index > 0) {
+              target = Math.min(base, row.getChildAt(index - 1).getLeft());
+            } else if (index == last && index < total - 1) {
+              target = Math.max(base, row.getChildAt(index + 1).getRight() - viewport);
+            }
+            View clicked = row.getChildAt(index);
+            if (clicked.getLeft() < target) target = clicked.getLeft();
+            else if (clicked.getRight() > target + viewport) target = clicked.getRight() - viewport;
+            int maxScroll = Math.max(0, row.getWidth() - viewport);
+            frameStyleScrollX = Math.max(0, Math.min(target, maxScroll));
+          };
+      LinearLayout tile =
+          buildFrameStyleTile(style, selected, glyphW, glyphH, minTileHeight, beforeRebuild);
+      LinearLayout.LayoutParams tileLayout = new LinearLayout.LayoutParams(dp(72), -1);
       if (row.getChildCount() > 0) tileLayout.setMarginStart(dp(7));
       row.addView(tile, tileLayout);
-      if (active) checked = tile;
     }
-    View current = checked;
+    final int currentIndex = selectedIndex;
+    final int[] expectedFirstWidth = {0};
+    final boolean[] restored = {false};
+    final Runnable restoreNow =
+        () -> {
+          if (scroll.getWidth() <= 0 || row.getWidth() <= 0) return;
+          restoreFrameStylePosition(scroll, row, currentIndex);
+          restored[0] = true;
+        };
+    scroll.setOnScrollChangeListener(
+        (v, x, y, oldX, oldY) -> {
+          if (restored[0]) frameStyleScrollX = x;
+        });
+    row.addOnLayoutChangeListener(
+        (v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
+          if (!restored[0]
+              && expectedFirstWidth[0] > 0
+              && row.getChildCount() > 0
+              && row.getChildAt(0).getWidth() == expectedFirstWidth[0]) {
+            restoreNow.run();
+          }
+        });
     scroll.addOnLayoutChangeListener((v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
       int width = r - l;
       if (width <= 0 || width == oldR - oldL) return;
       int gap = dp(7);
-      int minimumWidth = Math.round(dp(58) * Math.max(1f, getResources().getConfiguration().fontScale));
+      int minimumWidth = Math.round(dp(64) * Math.max(1f, getResources().getConfiguration().fontScale));
       int perPage = Math.max(1, Math.min(4, (width + gap) / (minimumWidth + gap)));
       int available = width - gap * (perPage - 1);
+      boolean widthChanged = false;
       for (int index = 0; index < row.getChildCount(); index++) {
         View child = row.getChildAt(index);
         ViewGroup.LayoutParams params = child.getLayoutParams();
-        params.width = available / perPage + (index % perPage < available % perPage ? 1 : 0);
-        child.setLayoutParams(params);
+        int targetW = available / perPage + (index % perPage < available % perPage ? 1 : 0);
+        if (index == 0) expectedFirstWidth[0] = targetW;
+        if (params.width != targetW) {
+          params.width = targetW;
+          child.setLayoutParams(params);
+          widthChanged = true;
+        }
       }
-      if (current != null) scroll.post(() -> {
-        Rect rect = new Rect(0, 0, current.getWidth(), current.getHeight());
-        row.offsetDescendantRectToMyCoords(current, rect);
-        scroll.requestChildRectangleOnScreen(row, rect, true);
-      });
+      restored[0] = false;
+      if (!widthChanged && row.getChildCount() > 0 && row.getChildAt(0).getWidth() == expectedFirstWidth[0]) {
+        restoreNow.run();
+      } else {
+        scroll.post(() -> { if (!restored[0]) restoreNow.run(); });
+      }
     });
     add(parent, scroll, -1, -2);
   }
 
-  private View frameStyleGlyph(FrameStyle style) {
-    FrameLayout glyph = new FrameLayout(this);
-    int material = switch (style) {
-      case NONE -> AppStyle.SURFACE;
-      case BLACK_135 -> 0xff141312;
-      case WARM_135 -> 0xff573a25;
-      case SILVER_135 -> 0xff4b4b50;
-      case SLIDE -> 0xffe6e1d8;
-      case MEDIUM_120 -> 0xff312d2b;
-      case SHEET -> 0xff18181a;
-      case WHITE, INSTANT -> 0xfff5f0e5;
-    };
-    GradientDrawable outline = AppStyle.shape(this, material, 3, false);
-    int stroke = Math.max(1, dp(1));
-    if (style == FrameStyle.NONE) {
-      outline.setStroke(stroke, AppStyle.OUTLINE, dp(3), dp(2));
-    } else {
-      boolean paper = style == FrameStyle.SLIDE || style == FrameStyle.WHITE || style == FrameStyle.INSTANT;
-      outline.setStroke(stroke, paper ? 0xffb8b0a4 : 0xff45454b);
-      View aperture = new View(this);
-      aperture.setBackgroundColor(0xff5a6674);
-      int width = style == FrameStyle.SLIDE || style == FrameStyle.MEDIUM_120 ? 20
-          : style == FrameStyle.SHEET || style == FrameStyle.WHITE ? 30 : 26;
-      int height = style == FrameStyle.SHEET || style == FrameStyle.WHITE ? 20 : 14;
-      FrameLayout.LayoutParams apertureLayout =
-          new FrameLayout.LayoutParams(dp(width), dp(height), Gravity.CENTER);
-      if (style == FrameStyle.INSTANT) apertureLayout.bottomMargin = dp(5);
-      glyph.addView(aperture, apertureLayout);
-    }
-    glyph.setBackground(outline);
+  private void restoreFrameStylePosition(
+      HorizontalScrollView scroll, LinearLayout row, int selectedIndex) {
+    if (selectedIndex < 0 || selectedIndex >= row.getChildCount()) return;
+    int viewport = scroll.getWidth();
+    int maximum = Math.max(0, row.getWidth() - viewport);
+    int target = Math.max(0, Math.min(frameStyleScrollX, maximum));
+    View chip = row.getChildAt(selectedIndex);
+    if (chip.getLeft() < target) target = chip.getLeft();
+    else if (chip.getRight() > target + viewport) target = chip.getRight() - viewport;
+    frameStyleScrollX = Math.max(0, Math.min(target, maximum));
+    scroll.scrollTo(frameStyleScrollX, 0);
+  }
+
+  private LinearLayout buildFrameStyleTile(
+      FrameStyle style,
+      FrameStyle selected,
+      int glyphW,
+      int glyphH,
+      int minHeightDp,
+      Runnable beforeSelect) {
+    boolean active = style == selected;
+    LinearLayout tile = vertical();
+    tile.setTag("editor.frame.style." + style.id);
+    tile.setGravity(Gravity.CENTER);
+    tile.setMinimumHeight(dp(minHeightDp));
+    tile.setPadding(dp(3), dp(8), dp(3), dp(7));
+    tile.setFocusable(true);
+    tile.setSelected(active);
+    tile.setContentDescription(style.label);
+    GradientDrawable background =
+        AppStyle.shape(this, active ? AppStyle.ACCENT_SOFT : AppStyle.CONTROL, 11, true);
+    if (active) background.setStroke(Math.max(1, dp(1.25f)), GOLD);
+    tile.setBackground(
+        new android.graphics.drawable.RippleDrawable(
+            ColorStateList.valueOf(AppStyle.RIPPLE), background, null));
+    add(tile, frameStyleGlyph(style, active), glyphW, glyphH);
+    gap(tile, 5);
+    TextView label = text(style.cardLabel, AppStyle.TYPE_MICRO, active ? GOLD : MUTED);
+    AppStyle.setTypeface(label, AppStyle.FONT_SEMIBOLD);
+    label.setGravity(Gravity.CENTER);
+    label.setMaxLines(2);
+    label.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    add(tile, label, -1, -2);
+    tile.setOnClickListener(
+        v -> {
+          if (style == selected || exporting || activeImport != null) return;
+          if (beforeSelect != null) beforeSelect.run();
+          set("edge_style", style.id);
+          scheduleRender();
+          buildPanel();
+        });
+    controls.add(tile);
+    return tile;
+  }
+
+  private View frameStyleGlyph(FrameStyle style, boolean active) {
+    View glyph = new View(this);
+    glyph.setBackground(new FrameStyleGlyphDrawable(style, AppStyle.isLight(), active));
     glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
     return glyph;
   }
@@ -3883,11 +4094,6 @@ public final class MainActivity extends Activity {
       p = p.getParent();
     }
     return false;
-  }
-
-  private String currentFilmName() {
-    Stock s = find(films, settings.optString("film_stock"));
-    return s == null ? "" : shortName(s.name);
   }
 
   @Override
@@ -3949,14 +4155,29 @@ public final class MainActivity extends Activity {
   public void onConfigurationChanged(android.content.res.Configuration c) {
     super.onConfigurationChanged(c);
     if (photo != null) photo.cancelPendingSingleTap();
+    updateHomeNavWidth();
     if (homeContent != null) {
       int homePad = dp(FoldableLayout.homePaddingDp(FoldableUi.windowWidthDp(this)));
       homeContent.setPadding(
           homePad, homeContent.getPaddingTop(), homePad, homeContent.getPaddingBottom());
-      homeContent.post(this::refreshHistory);
+      homeContent.post(
+          () -> {
+            updateHomeNavWidth();
+            int settledPad = dp(FoldableLayout.homePaddingDp(FoldableUi.windowWidthDp(this)));
+            homeContent.setPadding(
+                settledPad,
+                homeContent.getPaddingTop(),
+                settledPad,
+                homeContent.getPaddingBottom());
+            refreshHistory();
+          });
     }
     if (lightTablePage != null) {
       lightTablePage.onWindowConfigChanged();
+      lightTablePage.post(
+          () -> {
+            if (lightTablePage != null) lightTablePage.onWindowConfigChanged();
+          });
     }
     if (panel != null) {
       updateEditorLayout();
@@ -3965,6 +4186,20 @@ public final class MainActivity extends Activity {
             updateEditorLayout();
             buildPanel();
           });
+    }
+  }
+
+  private void updateHomeNavWidth() {
+    if (homeNavPill == null) return;
+    HomeTab[] tabs = HomeTab.values();
+    int maxNavDp = tabs.length <= 3 ? 276 : 336;
+    int availW = FoldableUi.visibleWindowWidthPx(this);
+    if (availW <= 0) availW = getResources().getDisplayMetrics().widthPixels;
+    int navWidth = Math.min(dp(maxNavDp), Math.max(dp(180), availW - dp(32)));
+    ViewGroup.LayoutParams lp = homeNavPill.getLayoutParams();
+    if (lp != null && lp.width != navWidth) {
+      lp.width = navWidth;
+      homeNavPill.setLayoutParams(lp);
     }
   }
 
@@ -4149,6 +4384,7 @@ public final class MainActivity extends Activity {
         new SeekBar.OnSeekBarChangeListener() {
           private double before;
           private boolean tracking;
+          private boolean gradeWasEnabled;
 
           public void onProgressChanged(SeekBar b, int pos, boolean user) {
             if (user && !destroyed && !exporting && activeImport == null) {
@@ -4166,13 +4402,22 @@ public final class MainActivity extends Activity {
           public void onStartTrackingTouch(SeekBar b) {
             tracking = true;
             before = settings.optDouble(key, defaultValue);
+            gradeWasEnabled = settings.optBoolean("grade_enabled", true);
           }
 
           public void onStopTrackingTouch(SeekBar b) {
             tracking = false;
-            if (!destroyed && !exporting && activeImport == null
-                && Math.abs(settings.optDouble(key, defaultValue) - before) > .00001)
-              commitSliderChange(key);
+            if (!destroyed && !exporting && activeImport == null) {
+              if (Math.abs(settings.optDouble(key, defaultValue) - before) > .00001) {
+                commitSliderChange(key);
+              } else if (!gradeWasEnabled && settings.optBoolean("grade_enabled", true)) {
+                // Dragging a grade slider back to its starting value must not leave grade_enabled flipped.
+                try {
+                  settings.put("grade_enabled", false);
+                } catch (JSONException ignored) {
+                }
+              }
+            }
           }
         });
   }
@@ -4411,11 +4656,31 @@ public final class MainActivity extends Activity {
     return params(recipe, stock, sourceRaw);
   }
 
+  private String resolvedFilmStock(JSONObject recipe) {
+    String id = recipe == null ? "" : recipe.optString("film_stock");
+    return id == null || id.isEmpty() || id.equals("null") || find(films, id) == null
+        ? defaultFilmStock()
+        : find(films, id).id;
+  }
+
+  private String resolvedPrintStock(JSONObject recipe, Stock film) {
+    String id = recipe == null ? "" : recipe.optString("print_stock");
+    if (id != null
+        && !id.isEmpty()
+        && !id.equals("null")
+        && find(papers, id) != null
+        && (film == null || FilmStockPolicy.canPrint(film.id, id))) return id;
+    return film == null
+        ? "kodak_portra_endura"
+        : FilmStockPolicy.paperFor(film.id, film.target, "");
+  }
+
   private String params(JSONObject recipe, Stock stock, boolean raw) {
     try {
       JSONObject j = new JSONObject();
+      String filmStock = resolvedFilmStock(recipe);
+      if (stock == null || !stock.id.equals(filmStock)) stock = find(films, filmStock);
       boolean positive = stock != null && stock.type.equals("positive");
-      String filmStock = recipe.optString("film_stock");
       String[] keys = {
         "film_stock",
         "print_stock",
@@ -4437,7 +4702,10 @@ public final class MainActivity extends Activity {
         "scanner_lens_blur",
         "preflash_exposure"
       };
-      for (String k : keys) if (recipe.has(k)) j.put(k, recipe.get(k));
+      String printStock = resolvedPrintStock(recipe, stock);
+      for (String k : keys) if (recipe.has(k) && !recipe.isNull(k)) j.put(k, recipe.get(k));
+      j.put("film_stock", filmStock);
+      j.put("print_stock", printStock);
       j.put("input_color_space", raw ? "ProPhoto RGB" : "sRGB");
       j.put("input_cctf_decoding", !raw);
       j.put("output_color_space", "sRGB");
@@ -4456,7 +4724,7 @@ public final class MainActivity extends Activity {
           FilmStockPolicy.renderOverrides(
                   filmStock,
                   stock == null ? "" : stock.target,
-                  recipe.optString("print_stock"),
+                  printStock,
                   recipe.optDouble("grain_amount", 1),
                   recipe.optString("camera_filter"),
                   recipe.optString("paper_grade", FilmStockPolicy.DEFAULT_PAPER_GRADE),
@@ -4490,13 +4758,17 @@ public final class MainActivity extends Activity {
       JSONObject j = new JSONObject(recipe.toString());
       j.remove("edge_preserve_alpha");
       if (preserveFrameAlpha) j.put("edge_preserve_alpha", true);
-      Stock stock = find(films, recipe.optString("film_stock"));
-      boolean monochrome = FilmStockPolicy.monochrome(recipe.optString("film_stock"));
+      String filmStock = resolvedFilmStock(recipe);
+      Stock stock = find(films, filmStock);
+      boolean monochrome = FilmStockPolicy.monochrome(filmStock);
+      j.put("film_stock", filmStock);
+      j.put("print_stock", resolvedPrintStock(recipe, stock));
       if (monochrome) j.put("silver_highlight_edr", true);
       else j.remove("silver_highlight_edr");
       if (recipe.optInt(LIGHT_LEAK_AMOUNT) > 0)
         j.put("light_leak_monochrome", monochrome);
       j.put("film_label", stock == null ? "" : shortName(stock.name));
+      j.put("card_date", new SimpleDateFormat("yyyy.MM.dd", Locale.US).format(new Date()));
       JSONObject source = metadata == null ? new JSONObject() : metadata;
       j.put("source_make", source.optString("make"));
       j.put("source_model", source.optString("model"));
@@ -4531,14 +4803,22 @@ public final class MainActivity extends Activity {
     if (print.equals(thumbPrint)) return;
     thumbPrint = print;
     ++thumbGeneration;
-    // All cache/view bookkeeping stays on the UI thread. Detach before recycling.
+    // Never manually recycle cached bitmaps (RenderThread may still draw the last frame).
     for (ImageView view : thumbTargets.values()) view.setImageDrawable(null);
-    for (Bitmap stale : filmThumbs.values()) Bitmaps.release(stale);
     filmThumbs.clear();
     thumbFailed.clear();
     thumbDiskChecked.clear();
     thumbDiskPending.clear();
     thumbStockDiskKeys.clear();
+  }
+
+  private static ScrollView findAncestorScrollView(View view) {
+    ViewParent parent = view == null ? null : view.getParent();
+    while (parent != null) {
+      if (parent instanceof ScrollView sv) return sv;
+      parent = parent.getParent();
+    }
+    return null;
   }
 
   private void refillThumbs() {
@@ -4555,11 +4835,33 @@ public final class MainActivity extends Activity {
     if (!galleryVisible() || filmGridRef == null) return;
     syncThumbCache();
     String active = settings.optString("film_stock");
-    for (int i = 0; i < views.size(); i++) {
-      if (stocks.get(i).equals(active)) requestFilmThumb(stocks.get(i), views.get(i));
+    ScrollView sv = filmGridScrollRef;
+    boolean cull = sv != null && sv.getHeight() > 0 && filmGridRef.getHeight() > 0;
+    int viewTop = cull ? sv.getScrollY() - dp(160) : Integer.MIN_VALUE;
+    int viewBottom = cull ? sv.getScrollY() + sv.getHeight() + dp(160) : Integer.MAX_VALUE;
+    int gridOffsetY = 0;
+    if (cull) {
+      View cur = filmGridRef;
+      while (cur != null && cur != sv) {
+        gridOffsetY += cur.getTop();
+        cur = cur.getParent() instanceof View p ? p : null;
+      }
     }
-    for (int i = 0; i < views.size(); i++) {
-      if (!stocks.get(i).equals(active)) requestFilmThumb(stocks.get(i), views.get(i));
+    for (int pass = 0; pass < 2; pass++) {
+      for (int i = 0; i < views.size(); i++) {
+        String id = stocks.get(i);
+        boolean isActive = id.equals(active);
+        if ((pass == 0) != isActive) continue;
+        ImageView view = views.get(i);
+        if (cull && !isActive && view.getParent() instanceof View frame
+            && frame.getParent() instanceof View card
+            && card.getParent() instanceof View row) {
+          int rowTop = gridOffsetY + row.getTop();
+          int rowBottom = gridOffsetY + row.getBottom();
+          if (rowBottom > rowTop && (rowBottom < viewTop || rowTop > viewBottom)) continue;
+        }
+        requestFilmThumb(id, view);
+      }
     }
   }
 
@@ -4700,7 +5002,7 @@ public final class MainActivity extends Activity {
     final String backendKey = galleryBackendKey();
     final String photoKey = file == null ? null : ThumbnailDiskCache.key(file.getAbsolutePath());
     final String diskKey = file == null ? null : photoKey + "-" + ThumbnailDiskCache.key(
-        "neutral-gallery-v3", file.getAbsolutePath(), Long.toString(file.length()),
+        "neutral-gallery-v4", file.getAbsolutePath(), Long.toString(file.length()),
         Long.toString(file.lastModified()), backendKey, Integer.toString(sourceEdge), renderParams,
         Integer.toString(postLongEdge));
     if (diskKey != null) thumbStockDiskKeys.put(stock, diskKey);
@@ -4866,12 +5168,7 @@ public final class MainActivity extends Activity {
   }
 
   private void cacheFilmThumb(String stock, Bitmap bitmap) {
-    Bitmap previous = filmThumbs.put(stock, bitmap);
-    if (previous != null && previous != bitmap) {
-      ImageView target = thumbTargets.get(stock);
-      if (target != null) target.setImageDrawable(null);
-      Bitmaps.release(previous);
-    }
+    filmThumbs.put(stock, bitmap);
     trimThumbCache();
   }
 
@@ -4888,7 +5185,7 @@ public final class MainActivity extends Activity {
       if (target != null && entry.getKey().equals(target.getTag()))
         target.setImageDrawable(null);
       oldest.remove();
-      Bitmaps.release(stale);
+      // Never manually recycle evicted cache bitmaps; let GC reclaim after RenderThread finishes.
     }
   }
 
@@ -4942,13 +5239,16 @@ public final class MainActivity extends Activity {
     prefs.edit().putString("settings", settings.toString()).apply();
     saveActiveFrame();
     int ticket = ++revision;
+    ++editRevision;
     mainPreviewRevision = ticket;
     if (!ready || source == null || exporting) return;
     previewWorkTicket = ticket;
     exportButton.setEnabled(false);
     exportButton.setText("正在显影…");
+    Stock activeStock = find(films, resolvedFilmStock(settings));
+    String stockTitle = activeStock == null ? "" : shortName(activeStock.name);
     setStatus(
-        "照片已读取 · 正在显影 · " + shortName(find(films, settings.optString("film_stock")).name), true);
+        stockTitle.isEmpty() ? "照片已读取 · 正在显影" : "照片已读取 · 正在显影 · " + stockTitle, true);
     main.postDelayed(
         () -> {
           if (!destroyed
@@ -5086,6 +5386,19 @@ public final class MainActivity extends Activity {
     ui(
         () -> {
           if (activeImport != null) return;
+          String detail = ex.getMessage() == null ? ex.toString() : ex.getMessage();
+          if (detail.contains("no profile 'null'") || detail.contains("/profiles/null.json")) {
+            String beforeFilm = settings.optString("film_stock");
+            String beforePaper = settings.optString("print_stock");
+            defaults();
+            if (!beforeFilm.equals(settings.optString("film_stock"))
+                || !beforePaper.equals(settings.optString("print_stock"))) {
+              filmCategory = category(find(films, settings.optString("film_stock")));
+              buildPanel();
+              scheduleRender();
+              return;
+            }
+          }
           setStatus(title, false, true);
           exportButton.setText("重试显影");
           exportButton.setEnabled(ready);
@@ -5199,7 +5512,11 @@ public final class MainActivity extends Activity {
   }
 
   private void adopt(LoadedPhoto image, boolean syncHomeHero) {
-    if (photo != null) photo.cancelPendingSingleTap();
+    if (photo != null) {
+      photo.cancelPendingSingleTap();
+      // Detach old developed/compared bitmaps from PhotoView before releasing them.
+      photo.images(image.bitmap, null);
+    }
     Bitmap previous = source;
     if (developed != null) {
       Bitmaps.release(developed);
@@ -5297,13 +5614,11 @@ public final class MainActivity extends Activity {
     filePickerSettings = initialSettings;
     Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
     intent.addCategory(Intent.CATEGORY_OPENABLE);
+    // Keep "*/*" without a narrow EXTRA_MIME_TYPES list: Android providers routinely report
+    // camera RAW files (.RW2, .ARW, .CR3, .NEF, .RAF, etc.) as application/octet-stream, which
+    // would be greyed out otherwise. PhotoFormatPolicy filters selected items on return.
     intent.setType("*/*");
     intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, maxSelection != 1);
-    intent.putExtra(
-        Intent.EXTRA_MIME_TYPES,
-        new String[] {
-          "image/jpeg", "image/png", "image/heic", "image/heif", "image/x-adobe-dng", "image/dng"
-        });
     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
     try {
       startActivityForResult(intent, REQUEST_IMPORT_FILES);
@@ -5340,8 +5655,10 @@ public final class MainActivity extends Activity {
 
   private void importPhotosBatch(List<GalleryPhotos.Photo> photos) {
     if (exporting || batchImportRunning || photos == null || photos.isEmpty()) return;
-    if (photos.size() > MAX_BATCH_IMPORT)
+    if (photos.size() > MAX_BATCH_IMPORT) {
+      showNotice("每次最多导入 " + MAX_BATCH_IMPORT + " 张，已选取前 " + MAX_BATCH_IMPORT + " 张");
       photos = new ArrayList<>(photos.subList(0, MAX_BATCH_IMPORT));
+    }
     showHome();
     saveActiveFrame();
     final int generation = ++batchImportGeneration;
@@ -6065,17 +6382,28 @@ public final class MainActivity extends Activity {
     if (clip != null) {
       for (int i = 0; i < clip.getItemCount(); i++) uris.add(clip.getItemAt(i).getUri());
     } else if (data.getData() != null) uris.add(data.getData());
-    ArrayList<GalleryPhotos.Photo> photos = new ArrayList<>();
-    for (Uri uri : uris) {
-      GalleryPhotos.Photo photo = filePhoto(uri);
-      if (photo != null) photos.add(photo);
-    }
-    if (photos.isEmpty()) {
+    if (uris.isEmpty()) {
       showNotice("没有可导入的照片", true);
       return;
     }
-    if (settings != null) importUri(photos.get(0).uri, settings);
-    else importPhotosBatch(photos);
+    worker.execute(
+        () -> {
+          ArrayList<GalleryPhotos.Photo> photos = new ArrayList<>();
+          for (Uri uri : uris) {
+            GalleryPhotos.Photo photo = filePhoto(uri);
+            if (photo != null) photos.add(photo);
+          }
+          ui(
+              () -> {
+                if (destroyed) return;
+                if (photos.isEmpty()) {
+                  showNotice("没有可导入的照片", true);
+                  return;
+                }
+                if (settings != null) importUri(photos.get(0).uri, settings);
+                else importPhotosBatch(photos);
+              });
+        });
   }
 
   @Override
@@ -6107,8 +6435,11 @@ public final class MainActivity extends Activity {
       return;
     }
     activeImport = job;
+    closeCropPage();
     ++photoLoadGeneration;
     ++revision;
+    ++editRevision;
+    ++frameLoadTicket;
     if (pending != null) main.removeCallbacks(pending);
     showEditor();
     for (View v : controls) v.setEnabled(false);
@@ -6237,6 +6568,13 @@ public final class MainActivity extends Activity {
             importedFrame.fileSize = importedFileSize;
             library.add(importedFrame);
             sortLibrary();
+            if (!writeLibrary()) {
+              library.remove(importedFrame);
+              original.delete();
+              new File(new File(getFilesDir(), "thumbnails"), id + ".jpg").delete();
+              showNotice("导入失败，无法保存照片记录");
+              return;
+            }
             syncHeroLook();
             undoStack.clear();
             redoStack.clear();
@@ -6253,7 +6591,6 @@ public final class MainActivity extends Activity {
             fileLabel.setText(filename);
             photo.images(source, null);
             photo.resetZoom();
-            saveLibrary();
             buildPanel();
             if (ready) scheduleRender();
             else {
@@ -6336,31 +6673,46 @@ public final class MainActivity extends Activity {
   }
 
   private void writeImportDiagnostic(PhotoImportJob job, String outcome, String error) {
-    try {
-      JSONObject j = new JSONObject();
-      j.put("app_version", getPackageVersion());
-      j.put("device", Build.MANUFACTURER + " " + Build.MODEL);
-      j.put("android_api", Build.VERSION.SDK_INT);
-      j.put("stage", job.phase);
-      j.put("outcome", outcome);
-      j.put("filename", job.name);
-      j.put("bytes_copied", job.copied);
-      j.put("total_bytes", job.total);
-      j.put("elapsed_ms", SystemClock.elapsedRealtime() - job.started);
-      if (error != null) j.put("error", error);
-      android.util.AtomicFile atomic =
-          new android.util.AtomicFile(new File(getFilesDir(), "last_import.json"));
-      FileOutputStream stream = null;
+    final String appVersion = getPackageVersion();
+    final String stage = job.phase;
+    final String name = job.name;
+    final long copied = job.copied;
+    final long total = job.total;
+    final long elapsed = SystemClock.elapsedRealtime() - job.started;
+    final File dest = new File(getFilesDir(), "last_import.json");
+    Runnable task =
+        () -> {
+          try {
+            JSONObject j = new JSONObject();
+            j.put("app_version", appVersion);
+            j.put("device", Build.MANUFACTURER + " " + Build.MODEL);
+            j.put("android_api", Build.VERSION.SDK_INT);
+            j.put("stage", stage);
+            j.put("outcome", outcome);
+            j.put("filename", name);
+            j.put("bytes_copied", copied);
+            j.put("total_bytes", total);
+            j.put("elapsed_ms", elapsed);
+            if (error != null) j.put("error", error);
+            android.util.AtomicFile atomic = new android.util.AtomicFile(dest);
+            FileOutputStream stream = null;
+            try {
+              stream = atomic.startWrite();
+              stream.write(j.toString(2).getBytes(StandardCharsets.UTF_8));
+              atomic.finishWrite(stream);
+            } catch (IOException ex) {
+              if (stream != null) atomic.failWrite(stream);
+              throw ex;
+            }
+          } catch (Exception ex) {
+            android.util.Log.w("SpektraLensAndroid", "Cannot save import diagnostic", ex);
+          }
+        };
+    if (!destroyed && !bootStateIo.isShutdown()) {
       try {
-        stream = atomic.startWrite();
-        stream.write(j.toString(2).getBytes(StandardCharsets.UTF_8));
-        atomic.finishWrite(stream);
-      } catch (IOException ex) {
-        if (stream != null) atomic.failWrite(stream);
-        throw ex;
+        bootStateIo.execute(task);
+      } catch (java.util.concurrent.RejectedExecutionException ignored) {
       }
-    } catch (Exception ex) {
-      android.util.Log.w("SpektraLensAndroid", "Cannot save import diagnostic", ex);
     }
   }
 
@@ -6874,7 +7226,9 @@ public final class MainActivity extends Activity {
         card.setForeground(cardBg);
         card.setClipToOutline(true);
         card.setElevation(0);
-        FrameLayout photoBox = new FrameLayout(this);
+        // Lock home card thumbnails to 1:1 by resolved column width so narrow phones / high
+        // display scaling and wide tablets never stretch cards into tall or flat rectangles.
+        FrameLayout photoBox = new SquareFrameLayout(this);
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
         photoBox.addView(image, new FrameLayout.LayoutParams(-1, -1));
@@ -6931,7 +7285,7 @@ public final class MainActivity extends Activity {
         styleBatchCheck(checked, selectedForBatch);
         batchCardViews.put(
             frame.id, new BatchCardViews(photoBox, scrim, cardBg, favoriteParams, checked));
-        add(card, photoBox, -1, 176);
+        add(card, photoBox, -1, -2);
         LinearLayout names = vertical();
         names.setPadding(dp(10), dp(8), dp(10), dp(9));
         String stock = frame.edited ? "已保存调整" : "暂未编辑";
@@ -7172,11 +7526,21 @@ public final class MainActivity extends Activity {
     homeThumbJobs.invalidate(frame.id);
     String photoKey = ThumbnailDiskCache.key(new File(frame.path).getAbsolutePath());
     removedGalleryPhotos.add(photoKey);
-    thumbnailIo.execute(() -> filmDiskCache.removePhoto(photoKey));
+    File sourceCopy = new File(frame.path);
+    File thumbCopy = new File(new File(getFilesDir(), "thumbnails"), frame.id + ".jpg");
     homeImages.removeDeveloped(frame.id);
-    new File(frame.path).delete();
-    new File(new File(getFilesDir(), "thumbnails"), frame.id + ".jpg").delete();
-    homeImages.remove(new File(frame.path));
+    homeImages.remove(sourceCopy);
+    if (!destroyed && !thumbnailIo.isShutdown()) {
+      thumbnailIo.execute(
+          () -> {
+            filmDiskCache.removePhoto(photoKey);
+            sourceCopy.delete();
+            thumbCopy.delete();
+          });
+    } else {
+      sourceCopy.delete();
+      thumbCopy.delete();
+    }
   }
 
   private void updateBatchControls(EditClipboard clipboard) {
@@ -7361,14 +7725,17 @@ public final class MainActivity extends Activity {
     saveActiveFrame();
     String previous = frame.params;
     boolean previousEdited = frame.edited;
-    applyPastedParams(frame, clipboard.params);
+    frame.params = clipboard.params;
+    frame.edited = true;
     if (!writeLibrary()) {
-      applyPastedParams(frame, previous);
+      frame.params = previous;
       frame.edited = previousEdited;
-      refreshPastedThumbnails(Collections.singletonList(frame));
       showNotice("粘贴失败，未修改照片");
       return;
     }
+    frame.params = previous;
+    frame.edited = previousEdited;
+    applyPastedParams(frame, clipboard.params);
     historySignature = null;
     refreshHistory();
     refreshPastedThumbnails(Collections.singletonList(frame));
@@ -7409,7 +7776,8 @@ public final class MainActivity extends Activity {
   private void refreshPastedThumbnails(List<Frame> candidates) {
     if (candidates == null) return;
     for (Frame frame : candidates) {
-      if (frame == null || frame.id.equals(activeId) || frame.params == null) continue;
+      if (frame == null || !frame.edited || frame.id.equals(activeId) || frame.params == null)
+        continue;
       if (hasDevelopedLook(frame) || homeImages.isWriting(frame.id)) continue;
       homeThumbJobs.offer(frame.id, frame.params);
     }
@@ -7689,7 +8057,10 @@ public final class MainActivity extends Activity {
       return;
     }
     saveActiveFrame();
-    if (frame.id.equals(activeId) && developed != null && !developed.isRecycled()) {
+    if (frame.id.equals(activeId)
+        && developed != null
+        && !developed.isRecycled()
+        && !mainPreviewPending()) {
       exportOptions();
       return;
     }
@@ -7836,6 +8207,7 @@ public final class MainActivity extends Activity {
     String entryParams = frame.params;
     boolean entryEdited = frame.edited;
     if (frame.id.equals(activeId)) {
+      ++frameLoadTicket;
       boolean unedited =
           !frame.id.equals(editorPhotoId) && !frame.edited && initialSettings == null;
       boolean defaultChanged = prepareUneditedPhoto(frame, initialSettings);
@@ -7865,9 +8237,13 @@ public final class MainActivity extends Activity {
       return;
     }
     saveActiveFrame();
+    Frame outgoing = editorHasChanges() ? findFrame(editorBaselineId) : null;
+    if (outgoing != null && activeId.equals(outgoing.id)) saveRecentEdit(outgoing);
     // 切走前把当前照片的显影小图也落盘；回到首页时多张照片各自带回自己的效果。
     saveDevelopedLook();
     int ticket = ++revision;
+    ++editRevision;
+    int loadTicket = ++frameLoadTicket;
     showEditor();
     if (editorStrip != null) editorStrip.setActive(frame.id, true);
     setStatus("读取照片与编辑记录…", true);
@@ -7879,7 +8255,7 @@ public final class MainActivity extends Activity {
             saveThumbnail(frame.id, b.bitmap);
             ui(
                 () -> {
-                  if (ticket != revision) {
+                  if (ticket != revision || loadTicket != frameLoadTicket) {
                     Bitmaps.release(b.bitmap);
                     return;
                   }
@@ -7981,6 +8357,7 @@ public final class MainActivity extends Activity {
             (float) (settings.optDouble("geo_y", 0) + settings.optDouble("geo_h", 1)));
     int turns = settings.optInt("geo_turns", 0);
     boolean flipH = settings.optBoolean("geo_flip_h", false);
+    boolean flipV = settings.optBoolean("geo_flip_v", false);
     float angleDeg = (float) settings.optDouble("geo_angle", 0);
     int fw = fullWidth > 0 ? fullWidth : source.getWidth();
     int fh = fullHeight > 0 ? fullHeight : source.getHeight();
@@ -7993,16 +8370,19 @@ public final class MainActivity extends Activity {
             initial,
             turns,
             flipH,
+            flipV,
             angleDeg,
             new CropPage.Listener() {
               @Override
-              public void onApply(RectF crop, int newTurns, boolean newFlipH, float newAngleDeg) {
+              public void onApply(
+                  RectF crop, int newTurns, boolean newFlipH, boolean newFlipV, float newAngleDeg) {
                 set("geo_x", (double) crop.left);
                 set("geo_y", (double) crop.top);
                 set("geo_w", (double) crop.width());
                 set("geo_h", (double) crop.height());
                 set("geo_turns", newTurns);
                 set("geo_flip_h", newFlipH);
+                set("geo_flip_v", newFlipV);
                 set("geo_angle", (double) newAngleDeg);
                 closeCropPage();
                 updateHistoryButtons();
@@ -8070,8 +8450,15 @@ public final class MainActivity extends Activity {
     } catch (JSONException ex) {
       return;
     }
+    defaults();
     normalizePaper();
     committed = settings.toString();
+    Frame active = findFrame(activeId);
+    if (active != null
+        && active.id.equals(editorBaselineId)
+        && committed.equals(editorStartSettings)) {
+      active.edited = editorBaselineEdited;
+    }
     filmCategory = category(find(films, settings.optString("film_stock")));
     buildPanel();
     updateStockLabels();
@@ -8093,12 +8480,12 @@ public final class MainActivity extends Activity {
       android.util.Log.w("SpektraLensExport", "Output dimensions unavailable", error);
     }
     File selectedSource = sourceFile;
-    int selectedRevision = revision;
+    int selectedEditRevision = editRevision;
     exportSheet =
         new ExportSheet(
             this, dimensions, outputWidth, outputHeight, developed,
             options -> {
-              if (sourceFile != selectedSource || revision != selectedRevision) {
+              if (sourceFile != selectedSource || editRevision != selectedEditRevision) {
                 showNotice("照片已更新，请重新打开导出面板");
                 return false;
               }
@@ -8254,6 +8641,21 @@ public final class MainActivity extends Activity {
                     + new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
             String ext = mode == 1 ? ".png" : mode == 2 ? ".tiff" : ".jpg";
             String mime = mode == 1 ? "image/png" : mode == 2 ? "image/tiff" : "image/jpeg";
+            if (mode == 3) {
+              // Clean stale share temp files before creating a new one so cache never piles up.
+              File[] stale =
+                  getCacheDir()
+                      .listFiles(
+                          (d, n) ->
+                              n.startsWith(getString(R.string.app_name) + "_")
+                                  && (n.endsWith(".jpg")
+                                      || n.endsWith(".png")
+                                      || n.endsWith(".tiff")));
+              if (stale != null) {
+                long cutoff = System.currentTimeMillis() - 60_000L;
+                for (File f : stale) if (f.lastModified() < cutoff) f.delete();
+              }
+            }
             cache = new File(getCacheDir(), base + ext);
             trace.phase(
                 "develop_encode_ms", requestedEdge > 0 ? "按较小尺寸显影与编码" : "原尺寸显影与编码");
@@ -8325,7 +8727,8 @@ public final class MainActivity extends Activity {
                   if (sheet != null) sheet.setProgress(0.97f, 200);
                 });
             JSONObject recipe = new JSONObject();
-            recipe.put("app_version", "0.3.6");
+            String pkgVer = getPackageVersion();
+            recipe.put("app_version", pkgVer.isEmpty() ? "0.6.0" : pkgVer);
             recipe.put("source_name", name);
             recipe.put(
                 "source_sha256", sourceHash == null ? sha256(original) : awaitHash(sourceHash));
@@ -8371,6 +8774,8 @@ public final class MainActivity extends Activity {
             String label = dimensions.getInt("width") + " × " + dimensions.getInt("height");
             File sharedFile = cache;
             String fileSize = android.text.format.Formatter.formatShortFileSize(this, cache.length());
+            // MediaStore already owns the copied photo; delete the large cache staging file.
+            if (mode != 3 && cache != null) cache.delete();
             ui(
                 () -> {
                   if (sheet != null) sheet.finishExport();
@@ -8476,7 +8881,9 @@ public final class MainActivity extends Activity {
             (dialog, which) -> {
               if (exportSheet != null)
                 exportSheet.retryExport(options.mode == ExportOptions.SHARE_JPEG);
-              export(new ExportOptions(options.mode, options.jpegQuality, memory.safeEdge));
+              boolean started =
+                  export(new ExportOptions(options.mode, options.jpegQuality, memory.safeEdge));
+              if (!started && exportSheet != null) exportSheet.failExport();
             })
         .show();
   }
@@ -8591,13 +8998,22 @@ public final class MainActivity extends Activity {
       editorStrip.close();
       editorStrip = null;
     }
+    closeCropPage();
+    if (editorExitDialog != null) {
+      editorExitDialog.dismiss();
+      editorExitDialog = null;
+    }
     detachLightTable();
     settingsPage = null;
     controls.clear();
     historySignature = "";
     buildUI();
     AppStyle.applyWindowTheme(this);
-    if (photo != null && source != null) photo.images(source, developed);
+    if (photo != null && source != null) {
+      Bitmap beforeBmp = compared != null && !compared.isRecycled() ? compared : source;
+      photo.images(beforeBmp, developed);
+      updateComparison();
+    }
     if (exportButton != null) {
       if (ready && developed != null) {
         exportButton.setText("导出照片");
@@ -8753,6 +9169,10 @@ public final class MainActivity extends Activity {
     }
     if (gallerySheet != null) gallerySheet.dismiss();
     if (exportSheet != null) exportSheet.dismiss();
+    if (editorExitDialog != null) {
+      editorExitDialog.dismiss();
+      editorExitDialog = null;
+    }
     if (cropPage != null) {
       screens.removeView(cropPage);
       cropPage = null;
@@ -8780,11 +9200,11 @@ public final class MainActivity extends Activity {
     thumbnailDeliveries.close();
     ++thumbGeneration;
     for (ImageView view : thumbTargets.values()) view.setImageDrawable(null);
-    for (Bitmap cached : filmThumbs.values()) Bitmaps.release(cached);
     filmThumbs.clear();
     thumbTargets.clear();
     filmScrollRef = null;
     filmGridRef = null;
+    filmGridScrollRef = null;
     if (homeImages != null) homeImages.close();
     if (activeImport != null) {
       activeImport.cancel();

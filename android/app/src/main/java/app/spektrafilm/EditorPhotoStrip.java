@@ -65,6 +65,7 @@ final class EditorPhotoStrip extends HorizontalScrollView {
   private final Listener listener;
   private final LruCache<String, Bitmap> cache;
   private final Map<String, Integer> loading = new HashMap<>();
+  private final Map<String, Integer> itemVersion = new HashMap<>();
   private final Set<String> failed = new HashSet<>();
   private final Map<String, Thumb> thumbs = new LinkedHashMap<>();
   private final Rect visible = new Rect();
@@ -180,6 +181,9 @@ final class EditorPhotoStrip extends HorizontalScrollView {
 
   void invalidate(String id) {
     if (closed || id == null) return;
+    int nextVer = itemVersion.getOrDefault(id, 0) + 1;
+    itemVersion.put(id, nextVer);
+    loading.remove(id);
     cache.remove(id);
     failed.remove(id);
     Thumb thumb = thumbs.get(id);
@@ -338,16 +342,19 @@ final class EditorPhotoStrip extends HorizontalScrollView {
       return;
     }
     int current = generation;
+    int version = itemVersion.getOrDefault(id, 0);
+    int token = (current * 31) ^ version;
     Integer pending = loading.get(id);
-    if (pending != null && pending == current) return;
-    loading.put(id, current);
+    if (pending != null && pending == token) return;
+    loading.put(id, token);
     io.execute(
         () -> {
           Bitmap bitmap = decode(photo);
           main.post(
               () -> {
-                if (Integer.valueOf(current).equals(loading.get(id))) loading.remove(id);
-                if (closed || current != generation) return;
+                if (Integer.valueOf(token).equals(loading.get(id))) loading.remove(id);
+                if (closed || current != generation || version != itemVersion.getOrDefault(id, 0))
+                  return;
                 if (bitmap == null) {
                   failed.add(id);
                   return;
@@ -380,7 +387,7 @@ final class EditorPhotoStrip extends HorizontalScrollView {
     if (file == null || !file.isFile()) return null;
     try {
       BitmapFactory.Options options = new BitmapFactory.Options();
-      options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+      options.inPreferredConfig = Bitmap.Config.RGB_565;
       return BitmapFactory.decodeFile(file.getAbsolutePath(), options);
     } catch (RuntimeException ignored) {
       return null;

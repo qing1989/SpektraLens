@@ -140,6 +140,11 @@ final class FilmStockPolicy {
       result.put("y_filter_shift", 0.0);
       result.put("grain_sublayers_active", false);
       result.put("camera_filter", cameraFilter(film, selectedCameraFilter));
+    } else {
+      // Explicitly reset monochrome-only overrides so switching B&W -> Color in a reused
+      // engine session never carries over a lens filter or disabled color grain sublayers.
+      result.put("grain_sublayers_active", true);
+      result.put("camera_filter", "");
     }
     result.put("print_exposure", exposure);
     if (cinestill800t(film)) result.put("halation_headroom_ev", halationHeadroom(film, headroomEv));

@@ -325,6 +325,7 @@ final class HomePhotoImages implements AutoCloseable {
   void remove(File original) {
     if (original == null) return;
     evictMemoryByOriginal(original);
+    if (closed) return;
     String prefix = original.getName() + "-";
     io.execute(
         () -> {
@@ -337,10 +338,15 @@ final class HomePhotoImages implements AutoCloseable {
   void removeDeveloped(String id) {
     invalidateDeveloped(id);
     File jpeg = new File(new File(context.getFilesDir(), "developed"), id + ".jpg");
-    jpeg.delete();
-    alphaLook(jpeg).delete();
+    if (closed) {
+      jpeg.delete();
+      alphaLook(jpeg).delete();
+      return;
+    }
     io.execute(
         () -> {
+          jpeg.delete();
+          alphaLook(jpeg).delete();
           File[] files = cache.listFiles(
               (dir, name) -> name.startsWith("developed-" + id + ".jpg-")
                   || name.startsWith("developed-" + id + ".png-"));

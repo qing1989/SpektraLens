@@ -26,13 +26,13 @@ final class CropEditor extends View {
   private final RectF area = new RectF(), displayCrop = new RectF(), frame = new RectF();
   private float aspect, lastX, lastY;
   private int turns;
-  private boolean flipH;
+  private boolean flipH, flipV;
   private float angleDeg;
   private int handle = -1;
   private Runnable changeListener;
 
   CropEditor(Context context, Bitmap bitmap, RectF initialSourceCrop) {
-    this(context, bitmap, initialSourceCrop, 0, false, 0f);
+    this(context, bitmap, initialSourceCrop, 0, false, false, 0f);
   }
 
   CropEditor(
@@ -42,12 +42,24 @@ final class CropEditor extends View {
       int initialTurns,
       boolean initialFlipH,
       float initialAngleDeg) {
+    this(context, bitmap, initialSourceCrop, initialTurns, initialFlipH, false, initialAngleDeg);
+  }
+
+  CropEditor(
+      Context context,
+      Bitmap bitmap,
+      RectF initialSourceCrop,
+      int initialTurns,
+      boolean initialFlipH,
+      boolean initialFlipV,
+      float initialAngleDeg) {
     super(context);
     this.image = bitmap;
     this.turns = ((initialTurns % 4) + 4) % 4;
     this.flipH = initialFlipH;
+    this.flipV = initialFlipV;
     this.angleDeg = initialAngleDeg;
-    sourceToDisplay(initialSourceCrop, this.turns, this.flipH, displayCrop);
+    sourceToDisplay(initialSourceCrop, this.turns, this.flipH, this.flipV, displayCrop);
     clamp();
     setContentDescription("裁切框：拖动四角改变范围，拖动中间移动");
   }
@@ -59,7 +71,7 @@ final class CropEditor extends View {
   /** Normalized source-space crop rectangle matching native edit_pipeline.cpp Geometry. */
   RectF value() {
     RectF out = new RectF();
-    displayToSource(displayCrop, turns, flipH, out);
+    displayToSource(displayCrop, turns, flipH, flipV, out);
     return out;
   }
 
@@ -69,6 +81,10 @@ final class CropEditor extends View {
 
   boolean flipH() {
     return flipH;
+  }
+
+  boolean flipV() {
+    return flipV;
   }
 
   float angleDeg() {
@@ -106,7 +122,7 @@ final class CropEditor extends View {
   void rotate90() {
     RectF src = value();
     turns = (turns + 1) % 4;
-    sourceToDisplay(src, turns, flipH, displayCrop);
+    sourceToDisplay(src, turns, flipH, flipV, displayCrop);
     if (aspect > 0f) applyAspect(aspect);
     else clamp();
     invalidate();
@@ -116,7 +132,7 @@ final class CropEditor extends View {
   void toggleFlipH() {
     RectF src = value();
     flipH = !flipH;
-    sourceToDisplay(src, turns, flipH, displayCrop);
+    sourceToDisplay(src, turns, flipH, flipV, displayCrop);
     clamp();
     invalidate();
     notifyChanged();
@@ -145,6 +161,7 @@ final class CropEditor extends View {
   void resetAll() {
     turns = 0;
     flipH = false;
+    flipV = false;
     angleDeg = 0f;
     aspect = 0f;
     displayCrop.set(0f, 0f, 1f, 1f);
@@ -176,8 +193,22 @@ final class CropEditor extends View {
   }
 
   private void clamp() {
-    float w = Math.max(.08f, Math.min(1f, displayCrop.width()));
-    float h = Math.max(.08f, Math.min(1f, displayCrop.height()));
+    float w = Math.min(1f, displayCrop.width());
+    float h = Math.min(1f, displayCrop.height());
+    if (aspect > 0f) {
+      float norm = aspect * displaySourceHeight() / Math.max(1f, displaySourceWidth());
+      float minW = Math.min(1f, Math.max(.08f, .08f * norm));
+      float maxW = Math.min(1f, norm);
+      w = Math.max(Math.min(minW, maxW), Math.min(maxW, w));
+      h = w / norm;
+      if (h > 1f) {
+        h = 1f;
+        w = Math.min(1f, h * norm);
+      }
+    } else {
+      w = Math.max(.08f, w);
+      h = Math.max(.08f, h);
+    }
     float left = Math.max(0f, Math.min(1f - w, displayCrop.left));
     float top = Math.max(0f, Math.min(1f - h, displayCrop.top));
     displayCrop.set(left, top, left + w, top + h);
@@ -187,7 +218,8 @@ final class CropEditor extends View {
     if (changeListener != null) changeListener.run();
   }
 
-  private static void sourceToDisplay(RectF src, int turns, boolean flipH, RectF out) {
+  private static void sourceToDisplay(
+      RectF src, int turns, boolean flipH, boolean flipV, RectF out) {
     float[] xs = {src.left, src.right};
     float[] ys = {src.top, src.bottom};
     float minU = 1f, maxU = 0f, minV = 1f, maxV = 0f;
@@ -213,7 +245,7 @@ final class CropEditor extends View {
             break;
         }
         float u = flipH ? (1f - u1) : u1;
-        float v = v1;
+        float v = flipV ? (1f - v1) : v1;
         if (u < minU) minU = u;
         if (u > maxU) maxU = u;
         if (v < minV) minV = v;
@@ -223,14 +255,15 @@ final class CropEditor extends View {
     out.set(minU, minV, maxU, maxV);
   }
 
-  private static void displayToSource(RectF disp, int turns, boolean flipH, RectF out) {
+  private static void displayToSource(
+      RectF disp, int turns, boolean flipH, boolean flipV, RectF out) {
     float[] us = {disp.left, disp.right};
     float[] vs = {disp.top, disp.bottom};
     float minA = 1f, maxA = 0f, minB = 1f, maxB = 0f;
     for (float u : us) {
       for (float v : vs) {
         float u1 = flipH ? (1f - u) : u;
-        float v1 = v;
+        float v1 = flipV ? (1f - v) : v;
         float a, b;
         switch (turns) {
           case 1:
@@ -282,38 +315,42 @@ final class CropEditor extends View {
         (getWidth() + w) / 2f,
         (getHeight() + h) / 2f);
 
-    // Draw full transformed photo clipped to stage bounds so straighten tilt previews smoothly.
-    canvas.save();
-    canvas.clipRect(area);
-    drawMatrix.reset();
-    drawMatrix.postTranslate(-image.getWidth() / 2f, -image.getHeight() / 2f);
-    if (turns != 0) drawMatrix.postRotate(turns * 90f);
-    if (flipH) drawMatrix.postScale(-1f, 1f);
-    if (Math.abs(angleDeg) > 0.01f) {
-      double rad = Math.toRadians(angleDeg);
-      float cw = Math.max(1f, displayCrop.width() * w);
-      float ch = Math.max(1f, displayCrop.height() * h);
-      float fit =
-          (float)
-              Math.max(
-                  Math.abs(Math.cos(rad)) + Math.abs(Math.sin(rad)) * (ch / cw),
-                  Math.abs(Math.cos(rad)) + Math.abs(Math.sin(rad)) * (cw / ch));
-      drawMatrix.postRotate(-angleDeg);
-      drawMatrix.postScale(fit, fit);
-    }
-    drawMatrix.postScale(scale, scale);
-    drawMatrix.postTranslate(area.centerX(), area.centerY());
-    paint.setStyle(Paint.Style.FILL);
-    paint.setAlpha(255);
-    canvas.drawBitmap(image, drawMatrix, paint);
-    canvas.restore();
-
     RectF r = frame;
     r.set(
         area.left + displayCrop.left * w,
         area.top + displayCrop.top * h,
         area.left + displayCrop.right * w,
         area.top + displayCrop.bottom * h);
+
+    // Match native edit_pipeline.cpp Geometry::sample forward transform exactly:
+    // rotate (+angleDeg) & scale (fit) around the source crop center, then 90° turns, then flips.
+    RectF srcCrop = value();
+    float scx = srcCrop.centerX() * image.getWidth();
+    float scy = srcCrop.centerY() * image.getHeight();
+    canvas.save();
+    canvas.clipRect(area);
+    drawMatrix.reset();
+    drawMatrix.postTranslate(-scx, -scy);
+    if (Math.abs(angleDeg) > 0.01f) {
+      double rad = Math.toRadians(angleDeg);
+      float cw = Math.max(1f, srcCrop.width() * image.getWidth());
+      float ch = Math.max(1f, srcCrop.height() * image.getHeight());
+      float fit =
+          (float)
+              Math.max(
+                  Math.abs(Math.cos(rad)) + Math.abs(Math.sin(rad)) * (ch / cw),
+                  Math.abs(Math.cos(rad)) + Math.abs(Math.sin(rad)) * (cw / ch));
+      drawMatrix.postRotate(angleDeg);
+      drawMatrix.postScale(fit, fit);
+    }
+    if (turns != 0) drawMatrix.postRotate(turns * 90f);
+    if (flipH || flipV) drawMatrix.postScale(flipH ? -1f : 1f, flipV ? -1f : 1f);
+    drawMatrix.postScale(scale, scale);
+    drawMatrix.postTranslate(r.centerX(), r.centerY());
+    paint.setStyle(Paint.Style.FILL);
+    paint.setAlpha(255);
+    canvas.drawBitmap(image, drawMatrix, paint);
+    canvas.restore();
 
     // Dimmed outer crop mask.
     paint.setColor(0xa6000000);
@@ -384,12 +421,18 @@ final class CropEditor extends View {
         boolean left = handle % 2 == 0, top = handle < 2;
         float ax = left ? displayCrop.right : displayCrop.left;
         float ay = top ? displayCrop.bottom : displayCrop.top;
-        float w = Math.max(.08f, Math.min(left ? ax : 1f - ax, Math.abs(x - ax)));
-        float h = Math.max(.08f, Math.min(top ? ay : 1f - ay, Math.abs(y - ay)));
+        float maxW = left ? ax : 1f - ax;
+        float maxH = top ? ay : 1f - ay;
+        float rawW = left ? (ax - x) : (x - ax);
+        float rawH = top ? (ay - y) : (y - ay);
+        float w = Math.max(.08f, Math.min(maxW, rawW));
+        float h = Math.max(.08f, Math.min(maxH, rawH));
         if (aspect > 0f) {
           float norm = aspect * displaySourceHeight() / Math.max(1f, displaySourceWidth());
+          float aspectMaxW = Math.min(maxW, maxH * norm);
+          float aspectMinW = Math.min(aspectMaxW, Math.max(.08f, .08f * norm));
+          w = Math.max(aspectMinW, Math.min(aspectMaxW, rawW));
           h = w / norm;
-          float maxH = top ? ay : 1f - ay;
           if (h > maxH) {
             h = maxH;
             w = h * norm;

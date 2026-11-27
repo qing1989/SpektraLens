@@ -112,6 +112,92 @@ void apply_silver_highlight_edr(float c[3]) {
     c[1] = lut.to_srgb(g * scale);
     c[2] = lut.to_srgb(b * scale);
 }
+
+void linear_srgb_to_oklab(float r, float g, float b, float &L, float &a, float &b_out) {
+    const float l = std::cbrt(std::max(0.f, 0.4122214708f * r + 0.5363325363f * g + 0.0514459929f * b));
+    const float m = std::cbrt(std::max(0.f, 0.2119034982f * r + 0.6806995451f * g + 0.1073969566f * b));
+    const float s = std::cbrt(std::max(0.f, 0.0883024619f * r + 0.2817188376f * g + 0.6299787005f * b));
+    L = 0.2104542553f * l + 0.7936177850f * m - 0.0040720468f * s;
+    a = 1.9779984951f * l - 2.4285922050f * m + 0.4505937099f * s;
+    b_out = 0.0259040371f * l + 0.7827717662f * m - 0.8086757660f * s;
+}
+
+void oklab_to_linear_srgb(float L, float a, float b_in, float &r, float &g, float &b) {
+    const float l_ = L + 0.3963377774f * a + 0.2158037573f * b_in;
+    const float m_ = L - 0.1055613458f * a - 0.0638541728f * b_in;
+    const float s_ = L - 0.0894841775f * a - 1.2914855480f * b_in;
+    const float l = l_ * l_ * l_;
+    const float m = m_ * m_ * m_;
+    const float s = s_ * s_ * s_;
+    r = +4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s;
+    g = -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s;
+    b = -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s;
+}
+
+constexpr float kFoliageHueMin = 102.f;
+constexpr float kFoliageHueSpan = 70.f; // [102, 172] deg in Oklab
+
+bool sample_foliage_gate(const FoliageGateMap &gate, double sx, double sy, uint32_t w, uint32_t h,
+                         float &w_src, float &h_src) {
+    const float gx = std::clamp(float((sx + .5) * double(gate.width) / double(w) - .5),
+                                0.f, float(gate.width - 1));
+    const float gy = std::clamp(float((sy + .5) * double(gate.height) / double(h) - .5),
+                                0.f, float(gate.height - 1));
+    const uint32_t x0 = uint32_t(gx), y0 = uint32_t(gy);
+    const uint32_t x1 = std::min(x0 + 1, gate.width - 1);
+    const uint32_t y1 = std::min(y0 + 1, gate.height - 1);
+    const float fx = gx - float(x0), fy = gy - float(y0);
+    const float w00 = (1.f - fx) * (1.f - fy);
+    const float w10 = fx * (1.f - fy);
+    const float w01 = (1.f - fx) * fy;
+    const float w11 = fx * fy;
+    const uint8_t *p00 = &gate.data[(size_t(y0) * gate.width + x0) * 2];
+    const uint8_t *p10 = &gate.data[(size_t(y0) * gate.width + x1) * 2];
+    const uint8_t *p01 = &gate.data[(size_t(y1) * gate.width + x0) * 2];
+    const uint8_t *p11 = &gate.data[(size_t(y1) * gate.width + x1) * 2];
+    const float g00 = w00 * p00[0], g10 = w10 * p10[0], g01 = w01 * p01[0], g11 = w11 * p11[0];
+    const float gsum = g00 + g10 + g01 + g11;
+    if (gsum <= .5f) return false;
+    w_src = gsum * (1.f / 255.f);
+    const float h_q = (g00 * p00[1] + g10 * p10[1] + g01 * p01[1] + g11 * p11[1]) / gsum;
+    h_src = kFoliageHueMin + h_q * (kFoliageHueSpan / 255.f);
+    return true;
+}
+
+// Source-hue gated Oklab foliage protection (built-in standard alpha=0.78):
+// Only pixels whose original scene hue lies in the natural foliage band (Oklab 102..172 deg)
+// AND whose film-simulated hue was dragged clockwise toward yellow/mustard are smoothly rotated
+// back toward natural green, preserving film luminance, tone curve, skin, yellow flowers & sky.
+void apply_foliage_guard_pixel(float c[3], float w_src, float h_src) {
+    const auto &lut = silver_edr_lut();
+    const float r = lut.to_lin(c[0]);
+    const float g = lut.to_lin(c[1]);
+    const float b = lut.to_lin(c[2]);
+    float L_o, a_o, b_o;
+    linear_srgb_to_oklab(r, g, b, L_o, a_o, b_o);
+    const float c_o = std::hypot(a_o, b_o);
+    if (c_o <= .018f) return;
+    const float gate = w_src * smooth(.018f, .050f, c_o);
+    if (gate <= 1e-5f) return;
+    float h_o = std::atan2(b_o, a_o) * (180.f / pi);
+    if (h_o < 0.f) h_o += 360.f;
+    float drift = h_o - h_src;
+    if (drift > 180.f) drift -= 360.f;
+    else if (drift < -180.f) drift += 360.f;
+    const float yellow_shift = -(drift + 2.0f);
+    if (yellow_shift <= 0.f) return;
+    const float rot_deg = std::min(34.0f, 0.78f * yellow_shift) * gate;
+    const float rad = rot_deg * (pi / 180.f);
+    const float ca = std::cos(rad), sa = std::sin(rad);
+    const float scale = 1.f - 0.06f * std::min(1.f, yellow_shift / 35.0f) * gate;
+    const float a_new = (a_o * ca - b_o * sa) * scale;
+    const float b_new = (a_o * sa + b_o * ca) * scale;
+    float r_out, g_out, b_out;
+    oklab_to_linear_srgb(L_o, a_new, b_new, r_out, g_out, b_out);
+    c[0] = lut.to_srgb(r_out);
+    c[1] = lut.to_srgb(g_out);
+    c[2] = lut.to_srgb(b_out);
+}
 uint16_t quant(float x) { return uint16_t(std::lround(sat(x) * 65535.f)); }
 
 // Scan-side light added to the developed image. The saved seed determines the
@@ -397,6 +483,8 @@ struct Grade {
             c[k] *= 1 + lum[0] + lum[1] * ws + lum[2] * wm + lum[3] * wh;
         }
         if (hsl) {
+            for (int k = 0; k < 3; k++)
+                c[k] = sat(c[k]);
             float mx = std::max({c[0], c[1], c[2]}), mn = std::min({c[0], c[1], c[2]}),
                   delta = mx - mn;
             if (delta > 1e-6f) {
@@ -650,14 +738,18 @@ void date(Image16 &im, const spk::Json &j, int ix, int iy, int iw, int ih) {
     add_seven_seg(value, h, x0, segs);
     if (segs.empty()) return;
 
-    float c[3] = {1, .49f, .20f};
-    if (j.at("date_color").as_string() == "white")
-        c[1] = c[2] = .94f;
-    float strength = num(j, "date_intensity", 1, .1, 2) * .8f;
+    const bool white_date = j.at("date_color").as_string() == "white";
+    // Incandescent LED filament core + 3-stage optical emulsion halation (orange -> crimson red).
+    const float c_core[3] = {1.f, white_date ? .96f : .56f, white_date ? .90f : .22f};
+    const float c_near[3] = {1.f, white_date ? .93f : .34f, white_date ? .84f : .08f};
+    const float c_mid[3]  = {1.f, white_date ? .88f : .20f, white_date ? .76f : .04f};
+    const float c_far[3]  = {white_date ? .98f : .96f, white_date ? .82f : .12f,
+                             white_date ? .68f : .02f};
+    const float strength = num(j, "date_intensity", 1, .1, 2) * .8f;
 
-    // 掩膜：以水印为中心留出光晕的余量。最外层做两次模糊，支持域是半径的两倍，
-    // 缓冲留少了尾巴会被硬切出一道直边。
-    int pad = std::max(6, int(std::ceil(h * 1.05f)));
+    // 掩膜：以水印为中心留出远晕余量。最外层 0.62h 做两次盒式模糊，支持域约 1.24h，
+    // 缓冲留足 1.45h 保证尾巴一路平滑衰减到零、不出现矩形切边。
+    int pad = std::max(8, int(std::ceil(h * 1.45f)));
     int mw = int(std::ceil(w)) + pad * 2 + 3, mh = int(h) + pad * 2 + 3;
     int ox = int(std::floor(x0)) - pad, oy = int(std::floor(baseline - h)) - pad;
     std::vector<float> mask(size_t(mw) * mh, 0.f);
@@ -682,34 +774,44 @@ void date(Image16 &im, const spk::Json &j, int ix, int iy, int iw, int ih) {
     // Only soften the core when the output has enough pixels to keep segment gaps.
     if (kDateStroke * h >= 5.f) blur(mask, mw, mh, 1);
 
-    // 三层柔光 ≈ 光学 PSF：近晕贴着笔画，中晕过渡，远晕铺开。每层两次盒式模糊，
-    // 外层因此没有那个「到 r 就没了」的硬边。
-    std::vector<float> glow = mask;
-    blur(glow, mw, mh, std::max(1, int(h * .10f)), 2);
-    for (float &value : glow) value *= .50f;
-    std::vector<float> layer = mask;
-    blur(layer, mw, mh, std::max(2, int(h * .24f)), 2);
-    for (size_t i = 0; i < glow.size(); i++) glow[i] += layer[i] * .32f;
-    layer = mask;
-    blur(layer, mw, mh, std::max(3, int(h * .48f)), 2);
-    for (size_t i = 0; i < glow.size(); i++) glow[i] += layer[i] * .18f;
+    // 三层乳剂散射 PSF（方案 B · 经典石英日期背）：近晕贴笔画、中晕红橙过渡、远晕宽幅铺开。
+    std::vector<float> near_glow = mask;
+    blur(near_glow, mw, mh, std::max(1, int(h * .13f)), 2);
+    for (float &value : near_glow) value *= 1.45f;
+    std::vector<float> mid_glow = mask;
+    blur(mid_glow, mw, mh, std::max(2, int(h * .30f)), 2);
+    for (float &value : mid_glow) value *= 1.40f;
+    std::vector<float> far_glow = mask;
+    blur(far_glow, mw, mh, std::max(4, int(h * .62f)), 2);
+    for (float &value : far_glow) value *= 1.15f;
 
+    constexpr float kHaloCap = .78f;
+    constexpr float inv65535 = 1.f / 65535.f;
+    const float core_strength = std::min(1.f, strength * 1.12f);
     for (int py = 0; py < mh; py++) {
         int y = oy + py;
         if (y < 0 || y >= int(im.height)) continue;
         for (int px = 0; px < mw; px++) {
             int x = ox + px;
             if (x < 0 || x >= int(im.width)) continue;
-            size_t i = size_t(py) * mw + px;
-            // 核心直接给满；光晕只在核心之外叠加，并按 (1-core) 收敛。
-            // 之前是三层直接相加再截断到 .96，笔画周围一大片会一起顶到上限，
-            // 等于把近晕整块压成平台，看上去反而没有过渡。
-            float core = mask[i];
-            float alpha = core + glow[i] * .62f * (1.f - core);
-            alpha = std::min(1.f, sat(alpha) * strength);
-            if (alpha <= 0.002f) continue;
+            const size_t i = size_t(py) * mw + px;
+            const float core = mask[i];
+            const float gn = near_glow[i], gm = mid_glow[i], gf = far_glow[i];
+            const float g_raw = gn + gm + gf;
+            if (core <= .001f && g_raw <= .002f) continue;
+            // Smooth exponential shoulder keeps outer halation luminous without flat-clipping.
+            const float halo_e = g_raw > 1e-6f
+                ? kHaloCap * (1.f - std::exp(-(g_raw * strength) / kHaloCap)) : 0.f;
+            const float inv_g = g_raw > 1e-6f ? 1.f / g_raw : 0.f;
+            const float core_a = std::min(1.f, core * core_strength);
             auto *p = &im.rgba[(size_t(y) * im.width + x) * 4];
-            for (int k = 0; k < 3; k++) p[k] = quant(p[k] / 65535.f * (1 - alpha) + c[k] * alpha);
+            for (int k = 0; k < 3; k++) {
+                const float halo_c = (gn * c_near[k] + gm * c_mid[k] + gf * c_far[k]) * inv_g;
+                const float bg = p[k] * inv65535;
+                // Screen blend for emitted emulsion halation, then crisp LED filament core on top.
+                const float lit = 1.f - (1.f - bg) * (1.f - halo_c * halo_e);
+                p[k] = quant(lit * (1.f - core_a) + c_core[k] * core_a);
+            }
         }
     }
 }
@@ -797,8 +899,66 @@ bool date_active(const spk::Json &edits) {
 }
 }  // namespace
 
+FoliageGateMap build_foliage_gate(const float *rgb, uint32_t width, uint32_t height,
+                                  bool linear_prophoto) {
+    FoliageGateMap map;
+    if (!rgb || !width || !height) return map;
+    constexpr uint32_t kMaxGateEdge = 2048;
+    const uint32_t long_edge = std::max(width, height);
+    uint32_t gw = width, gh = height;
+    if (long_edge > kMaxGateEdge) {
+        const double scale = double(kMaxGateEdge) / double(long_edge);
+        gw = std::max<uint32_t>(1, uint32_t(std::lround(width * scale)));
+        gh = std::max<uint32_t>(1, uint32_t(std::lround(height * scale)));
+    }
+    map.width = gw;
+    map.height = gh;
+    map.data.assign(size_t(gw) * gh * 2, 0);
+    const auto &lut = silver_edr_lut();
+    const bool exact = (gw == width && gh == height);
+    for (uint32_t gy = 0; gy < gh; ++gy) {
+        const uint32_t sy = exact ? gy : std::min(height - 1, uint32_t((gy + .5) * double(height) / double(gh)));
+        const float *src_row = rgb + size_t(sy) * width * 3;
+        uint8_t *dst_row = &map.data[size_t(gy) * gw * 2];
+        for (uint32_t gx = 0; gx < gw; ++gx) {
+            const uint32_t sx = exact ? gx : std::min(width - 1, uint32_t((gx + .5) * double(width) / double(gw)));
+            const float *p = src_row + size_t(sx) * 3;
+            float r, g, b;
+            if (linear_prophoto) {
+                // Exact SpektraLab ProPhoto RGB -> linear sRGB matrix (Bradford D50 -> D65).
+                const float pr = p[0], pg = p[1], pb = p[2];
+                r = std::max(0.f,  2.03649172f * pr - 0.73759065f * pg - 0.29925987f * pb);
+                g = std::max(0.f, -0.22571798f * pr + 1.22317653f * pg + 0.00272522f * pb);
+                b = std::max(0.f, -0.01054513f * pr - 0.13487985f * pg + 1.14521015f * pb);
+            } else {
+                r = lut.to_lin(p[0]);
+                g = lut.to_lin(p[1]);
+                b = lut.to_lin(p[2]);
+            }
+            float L_s, a_s, b_s;
+            linear_srgb_to_oklab(r, g, b, L_s, a_s, b_s);
+            const float c_s = std::hypot(a_s, b_s);
+            if (c_s <= .018f) continue;
+            float h_s = std::atan2(b_s, a_s) * (180.f / pi);
+            if (h_s < 0.f) h_s += 360.f;
+            if (h_s <= kFoliageHueMin || h_s >= kFoliageHueMin + kFoliageHueSpan) continue;
+            const float w_hue = smooth(102.f, 114.f, h_s) * (1.f - smooth(152.f, 172.f, h_s));
+            const float w_src = w_hue * smooth(.018f, .055f, c_s);
+            const int gq = int(std::lround(sat(w_src) * 255.f));
+            if (gq <= 0) continue;
+            const int hq = int(std::lround(sat((h_s - kFoliageHueMin) / kFoliageHueSpan) * 255.f));
+            dst_row[size_t(gx) * 2] = uint8_t(gq);
+            dst_row[size_t(gx) * 2 + 1] = uint8_t(hq);
+            map.has_green = true;
+        }
+    }
+    if (!map.has_green) map.clear();
+    return map;
+}
+
 Image16 apply_edits(const uint16_t *pixels, uint32_t w, uint32_t h, uint32_t stride,
-                    const spk::Json &edits, bool transparent_frame) {
+                    const spk::Json &edits, bool transparent_frame,
+                    const FoliageGateMap *foliage_gate, const std::string &resources) {
     if (!w || !h || !pixels)
         throw std::runtime_error("No rendered pixels");
     Geometry geo(edits, w, h);
@@ -806,11 +966,12 @@ Image16 apply_edits(const uint16_t *pixels, uint32_t w, uint32_t h, uint32_t str
     FrameLayout f(geo.out_w, geo.out_h, edits);
     LightLeak leak(edits);
     const bool silver_edr = edits.at("silver_highlight_edr").as_bool();
+    const bool guard = !silver_edr && foliage_gate && foliage_gate->active();
     if (uint64_t(f.width) * f.height > 300000000ull)
         throw std::runtime_error("Edited output exceeds 300 megapixels");
     // Keep this predicate in sync with every visual key consumed below. A new overlay or
     // crop field must make identity() false, otherwise the fast path would silently skip it.
-    if (identity_geometry(geo) && !silver_edr && grade.identity() && f.identity()
+    if (identity_geometry(geo) && !silver_edr && !guard && grade.identity() && f.identity()
         && !date_active(edits) && !leak.active()) {
         Image16 out;
         out.width = w;
@@ -834,6 +995,15 @@ Image16 apply_edits(const uint16_t *pixels, uint32_t w, uint32_t h, uint32_t str
     float base[3] = {.008f, .008f, .008f};
     if (f.style == "clean_white" || f.style == "instant")
         base[0] = base[1] = base[2] = .96f;
+    else if (f.style == "film_card_white") {
+        base[0] = 248.f / 255.f;
+        base[1] = 247.f / 255.f;
+        base[2] = 244.f / 255.f;
+    } else if (f.style == "film_card_black") {
+        base[0] = 15.f / 255.f;
+        base[1] = 15.f / 255.f;
+        base[2] = 18.f / 255.f;
+    }
     const uint16_t base_q[4] = {quant(base[0]), quant(base[1]), quant(base[2]), 65535};
     auto fill_span = [&](uint32_t y, uint32_t x_begin, uint32_t x_end) {
         auto *row = &out.rgba[(size_t(y) * out.width + x_begin) * 4];
@@ -853,7 +1023,7 @@ Image16 apply_edits(const uint16_t *pixels, uint32_t w, uint32_t h, uint32_t str
         for (uint32_t y = f.top + geo.out_h; y < out.height; ++y) fill_span(y, 0, out.width);
     }
     const bool id_geo = identity_geometry(geo);
-    if (id_geo && !silver_edr && grade.identity()) {
+    if (id_geo && !silver_edr && !guard && grade.identity()) {
         const size_t row_values = size_t(w) * 4;
         for (uint32_t y = 0; y < h; ++y) {
             auto *dst = &out.rgba[(size_t(y + f.top) * out.width + f.left) * 4];
@@ -863,13 +1033,27 @@ Image16 apply_edits(const uint16_t *pixels, uint32_t w, uint32_t h, uint32_t str
     } else if (id_geo) {
         constexpr float inv65535 = 1.f / 65535.f;
         const float inv_w = 1.f / float(w), inv_h = 1.f / float(h);
+        const bool exact_gate = guard && foliage_gate->width == w && foliage_gate->height == h;
         for (uint32_t y = 0; y < h; ++y) {
             const float ny = (y + .5f) * inv_h;
             const auto *src = pixels + size_t(y) * stride * 4;
             auto *dst = &out.rgba[(size_t(y + f.top) * out.width + f.left) * 4];
+            const uint8_t *gate_row = exact_gate ? &foliage_gate->data[size_t(y) * w * 2] : nullptr;
             for (uint32_t x = 0; x < w; ++x, src += 4, dst += 4) {
                 float c[3] = {src[0] * inv65535, src[1] * inv65535, src[2] * inv65535};
                 if (silver_edr) apply_silver_highlight_edr(c);
+                if (exact_gate) {
+                    const uint8_t gq = gate_row[size_t(x) * 2];
+                    if (gq > 0) {
+                        apply_foliage_guard_pixel(
+                            c, gq * (1.f / 255.f),
+                            kFoliageHueMin + gate_row[size_t(x) * 2 + 1] * (kFoliageHueSpan / 255.f));
+                    }
+                } else if (guard) {
+                    float w_src, h_src;
+                    if (sample_foliage_gate(*foliage_gate, double(x), double(y), w, h, w_src, h_src))
+                        apply_foliage_guard_pixel(c, w_src, h_src);
+                }
                 grade.apply(c, (x + .5f) * inv_w, ny);
                 dst[0] = quant(c[0]);
                 dst[1] = quant(c[1]);
@@ -900,6 +1084,11 @@ Image16 apply_edits(const uint16_t *pixels, uint32_t w, uint32_t h, uint32_t str
                     c[k] = (a * (1 - fy) + b * fy) / 65535.f;
                 }
                 if (silver_edr) apply_silver_highlight_edr(c);
+                if (guard) {
+                    float w_src, h_src;
+                    if (sample_foliage_gate(*foliage_gate, sx, sy, w, h, w_src, h_src))
+                        apply_foliage_guard_pixel(c, w_src, h_src);
+                }
                 grade.apply(c, (x + .5f) * inv_w, ny);
                 dst[0] = quant(c[0]);
                 dst[1] = quant(c[1]);
@@ -914,6 +1103,7 @@ Image16 apply_edits(const uint16_t *pixels, uint32_t w, uint32_t h, uint32_t str
     paper_caption(out, f, edits, geo.out_h);
     date(out, edits, f.left, f.top, geo.out_w, geo.out_h);
     if (f.film != FilmBorder::None) finish_film_border(out, f, edits, transparent_frame);
+    if (f.film_card()) finish_film_card(out, f, edits, resources);
     return out;
 }
 spk::Json output_dimensions(uint32_t w, uint32_t h, const spk::Json &edits) {

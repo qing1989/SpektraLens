@@ -403,15 +403,6 @@ final class AppStyle {
     return drawable;
   }
 
-  static GradientDrawable topRounded(Context context, int color, float radius, boolean outline) {
-    GradientDrawable drawable = new GradientDrawable();
-    drawable.setColor(color);
-    float r = dp(context, radius);
-    drawable.setCornerRadii(new float[] {r, r, r, r, 0, 0, 0, 0});
-    if (outline) drawable.setStroke(Math.max(1, dp(context, .75f)), OUTLINE);
-    return drawable;
-  }
-
   static GradientDrawable pill(Context context, int color, boolean outline) {
     GradientDrawable drawable = new PillDrawable();
     drawable.setColor(color);
@@ -746,6 +737,44 @@ final class AppStyle {
     window.setBackgroundDrawable(shape(dialog.getContext(), SURFACE, R_LARGE, true));
     window.setDimAmount(DIM_AMOUNT);
     View decor = window.getDecorView();
+    final int[] lastWidth = {0};
+    Runnable applyWidth =
+        () -> {
+          if (!dialog.isShowing()) return;
+          Context dialogCtx = dialog.getContext();
+          int widthDp = FoldableUi.windowWidthDp(dialogCtx);
+          int dialogMaxDp =
+              FoldableLayout.alertDialogMaxDp(widthDp, dialog.getListView() != null);
+          int avail = FoldableUi.visibleWindowWidthPx(dialogCtx);
+          int width =
+              Math.min(
+                  dp(dialogCtx, dialogMaxDp),
+                  Math.max(dp(dialogCtx, 240), avail - dp(dialogCtx, 32)));
+          lastWidth[0] = width;
+          window.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT);
+        };
+    Activity host = FoldableUi.unwrapActivity(dialog.getContext());
+    View hostDecor = host != null && host.getWindow() != null ? host.getWindow().getDecorView() : null;
+    if (hostDecor != null) {
+      View.OnLayoutChangeListener resizeListener =
+          (v, l, t, r, b, ol, ot, or, ob) -> {
+            if (dialog.isShowing() && (r - l != or - ol || b - t != ob - ot)) {
+              applyWidth.run();
+              if (lastWidth[0] > 0) layoutDialogActions(dialog, lastWidth[0]);
+            }
+          };
+      hostDecor.addOnLayoutChangeListener(resizeListener);
+      decor.addOnAttachStateChangeListener(
+          new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View v) {}
+
+            @Override
+            public void onViewDetachedFromWindow(View v) {
+              hostDecor.removeOnLayoutChangeListener(resizeListener);
+            }
+          });
+    }
     decor
         .getViewTreeObserver()
         .addOnPreDrawListener(
@@ -753,16 +782,7 @@ final class AppStyle {
               public boolean onPreDraw() {
                 if (!dialog.isShowing()) return true;
                 decor.getViewTreeObserver().removeOnPreDrawListener(this);
-                Context dialogCtx = dialog.getContext();
-                int dialogMaxDp =
-                    FoldableLayout.alertDialogMaxDp(
-                        FoldableUi.windowWidthDp(dialogCtx), dialog.getListView() != null);
-                int width =
-                    Math.min(
-                        dp(dialogCtx, dialogMaxDp),
-                        dialogCtx.getResources().getDisplayMetrics().widthPixels
-                            - dp(dialogCtx, 32));
-                window.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT);
+                applyWidth.run();
                 final int titleId =
                     dialog
                         .getContext()
@@ -815,7 +835,7 @@ final class AppStyle {
                   int padding = dp(dialog.getContext(), primary ? 12 : 8);
                   button.setPadding(padding, 0, padding, 0);
                 }
-                layoutDialogActions(dialog, width);
+                layoutDialogActions(dialog, lastWidth[0]);
                 decor.requestLayout();
                 return false;
               }

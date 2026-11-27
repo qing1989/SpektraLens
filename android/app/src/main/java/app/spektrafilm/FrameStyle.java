@@ -16,7 +16,9 @@ enum FrameStyle {
   MEDIUM_120("120_medium", "120 中画幅", "120 中画幅"),
   SHEET("4x5_sheet", "4×5 大画幅", "4×5 页片"),
   WHITE("clean_white", "白色留边", "白色留边"),
-  INSTANT("instant", "即时相纸", "即时相纸");
+  INSTANT("instant", "即时相纸", "即时相纸"),
+  FILM_CARD_WHITE("film_card_white", "胶片白卡", "胶片白卡"),
+  FILM_CARD_BLACK("film_card_black", "胶片黑卡", "胶片黑卡");
 
   /** Single-photo matte. Match film_border.cpp; the light table uses the scene beneath instead. */
   static final int BACKING_COLOR = 0xffdfd8cc;
@@ -34,8 +36,12 @@ enum FrameStyle {
     return NONE;
   }
 
+  boolean filmCard() {
+    return this == FILM_CARD_WHITE || this == FILM_CARD_BLACK;
+  }
+
   boolean film() {
-    return this != NONE && this != WHITE && this != INSTANT;
+    return this != NONE && this != WHITE && this != INSTANT && !filmCard();
   }
 
   boolean legacyStrip() {

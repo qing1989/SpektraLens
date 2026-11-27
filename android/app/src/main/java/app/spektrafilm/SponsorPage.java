@@ -154,15 +154,12 @@ final class SponsorPage extends FrameLayout {
     later.setOnClickListener(view -> close.run());
     content.addView(later, new LinearLayout.LayoutParams(-1, dp(44)));
 
-    int widthDp = FoldableUi.windowWidthDp(activity);
-    int sheetMaxDp = FoldableLayout.sponsorSheetMaxDp(widthDp);
-    int sheetW =
-        FoldableUi.constrainedWidthPx(
-            activity, getResources().getDisplayMetrics().widthPixels, sheetMaxDp, 12);
+    FrameLayout sheetHost =
+        FoldableUi.wrapCenteredMaxWidth(activity, sheetWrap, FoldableLayout::sponsorSheetMaxDp);
     FrameLayout.LayoutParams sheetLayout =
-        new FrameLayout.LayoutParams(sheetW, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
     sheetLayout.setMargins(dp(12), 0, dp(12), dp(10));
-    addView(sheetWrap, sheetLayout);
+    addView(sheetHost, sheetLayout);
   }
 
   private void showQr() {
@@ -225,17 +222,50 @@ final class SponsorPage extends FrameLayout {
     content.addView(sub, new LinearLayout.LayoutParams(-1, -2));
     gap(content, 22);
 
-    FrameLayout qrCard = new FrameLayout(activity);
+    FrameLayout qrCard =
+        new FrameLayout(activity) {
+          @Override
+          protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            int avail = MeasureSpec.getSize(widthMeasureSpec);
+            int side = Math.min(dp(340), Math.max(dp(160), avail));
+            int exact = MeasureSpec.makeMeasureSpec(side, MeasureSpec.EXACTLY);
+            super.onMeasure(exact, exact);
+          }
+        };
     qrCard.setClipToOutline(true);
     qrCard.setBackground(AppStyle.shape(activity, Color.WHITE, 24, false));
-    int cardSize = Math.min(dp(340), getResources().getDisplayMetrics().widthPixels - dp(48));
-    qrBitmap = decodeQr(qrResource);
     ImageView image = new ImageView(activity);
     image.setScaleType(ImageView.ScaleType.FIT_CENTER);
     image.setContentDescription("微信赞赏码");
-    image.setImageBitmap(qrBitmap);
     qrCard.addView(image, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
-    content.addView(qrCard, new LinearLayout.LayoutParams(cardSize, cardSize));
+    LinearLayout.LayoutParams qrCardLp = new LinearLayout.LayoutParams(-1, -2);
+    qrCardLp.gravity = Gravity.CENTER_HORIZONTAL;
+    content.addView(qrCard, qrCardLp);
+    final int qrRes = qrResource;
+    if (qrBitmap != null && !qrBitmap.isRecycled()) {
+      image.setImageBitmap(qrBitmap);
+    } else if (!released) {
+      worker.execute(
+          () -> {
+            Bitmap decoded = null;
+            try {
+              decoded = decodeQr(qrRes);
+            } catch (RuntimeException ignored) {
+              // Handled gracefully on UI thread.
+            }
+            final Bitmap result = decoded;
+            activity.runOnUiThread(
+                () -> {
+                  if (released || !qrStage) {
+                    if (result != null && !result.isRecycled()) result.recycle();
+                    return;
+                  }
+                  releaseQrBitmap();
+                  qrBitmap = result;
+                  if (result != null) image.setImageBitmap(result);
+                });
+          });
+    }
     gap(content, 20);
 
     saveButton =

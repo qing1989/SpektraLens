@@ -10,6 +10,7 @@ import android.view.View;
 import android.widget.*;
 import java.lang.reflect.*;
 import java.util.*;
+import org.json.JSONObject;
 
 /** Pixel/control bounds, including endpoints and changing source aspect ratios. */
 public final class EditorLayoutInstrumentedTest
@@ -262,5 +263,37 @@ public final class EditorLayoutInstrumentedTest
           "Banner is filled vertically", image.top <= 1 && image.bottom >= hero.getHeight() - 1);
       bitmap.recycle();
     }
+  }
+
+  public void testSquareFrameKeepsOneToOneWhenColumnIsNarrower() {
+    main(
+        () -> {
+          SquareFrameLayout frame = new SquareFrameLayout(activity);
+          frame.measure(
+              View.MeasureSpec.makeMeasureSpec(230, View.MeasureSpec.EXACTLY),
+              View.MeasureSpec.makeMeasureSpec(255, View.MeasureSpec.EXACTLY));
+          assertEquals("Width follows the column", 230, frame.getMeasuredWidth());
+          assertEquals("Height follows the resolved width", 230, frame.getMeasuredHeight());
+        });
+  }
+
+  public void testNullFilmStockRecoversToDefault() {
+    main(
+        () -> {
+          try {
+            JSONObject bad = new JSONObject();
+            bad.put("film_stock", JSONObject.NULL);
+            bad.put("print_stock", JSONObject.NULL);
+            field("settings").set(activity, bad);
+            call("defaults");
+            JSONObject fixed = (JSONObject) field("settings").get(activity);
+            assertEquals("fujifilm_c200", fixed.optString("film_stock"));
+            assertFalse(fixed.isNull("film_stock"));
+            assertFalse(fixed.isNull("print_stock"));
+            assertFalse(fixed.optString("print_stock").isEmpty());
+          } catch (Exception ex) {
+            throw new AssertionError(ex);
+          }
+        });
   }
 }

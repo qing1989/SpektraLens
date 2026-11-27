@@ -12,17 +12,29 @@
 #include <cstdint>
 #include <jni.h>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace {
+std::mutex g_resources_mutex;
+std::string g_resources;
+void remember_resources(const std::string &path) {
+    std::lock_guard<std::mutex> lock(g_resources_mutex);
+    g_resources = path;
+}
+std::string last_resources() {
+    std::lock_guard<std::mutex> lock(g_resources_mutex);
+    return g_resources;
+}
 struct Context {
     spk_engine *engine = nullptr;
     spk_session *session = nullptr;
     std::string resources, raw_path;
     mobile::RawImage raw_preview;
     int raw_preview_edge = 0;
+    mobile::FoliageGateMap foliage_gate;
     ~Context() {
         if (session)
             spk_session_release(session);
@@ -69,7 +81,8 @@ void set_params(Context *c, const std::string &p) {
         spk_string_free(reply);
     check(c, status);
 }
-void open_rgb(Context *c, const float *rgb, uint32_t w, uint32_t h, const std::string &p) {
+void open_rgb(Context *c, const float *rgb, uint32_t w, uint32_t h, const std::string &p,
+              bool linear_prophoto) {
     spk_image image{rgb, w, h, 3};
     char *reply = nullptr;
     auto next = spk_open(c->engine, &image, p.c_str(), &reply);
@@ -80,6 +93,7 @@ void open_rgb(Context *c, const float *rgb, uint32_t w, uint32_t h, const std::s
     if (c->session)
         spk_session_release(c->session);
     c->session = next;
+    c->foliage_gate = mobile::build_foliage_gate(rgb, w, h, linear_prophoto);
 }
 mobile::Image16 bitmap_pixels(JNIEnv *e, jobject bitmap) {
     AndroidBitmapInfo info{};
@@ -142,11 +156,22 @@ using Clock = std::chrono::steady_clock;
 double elapsed_ms(Clock::time_point start) {
     return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
+bool is_monochrome_params(const std::string &p, const spk::Json &edits) {
+    if (edits.at("silver_highlight_edr").as_bool()) return true;
+    spk::Json pj;
+    std::string error;
+    if (spk::Json::parse(p, pj, error) && pj.is_object()) {
+        if (pj.at("print_stock").as_string() == "ilford_multigrade_iv_rc") return true;
+    }
+    return false;
+}
 mobile::Image16 render_edit(Context *c, const std::string &p, const spk::Json &edits, bool full,
                           spk::Json *timings = nullptr, bool transparent_frame = false) {
     auto start = Clock::now();
     set_params(c, p);
     if (timings) timings->set("set_params_ms", spk::Json(elapsed_ms(start)));
+    const mobile::FoliageGateMap *foliage_gate =
+        is_monochrome_params(p, edits) ? nullptr : &c->foliage_gate;
     spk_result result{};
     try {
         start = Clock::now();
@@ -154,7 +179,8 @@ mobile::Image16 render_edit(Context *c, const std::string &p, const spk::Json &e
         if (timings) timings->set("spectral_ms", spk::Json(elapsed_ms(start)));
         start = Clock::now();
         auto out = mobile::apply_edits(result.rgba16, result.width, result.height,
-                                       result.row_stride_px, edits, transparent_frame);
+                                       result.row_stride_px, edits, transparent_frame,
+                                       foliage_gate, c->resources);
         if (timings) timings->set("edits_ms", spk::Json(elapsed_ms(start)));
         spk_result_free(&result);
         return out;
@@ -169,6 +195,7 @@ extern "C" JNIEXPORT jlong JNICALL Java_app_spektrafilm_NativeEngine_create(JNIE
     try {
         auto c = std::make_unique<Context>();
         c->resources = utf(e, path);
+        remember_resources(c->resources);
         mobile::boot_begin();
         c->engine = spk_engine_create(c->resources.c_str(), nullptr);
         if (!c->engine)
@@ -208,12 +235,15 @@ Java_app_spektrafilm_NativeEngine_rawPreview(JNIEnv *e, jclass, jlong p, jstring
         char *reply = nullptr;
         const float *cmax = nullptr;
         uint32_t count = 0;
-        check(c, spk_output_transform(c->engine, "ProPhoto RGB", "sRGB", "{\"algorithm\":\"off\"}",
-                                      &reply, &cmax, &count));
-        std::string encoded(reply);
+        const int rc = spk_output_transform(c->engine, "ProPhoto RGB", "sRGB",
+                                            "{\"algorithm\":\"off\"}", &reply, &cmax, &count);
+        std::string encoded = reply ? reply : "";
         spk_string_free(reply);
+        check(c, rc);
         auto transform = json(encoded);
         const auto &m = transform.at("matrix").items();
+        if (m.size() < 9)
+            throw std::runtime_error("output transform matrix is incomplete");
         float mat[9];
         for (int idx = 0; idx < 9; idx++)
             mat[idx] = float(m[idx].as_double());
@@ -255,10 +285,10 @@ extern "C" JNIEXPORT void JNICALL Java_app_spektrafilm_NativeEngine_openRaw(JNIE
         if (edge > 0 && c->raw_path == name && c->raw_preview_edge == edge &&
             !c->raw_preview.rgb.empty()) {
             auto &r = c->raw_preview;
-            open_rgb(c, r.rgb.data(), r.width, r.height, j.dump());
+            open_rgb(c, r.rgb.data(), r.width, r.height, j.dump(), true);
         } else {
             auto r = mobile::decode_raw(name, std::max(0, edge));
-            open_rgb(c, r.rgb.data(), r.width, r.height, j.dump());
+            open_rgb(c, r.rgb.data(), r.width, r.height, j.dump(), true);
         }
     } catch (const std::exception &ex) {
         fail(e, ex.what());
@@ -283,7 +313,7 @@ Java_app_spektrafilm_NativeEngine_open(JNIEnv *e, jclass, jlong p, jobject sourc
                     rgb[(size_t(y) * info.width + x) * 3 + k] = row[x * 4 + k] / 255.f;
         }
         AndroidBitmap_unlockPixels(e, source);
-        open_rgb(c, rgb.data(), info.width, info.height, utf(e, params));
+        open_rgb(c, rgb.data(), info.width, info.height, utf(e, params), false);
     } catch (const std::exception &ex) {
         fail(e, ex.what());
     }
@@ -324,7 +354,8 @@ Java_app_spektrafilm_NativeEngine_editBitmap(JNIEnv *e, jclass, jobject source, 
     try {
         auto im = bitmap_pixels(e, source);
         auto out =
-            mobile::apply_edits(im.rgba.data(), im.width, im.height, im.width, json(utf(e, edits)));
+            mobile::apply_edits(im.rgba.data(), im.width, im.height, im.width, json(utf(e, edits)),
+                                false, nullptr, last_resources());
         return bitmap(e, out.rgba.data(), out.width, out.height, out.width);
     } catch (const std::exception &ex) {
         fail(e, ex.what());
@@ -372,6 +403,7 @@ extern "C" JNIEXPORT void JNICALL Java_app_spektrafilm_NativeEngine_closeImage(J
         c->raw_preview = {};
         c->raw_path.clear();
         c->raw_preview_edge = 0;
+        c->foliage_gate.clear();
     }
 }
 extern "C" JNIEXPORT void JNICALL Java_app_spektrafilm_NativeEngine_destroy(JNIEnv *, jclass,

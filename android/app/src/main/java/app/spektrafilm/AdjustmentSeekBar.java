@@ -24,6 +24,8 @@ final class AdjustmentSeekBar extends SeekBar {
   private Runnable reset;
   private MotionEvent touchDown;
   private long lastThumbTapTime = -1;
+  private long lastStepTapTime = -1;
+  private float lastStepTapX;
   private float lastThumbTapX, lastThumbTapY;
   private int downZone;
   private boolean dragging, secondThumbTap;
@@ -88,13 +90,15 @@ final class AdjustmentSeekBar extends SeekBar {
     int span = Math.max(1, getWidth() - left - getPaddingRight());
     int max = getMax();
     float fraction = max <= 0 ? 0f : (float) getProgress() / max;
+    if (getLayoutDirection() == LAYOUT_DIRECTION_RTL) fraction = 1f - fraction;
     return left + span * fraction;
   }
 
   private int tapZone(float x) {
     float center = thumbCenterX();
-    if (x < center - thumbHitHalfWidth) return -1;
-    if (x > center + thumbHitHalfWidth) return 1;
+    int dir = getLayoutDirection() == LAYOUT_DIRECTION_RTL ? -1 : 1;
+    if (x < center - thumbHitHalfWidth) return -dir;
+    if (x > center + thumbHitHalfWidth) return dir;
     return 0;
   }
 
@@ -140,7 +144,7 @@ final class AdjustmentSeekBar extends SeekBar {
             > Math.abs(event.getX() - touchDown.getX())) {
           // 让面板的 ScrollView 接管竖直滚动，不改变参数。
           cancelTouch();
-          return true;
+          return false;
         }
         dragging = true;
         secondThumbTap = false;
@@ -162,15 +166,26 @@ final class AdjustmentSeekBar extends SeekBar {
         if (shortTap) {
           if (downZone != 0) {
             clearThumbTap();
+            lastStepTapTime = event.getEventTime();
+            lastStepTapX = event.getX();
             stepBy(downZone);
           } else if (secondThumbTap && reset != null) {
             clearThumbTap();
             reset.run();
             performClick();
           } else if (reset != null) {
-            lastThumbTapTime = event.getEventTime();
-            lastThumbTapX = event.getX();
-            lastThumbTapY = event.getY();
+            // Suppress arming double-tap reset only when rapid tap-stepping at the SAME spot
+            // walks the thumb under the user's finger; intentional taps on the thumb still reset.
+            boolean afterSameSpotStep =
+                lastStepTapTime >= 0
+                    && event.getEventTime() - lastStepTapTime <= 600L
+                    && event.getEventTime() >= lastStepTapTime
+                    && Math.abs(event.getX() - lastStepTapX) <= doubleTapSlop;
+            if (!afterSameSpotStep) {
+              lastThumbTapTime = event.getEventTime();
+              lastThumbTapX = event.getX();
+              lastThumbTapY = event.getY();
+            }
           }
         } else {
           clearThumbTap();
@@ -238,6 +253,7 @@ final class AdjustmentSeekBar extends SeekBar {
     releaseDown();
     dragging = secondThumbTap = false;
     setPressed(false);
+    if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
   }
 
   @Override

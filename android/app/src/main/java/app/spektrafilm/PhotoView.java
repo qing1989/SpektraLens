@@ -181,6 +181,7 @@ public final class PhotoView extends View {
     finishHeldOriginal();
     before = a;
     after = b;
+    clampOffsets();
     invalidate();
   }
 
@@ -200,21 +201,23 @@ public final class PhotoView extends View {
   protected void onDraw(Canvas c) {
     super.onDraw(c);
     c.drawColor(AppStyle.STAGE_BG);
-    Bitmap image = showingOriginal && before != null ? before : after != null ? after : before;
+    Bitmap liveBefore = before != null && !before.isRecycled() ? before : null;
+    Bitmap liveAfter = after != null && !after.isRecycled() ? after : null;
+    Bitmap image = showingOriginal && liveBefore != null ? liveBefore : liveAfter != null ? liveAfter : liveBefore;
     if (image == null) return;
     updateFrame();
     if (frame.isEmpty()) return;
     float density = density();
-    if (image == after && image.hasAlpha()) {
+    if (image == liveAfter && image.hasAlpha()) {
       paint.setColor(FrameStyle.BACKING_COLOR);
       c.drawRect(frame, paint);
     }
     c.drawBitmap(image, null, frame, bitmapPaint);
-    if (compare && before != null && after != null) {
+    if (compare && liveBefore != null && liveAfter != null) {
       float x = dividerX();
       c.save();
       c.clipRect(frame.left, frame.top, x, frame.bottom);
-      c.drawBitmap(before, null, frame, bitmapPaint);
+      c.drawBitmap(liveBefore, null, frame, bitmapPaint);
       c.restore();
       paint.setColor(0xddffffff);
       paint.setStrokeWidth(DIVIDER_STROKE_DP * density);

@@ -80,14 +80,14 @@ public final class FilmStockPolicyTest {
           FilmStockPolicy.renderOverrides(film, "kodak_2383", FilmStockPolicy.SILVER_PAPER, 1);
       check(!wire.containsKey("y_filter_neutral"), "Color uses its database filter pack");
       check(!wire.containsKey("y_filter_shift"), "Color edits retained");
-      check(!wire.containsKey("camera_filter"), "Color suppresses hidden monochrome filters");
+      check("".equals(wire.get("camera_filter")), "Color clears monochrome lens filters");
       check(!wire.containsKey("halation_headroom_ev"), "Only CineStill exposes headroom");
       check(
           Boolean.TRUE.equals(wire.get("extended_dynamic_range")),
           "Color papers enable calibrated EDR highlight expansion");
       check(
-          !wire.containsKey("grain_sublayers_active"),
-          "Color keeps the 0.4.6 grain-layer behavior unchanged");
+          Boolean.TRUE.equals(wire.get("grain_sublayers_active")),
+          "Color restores default grain sublayers");
     }
     Object[][] grades = {
       {"00", 0.0, 199.0, .5323},
@@ -122,15 +122,16 @@ public final class FilmStockPolicyTest {
                 .get("camera_filter")),
         "Unknown camera filter is rejected");
     check(
-        !FilmStockPolicy.renderOverrides(
-                "kodak_portra_400", "", "", 1, "w25", "5", 0, 8)
-            .containsKey("camera_filter"),
-        "Color suppresses camera filters");
+        "".equals(
+            FilmStockPolicy.renderOverrides(
+                    "kodak_portra_400", "", "", 1, "w25", "5", 0, 8)
+                .get("camera_filter")),
+        "Color clears camera filters");
     Map<String, Object> cineStill =
         FilmStockPolicy.renderOverrides(
             FilmStockPolicy.CINESTILL_800T, "kodak_2383", "kodak_2383", 1, "w25", "5", 0, 4);
     close(4, (Double) cineStill.get("halation_headroom_ev"), "CineStill default headroom");
-    check(!cineStill.containsKey("camera_filter"), "CineStill stays a color film");
+    check("".equals(cineStill.get("camera_filter")), "CineStill stays a color film");
     close(
         8,
         FilmStockPolicy.halationHeadroom(FilmStockPolicy.CINESTILL_800T, 99),

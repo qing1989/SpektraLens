@@ -28,7 +28,7 @@ import java.util.Locale;
 @SuppressLint("ViewConstructor")
 final class CropPage extends LinearLayout {
   interface Listener {
-    void onApply(RectF crop, int turns, boolean flipH, float angleDeg);
+    void onApply(RectF crop, int turns, boolean flipH, boolean flipV, float angleDeg);
 
     void onCancel();
   }
@@ -53,6 +53,7 @@ final class CropPage extends LinearLayout {
       RectF initialCrop,
       int initialTurns,
       boolean initialFlipH,
+      boolean initialFlipV,
       float initialAngleDeg,
       Listener listener) {
     super(activity);
@@ -73,7 +74,13 @@ final class CropPage extends LinearLayout {
 
     cropView =
         new CropEditor(
-            activity, previewBitmap, initialCrop, initialTurns, initialFlipH, initialAngleDeg);
+            activity,
+            previewBitmap,
+            initialCrop,
+            initialTurns,
+            initialFlipH,
+            initialFlipV,
+            initialAngleDeg);
     cropView.setTag("crop.editor");
 
     // Strictly 50%-centered top bar: 取消 | 裁切 | 完成
@@ -108,7 +115,11 @@ final class CropPage extends LinearLayout {
     done.setOnClickListener(
         v ->
             listener.onApply(
-                cropView.value(), cropView.turns(), cropView.flipH(), cropView.angleDeg()));
+                cropView.value(),
+                cropView.turns(),
+                cropView.flipH(),
+                cropView.flipV(),
+                cropView.angleDeg()));
     topBar.addView(
         done, new FrameLayout.LayoutParams(-2, dp(34), Gravity.END | Gravity.CENTER_VERTICAL));
 
@@ -148,7 +159,18 @@ final class CropPage extends LinearLayout {
     LinearLayout actionsRow = new LinearLayout(activity);
     actionsRow.setOrientation(HORIZONTAL);
     actionsRow.setGravity(Gravity.CENTER_VERTICAL);
-    View rotateBtn = actionChip(R.drawable.ic_crop_rotate, "旋转 90°", AppStyle.INK, cropView::rotate90);
+    View rotateBtn =
+        actionChip(
+            R.drawable.ic_crop_rotate,
+            "旋转 90°",
+            AppStyle.INK,
+            () -> {
+              cropView.rotate90();
+              if (selectedRatioIndex == 1) {
+                cropView.ratio(aspectForIndex(1));
+                updateDimensions();
+              }
+            });
     View flipBtn = actionChip(R.drawable.ic_crop_flip, "水平翻转", AppStyle.INK, cropView::toggleFlipH);
     View resetBtn =
         actionChip(
@@ -221,9 +243,10 @@ final class CropPage extends LinearLayout {
     syncAngleSlider(initialAngleDeg);
     angleBar.setOnResetListener(
         () -> {
+          boolean changed = Math.abs(cropView.angleDeg()) > 0.01f;
           syncAngleSlider(0f);
           cropView.setAngle(0f);
-          if (Haptics.enabled) {
+          if (changed && Haptics.enabled) {
             angleBar.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
           }
           updateDimensions();
@@ -261,10 +284,14 @@ final class CropPage extends LinearLayout {
     listener.onCancel();
   }
 
+  void finishPendingTapOutside(float rawX, float rawY) {
+    if (angleBar != null) angleBar.finishPendingTapOutside(rawX, rawY);
+  }
+
   private float aspectForIndex(int index) {
     switch (index) {
       case 1:
-        return originalAspect;
+        return (cropView.turns() % 2 == 1) ? (1f / originalAspect) : originalAspect;
       case 2:
         return 1f;
       case 3:

@@ -118,7 +118,7 @@ final class ExportSheet extends Dialog {
   private void build(String dimensions) {
     root = column();
     root.setPadding(dp(18), dp(16), dp(18), dp(18));
-    root.setBackground(AppStyle.topRounded(getContext(), AppStyle.SURFACE, AppStyle.R_LARGE, true));
+    root.setBackground(AppStyle.shape(getContext(), AppStyle.SURFACE, AppStyle.R_LARGE, true));
     root.setClipToOutline(true);
 
     header = new LinearLayout(getContext());
@@ -548,7 +548,7 @@ final class ExportSheet extends Dialog {
     idleFooter.setVisibility(View.VISIBLE);
     content.setAlpha(1f);
     cancelButton.setText("取消");
-    cancelButton.setTextSize(AppStyle.TYPE_TITLE);
+    cancelButton.setTextSize(AppStyle.TYPE_BODY);
     cancelButton.setTextColor(AppStyle.MUTED);
     cancelButton.setOnClickListener(view -> dismiss());
     cancelButton.setClickable(true);
@@ -697,33 +697,45 @@ final class ExportSheet extends Dialog {
 
   @Override
   public void show() {
-    super.show();
     Window window = getWindow();
+    if (window != null) window.setWindowAnimations(0);
+    super.show();
+    window = getWindow();
     window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-    window.setGravity(Gravity.BOTTOM);
+    window.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
     window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     WindowManager.LayoutParams attributes = window.getAttributes();
     attributes.dimAmount = AppStyle.DIM_AMOUNT;
-    attributes.y = 0;
+    attributes.y = dp(FoldableUi.FLOATING_SHEET_MARGIN_DP);
     window.setAttributes(attributes);
+    FoldableUi.stabilizeSheetWindow(window, root);
     activity.getWindow().getDecorView().addOnLayoutChangeListener(windowChanged);
     resize();
   }
 
+  @Override
+  public void dismiss() {
+    FoldableUi.stabilizeSheetWindow(getWindow(), root);
+    super.dismiss();
+  }
+
   private void resize() {
     if (!isShowing()) return;
+    int width = FoldableUi.visibleWindowWidthPx(activity);
     Rect visible = new Rect();
     activity.getWindow().getDecorView().getWindowVisibleDisplayFrame(visible);
-    int width = visible.width(), height = visible.height();
+    int height = visible.height();
     if (width <= 0 || height <= 0) {
       width = getContext().getResources().getDisplayMetrics().widthPixels;
       height = getContext().getResources().getDisplayMetrics().heightPixels - dp(48);
     }
     int exportMaxDp = FoldableLayout.exportSheetMaxDp(FoldableUi.windowWidthDp(activity));
     int windowWidth =
-        FoldableUi.constrainedWidthPx(getContext(), Math.max(dp(200), width), exportMaxDp, 0);
+        FoldableUi.floatingSheetWidthPx(getContext(), Math.max(dp(200), width), exportMaxDp);
     int maxHeight =
-        Math.min(Math.max(dp(240), height - dp(20)), dp(format == ExportOptions.JPEG ? 560 : 460));
+        Math.min(
+            Math.max(dp(240), height - dp(FoldableUi.FLOATING_SHEET_MARGIN_DP * 2 + 12)),
+            dp(format == ExportOptions.JPEG ? 560 : 460));
     int windowHeight = maxHeight;
     if (exporting
         && header != null

@@ -312,21 +312,31 @@ final class LibraryActionSheet extends Dialog {
 
   @Override
   public void show() {
-    super.show();
     Window window = getWindow();
+    if (window != null) window.setWindowAnimations(0);
+    super.show();
+    window = getWindow();
     window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
     window.setGravity(Gravity.BOTTOM);
     window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     window.setDimAmount(AppStyle.DIM_AMOUNT);
+    FoldableUi.stabilizeSheetWindow(window, root);
     activity.getWindow().getDecorView().addOnLayoutChangeListener(windowChanged);
     resize();
   }
 
+  @Override
+  public void dismiss() {
+    FoldableUi.stabilizeSheetWindow(getWindow(), root);
+    super.dismiss();
+  }
+
   private void resize() {
     if (!isShowing()) return;
+    int width = FoldableUi.visibleWindowWidthPx(activity);
     Rect visible = new Rect();
     activity.getWindow().getDecorView().getWindowVisibleDisplayFrame(visible);
-    int width = visible.width(), height = visible.height();
+    int height = visible.height();
     if (width <= 0 || height <= 0) {
       width = getContext().getResources().getDisplayMetrics().widthPixels;
       height = getContext().getResources().getDisplayMetrics().heightPixels - dp(48);
@@ -334,7 +344,9 @@ final class LibraryActionSheet extends Dialog {
     root.maxHeight = Math.max(1, height - dp(20));
     root.requestLayout();
     int maxDp = FoldableLayout.actionSheetMaxDp(FoldableUi.windowWidthDp(activity));
-    int sheetWidth = FoldableUi.constrainedWidthPx(getContext(), width, maxDp, 0);
+    // Add the 20dp transparent inset padding so the visible card matches the 480/520dp spec.
+    int windowMaxDp = maxDp > 0 ? maxDp + 20 : maxDp;
+    int sheetWidth = FoldableUi.constrainedWidthPx(getContext(), width, windowMaxDp, 0);
     getWindow().setLayout(sheetWidth, WindowManager.LayoutParams.WRAP_CONTENT);
   }
 

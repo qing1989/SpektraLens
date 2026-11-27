@@ -242,7 +242,7 @@ final class GallerySheet extends Dialog {
   }
 
   private static boolean isRaw(GalleryPhotos.Photo photo) {
-    return photo.name != null && photo.name.toLowerCase(Locale.ROOT).endsWith(".dng");
+    return photo != null && PhotoFormatPolicy.isRaw(photo.name, photo.mime);
   }
 
   private boolean hasRawPhotos() {
@@ -260,7 +260,7 @@ final class GallerySheet extends Dialog {
 
   private void build() {
     root = column();
-    root.setBackground(AppStyle.topRounded(getContext(), AppStyle.SURFACE, AppStyle.R_LARGE, true));
+    root.setBackground(AppStyle.shape(getContext(), AppStyle.SURFACE, AppStyle.R_LARGE, true));
     root.setClipToOutline(true);
     LinearLayout meta = new LinearLayout(getContext());
     meta.setOrientation(LinearLayout.HORIZONTAL);
@@ -310,7 +310,8 @@ final class GallerySheet extends Dialog {
     FrameLayout body = new FrameLayout(getContext());
     photosPanel = new FrameLayout(getContext());
     grid = new GridView(getContext());
-    grid.setNumColumns(FoldableLayout.galleryColumns(FoldableUi.windowWidthDp(activity)));
+    int initialCols = FoldableLayout.galleryColumns(FoldableUi.windowWidthDp(activity));
+    grid.setNumColumns(initialCols);
     grid.setHorizontalSpacing(dp(4));
     grid.setVerticalSpacing(dp(4));
     grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
@@ -318,7 +319,7 @@ final class GallerySheet extends Dialog {
     grid.setClipToPadding(false);
     grid.setSelector(new ColorDrawable(Color.TRANSPARENT));
     grid.setAdapter(adapter);
-    grid.setContentDescription("照片网格，三列，点击选择或取消选择");
+    updateGridContentDescription(initialCols);
     grid.setOnItemClickListener(
         (parent, view, position, id) -> {
           if (position >= visible.size()) return;
@@ -391,12 +392,12 @@ final class GallerySheet extends Dialog {
     // Keep the window itself opaque as well as the root. Some OPPO window managers
     // composite a transparent dialog background even when the content View is opaque.
     window.setBackgroundDrawable(
-        AppStyle.topRounded(getContext(), AppStyle.SURFACE, AppStyle.R_LARGE, true));
-    window.setGravity(Gravity.BOTTOM);
+        AppStyle.shape(getContext(), AppStyle.SURFACE, AppStyle.R_LARGE, true));
+    window.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
     window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     WindowManager.LayoutParams attributes = window.getAttributes();
     attributes.dimAmount = AppStyle.DIM_AMOUNT;
-    attributes.y = 0;
+    attributes.y = dp(FoldableUi.FLOATING_SHEET_MARGIN_DP);
     attributes.alpha = 1f;
     window.setAttributes(attributes);
     // Some OEMs still apply their dialog alpha transition even when a custom
@@ -446,23 +447,28 @@ final class GallerySheet extends Dialog {
     // and no collapsed state in the new import flow.
     Rect visible = new Rect();
     activity.getWindow().getDecorView().getWindowVisibleDisplayFrame(visible);
-    int available = visible.height() - dp(20);
+    int available = visible.height() - dp(FoldableUi.FLOATING_SHEET_MARGIN_DP * 2 + 12);
     if (available <= 0)
-      available = activity.getResources().getDisplayMetrics().heightPixels - dp(72);
-    int availableWidth =
-        visible.width() > 0
-            ? visible.width()
-            : activity.getResources().getDisplayMetrics().widthPixels;
+      available = activity.getResources().getDisplayMetrics().heightPixels - dp(84);
+    int availableWidth = FoldableUi.visibleWindowWidthPx(activity);
+    if (availableWidth <= 0) availableWidth = activity.getResources().getDisplayMetrics().widthPixels;
     int widthDp = FoldableUi.windowWidthDp(activity);
     int maxDp = FoldableLayout.gallerySheetMaxDp(widthDp);
     int sheetWidth =
-        FoldableUi.constrainedWidthPx(getContext(), Math.max(dp(240), availableWidth), maxDp, 0);
+        FoldableUi.floatingSheetWidthPx(getContext(), Math.max(dp(240), availableWidth), maxDp);
     if (grid != null) {
       int cols = FoldableLayout.galleryColumns(widthDp);
       if (grid.getNumColumns() != cols) grid.setNumColumns(cols);
+      updateGridContentDescription(cols);
     }
     int expandedHeight = Math.max(dp(250), Math.round(available * .84f));
     getWindow().setLayout(sheetWidth, expandedHeight);
+  }
+
+  private void updateGridContentDescription(int cols) {
+    if (grid == null) return;
+    String colText = cols == 5 ? "五列" : cols == 4 ? "四列" : "三列";
+    grid.setContentDescription("照片网格，" + colText + "，点击选择或取消选择");
   }
 
   void refresh() {
@@ -559,6 +565,7 @@ final class GallerySheet extends Dialog {
       if ((albumId.isEmpty() || albumId.equals(photo.albumId))
           && (!rawOnly || isRaw(photo))) visible.add(photo);
     boolean noRaw = rawOnly && !loading && !hasRaw;
+    if (noRaw && albumPanelOpen) setAlbumPanelOpen(false);
     emptyIcon.setVisibility(noRaw ? View.VISIBLE : View.GONE);
     albumSourceButton.setEnabled(!noRaw);
     albumSourceButton.setAlpha(noRaw ? .4f : 1f);
@@ -623,11 +630,14 @@ final class GallerySheet extends Dialog {
   private void populateAlbumRows() {
     LinkedHashMap<String, String> albums = new LinkedHashMap<>();
     LinkedHashMap<String, Integer> counts = new LinkedHashMap<>();
+    int filteredTotal = 0;
     for (GalleryPhotos.Photo photo : phone) {
       if (rawOnly && !isRaw(photo)) continue;
+      filteredTotal++;
       albums.put(photo.albumId, photo.albumName);
       counts.put(photo.albumId, counts.getOrDefault(photo.albumId, 0) + 1);
     }
+    final int allMatchingCount = filteredTotal;
     ArrayList<String> ids = new ArrayList<>(), names = new ArrayList<>();
     ids.add("");
     names.add("最近照片");
@@ -667,10 +677,7 @@ final class GallerySheet extends Dialog {
             name.setEllipsize(android.text.TextUtils.TruncateAt.END);
             name.setLineSpacing(dp(2), 1);
             row.addView(name, new LinearLayout.LayoutParams(0, -1, 1));
-            int rawTotal = 0;
-            for (GalleryPhotos.Photo photo : phone)
-              if (!rawOnly || isRaw(photo)) rawTotal++;
-            int count = id.isEmpty() ? rawTotal : counts.getOrDefault(id, 0);
+            int count = id.isEmpty() ? allMatchingCount : counts.getOrDefault(id, 0);
             TextView total =
                 text(
                     String.valueOf(count),
@@ -706,14 +713,16 @@ final class GallerySheet extends Dialog {
   }
 
   private static String formatBadgeText(GalleryPhotos.Photo photo) {
-    String name = photo == null || photo.name == null ? "" : photo.name.toLowerCase(Locale.ROOT);
-    if (name.endsWith(".dng")) return "DNG";
+    if (photo == null || photo.name == null) return "";
+    String raw = PhotoFormatPolicy.rawBadge(photo.name);
+    if (!raw.isEmpty()) return raw;
+    String name = photo.name.toLowerCase(Locale.ROOT);
     if (name.endsWith(".heic")) return "HEIC";
     if (name.endsWith(".heif") || name.endsWith(".hif")) return "HEIF";
     if (name.endsWith(".png")) return "PNG";
     if (name.endsWith(".webp")) return "WEBP";
     if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "JPG";
-    return "";
+    return PhotoFormatPolicy.isRaw(photo.name, photo.mime) ? "RAW" : "";
   }
 
   private final class Tile extends FrameLayout {

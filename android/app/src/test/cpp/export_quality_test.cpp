@@ -491,7 +491,206 @@ void check_date_imprint() {
     check(shortDate.rgba == render("’26 11 21").rgba, "Curly year apostrophe changed the imprint");
     const int apostrophe = coreHeight(shortDate, inset, inset + 5);
     check(apostrophe >= 4 && apostrophe <= 8, "Missing or oversized year apostrophe");
+    // Enhanced optical halation must visibly glow warm red-orange 6px outside digit '0' without clipping at far margin.
+    const auto *halo = &digits.rgba[(size_t(inset + 14) * width + (inset - 6)) * 4];
+    check(halo[0] > 18000 && int(halo[0]) - int(halo[2]) > 5000,
+          "Date imprint halation glow is too weak outside strokes");
+    const auto *farEdge = &digits.rgba[(size_t(inset + 14) * width + (inset + 260)) * 4];
+    check(farEdge[0] == 12000 && farEdge[1] == 12000 && farEdge[2] == 12000,
+          "Date imprint halation leaked beyond margin");
     check(render("2026.11.21").rgba != source, "Legacy dotted date did not render");
+}
+
+void check_foliage_guard() {
+    auto make_solid_rgb = [](uint8_t r, uint8_t g, uint8_t b, uint32_t w, uint32_t h) {
+        std::vector<float> rgb(size_t(w) * h * 3);
+        for (size_t i = 0; i < size_t(w) * h; ++i) {
+            rgb[i * 3 + 0] = r / 255.f;
+            rgb[i * 3 + 1] = g / 255.f;
+            rgb[i * 3 + 2] = b / 255.f;
+        }
+        return rgb;
+    };
+    auto make_solid_rgba16 = [](uint8_t r, uint8_t g, uint8_t b, uint32_t w, uint32_t h) {
+        std::vector<uint16_t> px(size_t(w) * h * 4);
+        for (size_t i = 0; i < size_t(w) * h; ++i) {
+            px[i * 4 + 0] = uint16_t(r) * 257;
+            px[i * 4 + 1] = uint16_t(g) * 257;
+            px[i * 4 + 2] = uint16_t(b) * 257;
+            px[i * 4 + 3] = 65535;
+        }
+        return px;
+    };
+
+    // 1. Yellowed spring leaf recovers cleanly toward natural green (G > R).
+    {
+        const auto src_rgb = make_solid_rgb(142, 178, 84, 8, 8);
+        const auto gate = mobile::build_foliage_gate(src_rgb.data(), 8, 8, false);
+        check(gate.active(), "Spring leaf must activate foliage gate");
+        const auto sim_yellowed = make_solid_rgba16(185, 152, 62, 8, 8);
+        const auto out = mobile::apply_edits(sim_yellowed.data(), 8, 8, 8, spk::Json::object(),
+                                             false, &gate);
+        const int r = (out.rgba[0] + 128) / 257;
+        const int g = (out.rgba[1] + 128) / 257;
+        const int b = (out.rgba[2] + 128) / 257;
+        check(g > r + 10 && std::abs(r - 152) <= 2 && std::abs(g - 165) <= 2 && std::abs(b - 83) <= 2,
+              "Yellowed spring leaf did not match expected Oklab recovery: "
+                  + std::to_string(r) + "," + std::to_string(g) + "," + std::to_string(b));
+
+        // Cool-shifted green must remain untouched (preserves Fuji cool greens).
+        const auto sim_cool = make_solid_rgba16(96, 184, 118, 8, 8);
+        const auto out_cool = mobile::apply_edits(sim_cool.data(), 8, 8, 8, spk::Json::object(),
+                                                  false, &gate);
+        check(out_cool.rgba == sim_cool, "Foliage guard altered cool-shifted green");
+
+        // Monochrome silver EDR must bypass foliage guard completely.
+        auto mono_edits = spk::Json::object();
+        mono_edits.set("silver_highlight_edr", spk::Json(true));
+        const auto out_mono_guard = mobile::apply_edits(sim_yellowed.data(), 8, 8, 8, mono_edits,
+                                                        false, &gate);
+        const auto out_mono_plain = mobile::apply_edits(sim_yellowed.data(), 8, 8, 8, mono_edits,
+                                                        false, nullptr);
+        check(out_mono_guard.rgba == out_mono_plain.rgba,
+              "Silver monochrome path must bypass foliage guard");
+    }
+
+    // 2. Zero collateral damage (exact bit equality) on skin, yellow flowers, golden hour,
+    //    pink petals, blue sky, and neutral gray.
+    {
+        const std::array<uint8_t, 3> swatches[] = {
+            {216, 168, 142}, // Light Skin
+            {186, 130, 102}, // Medium Skin
+            {235, 198,  42}, // Yellow Flower
+            {232, 162,  68}, // Golden Hour
+            {222,  52, 110}, // Pink Petal
+            { 38, 128, 212}, // Blue Sky
+            {128, 128, 128}, // Neutral Gray
+        };
+        for (const auto &sw : swatches) {
+            const auto src_rgb = make_solid_rgb(sw[0], sw[1], sw[2], 4, 4);
+            const auto gate = mobile::build_foliage_gate(src_rgb.data(), 4, 4, false);
+            check(!gate.active(), "Non-foliage swatch unexpectedly activated foliage gate");
+            const auto sim = make_solid_rgba16(185, 152, 62, 4, 4);
+            const auto out = mobile::apply_edits(sim.data(), 4, 4, 4, spk::Json::object(),
+                                                 false, &gate);
+            check(out.rgba == sim, "Non-foliage swatch was modified by foliage guard");
+        }
+    }
+
+    // 3. Scaled gate + 90-degree rotation maps green region to the exact transformed location.
+    {
+        const uint32_t sw = 16, sh = 16;
+        std::vector<float> src_rgb(size_t(sw) * sh * 3);
+        for (uint32_t y = 0; y < sh; ++y)
+            for (uint32_t x = 0; x < sw; ++x) {
+                const bool left = x < sw / 2;
+                const size_t i = (size_t(y) * sw + x) * 3;
+                src_rgb[i + 0] = (left ? 142 : 216) / 255.f;
+                src_rgb[i + 1] = (left ? 178 : 168) / 255.f;
+                src_rgb[i + 2] = (left ?  84 : 142) / 255.f;
+            }
+        const auto gate = mobile::build_foliage_gate(src_rgb.data(), sw, sh, false);
+        check(gate.active(), "Half-green fixture must activate gate");
+
+        // Downsampled rendered image (8x8 vs 16x16 gate) rotated 90 deg clockwise (turns=1):
+        // left half of source (x < w/2) maps to top half of rotated output (y < h/2).
+        const auto sim = make_solid_rgba16(185, 152, 62, 8, 8);
+        auto rot = spk::Json::object();
+        rot.set("geo_turns", spk::Json(1.0));
+        const auto out = mobile::apply_edits(sim.data(), 8, 8, 8, rot, false, &gate);
+        const auto *top_px = &out.rgba[(size_t(1) * 8 + 4) * 4];
+        const auto *bot_px = &out.rgba[(size_t(6) * 8 + 4) * 4];
+        check(top_px[1] > top_px[0], "Rotated green half was not guarded at top");
+        check(bot_px[0] == 185 * 257 && bot_px[1] == 152 * 257 && bot_px[2] == 62 * 257,
+              "Rotated skin half was altered by foliage guard");
+    }
+
+    // 4. Linear ProPhoto RGB input (RAW path) matches sRGB green gating and rejects skin/yellow.
+    {
+        // Inverse of SpektraLab's ProPhoto->sRGB matrix applied to linear sRGB spring leaf (142,178,84)
+        // produces approx ProPhoto linear (0.296, 0.409, 0.138); pure green ProPhoto (0.15, 0.45, 0.10) is vivid foliage.
+        const std::vector<float> raw_green = {0.296f, 0.409f, 0.138f, 0.296f, 0.409f, 0.138f,
+                                              0.296f, 0.409f, 0.138f, 0.296f, 0.409f, 0.138f};
+        const auto raw_gate = mobile::build_foliage_gate(raw_green.data(), 2, 2, true);
+        check(raw_gate.active(), "Linear ProPhoto green leaf must activate foliage gate");
+        const auto sim = make_solid_rgba16(185, 152, 62, 2, 2);
+        const auto out = mobile::apply_edits(sim.data(), 2, 2, 2, spk::Json::object(),
+                                             false, &raw_gate);
+        check(out.rgba[1] > out.rgba[0], "Linear ProPhoto foliage gate did not recover green");
+
+        // Warm skin in linear ProPhoto RGB must NOT trigger foliage gate.
+        const std::vector<float> raw_skin = {0.52f, 0.36f, 0.26f, 0.52f, 0.36f, 0.26f,
+                                             0.52f, 0.36f, 0.26f, 0.52f, 0.36f, 0.26f};
+        const auto skin_gate = mobile::build_foliage_gate(raw_skin.data(), 2, 2, true);
+        check(!skin_gate.active(), "Linear ProPhoto skin must not activate foliage gate");
+    }
+
+    std::cout << "Foliage guard: green recovery, cool-green & swatch isolation, rotation/scaling, and ProPhoto RAW passed\n";
+}
+
+void check_film_cards(const std::string &resources) {
+    for (const bool landscape : {true, false}) {
+        const uint32_t w = landscape ? 900 : 600;
+        const uint32_t h = landscape ? 600 : 800;
+        std::vector<uint16_t> source(size_t(w) * h * 4, 28000);
+        for (size_t i = 3; i < source.size(); i += 4) source[i] = 65535;
+        for (const std::string style : {"film_card_white", "film_card_black"}) {
+            auto edits = spk::Json::object();
+            edits.set("edge_style", spk::Json(style));
+            edits.set("film_stock", spk::Json(std::string(style == "film_card_white"
+                                                              ? "fujifilm_c200"
+                                                              : "cinestill_800t")));
+            edits.set("card_date", spk::Json(std::string("2026.11.27")));
+            const auto dims = mobile::output_dimensions(w, h, edits);
+            const auto out = mobile::apply_edits(source.data(), w, h, w, edits, false, nullptr,
+                                                 resources);
+            check(dims.at("width").as_int() == int(out.width)
+                      && dims.at("height").as_int() == int(out.height),
+                  "Film card dimensions mismatch for " + style);
+            check(!out.has_alpha, "Film card must be opaque");
+            const mobile::FrameLayout layout(w, h, edits);
+            if (style == "film_card_black" && landscape) {
+                check(layout.right > layout.left * 4, "Black card landscape must have right sidebar");
+                check(layout.bottom == layout.top, "Black card landscape must keep equal top/bottom margins");
+            } else {
+                check(layout.bottom > layout.top * 2, "Film card footer must be taller than top margin");
+            }
+            // Verify center photo pixel untouched
+            const auto *center = &out.rgba[(size_t(layout.top + h / 2) * out.width + layout.left + w / 2) * 4];
+            check(center[0] == 28000 && center[3] == 65535, "Film card altered photo center");
+
+            // Verify canister + typography visibly painted on the card metadata zone (not blank!)
+            const uint16_t bg_r = uint16_t(std::lround((style == "film_card_white" ? 248.f : 15.f) / 255.f * 65535.f));
+            size_t painted = 0;
+            const int x0 = (style == "film_card_black" && landscape) ? layout.left + int(w) + 6 : layout.left;
+            const int x1 = (style == "film_card_black" && landscape) ? int(out.width) - 4 : layout.left + int(w);
+            const int y0 = (style == "film_card_black" && landscape) ? layout.top : layout.top + int(h) + 4;
+            const int y1 = (style == "film_card_black" && landscape) ? layout.top + int(h) : int(out.height) - 2;
+            for (int y = y0; y < y1; ++y)
+                for (int x = x0; x < x1; ++x) {
+                    const auto *p = &out.rgba[(size_t(y) * out.width + x) * 4];
+                    if (std::abs(int(p[0]) - int(bg_r)) > 4000) ++painted;
+                }
+            check(painted > 500, "Film card metadata/canister did not render for " + style);
+        }
+    }
+    // Verify all 25 catalog canister PNGs exist on disk
+    const std::array<const char *, 25> all_stocks = {
+        "fujifilm_c200", "fujifilm_pro_400h", "fujifilm_xtra_400", "kodak_ektar_100",
+        "kodak_gold_200", "kodak_portra_160", "kodak_portra_400", "kodak_portra_800",
+        "kodak_portra_800_push1", "kodak_portra_800_push2", "kodak_ultramax_400",
+        "fujifilm_provia_100f", "fujifilm_velvia_100", "kodak_ektachrome_100",
+        "kodak_kodachrome_64", "cinestill_800t", "kodak_verita_200d", "kodak_vision3_50d",
+        "kodak_vision3_200t", "kodak_vision3_250d", "kodak_vision3_500t",
+        "fujifilm_neopan_acros_100_ii", "ilford_hp5_plus_400", "kodak_tmax_100", "kodak_tri_x_400"
+    };
+    for (const char *sid : all_stocks) {
+        const auto p = std::filesystem::path(resources) / "canisters" / (std::string(sid) + ".png");
+        check(std::filesystem::is_regular_file(p), "Missing bundled canister PNG: " + p.string());
+    }
+    check(std::filesystem::is_regular_file(std::filesystem::path(resources) / "canisters" / "inter_card.ttf"),
+          "Missing bundled inter_card.ttf");
+    std::cout << "Film cards: white & black cards (landscape/portrait), canister blit, typography, and 25 assets passed\n";
 }
 }
 
@@ -502,6 +701,8 @@ int main(int argc, char **argv) {
         check_highlight_expansion();
         check_film_border();
         check_date_imprint();
+        check_foliage_guard();
+        check_film_cards(argv[1]);
         std::filesystem::path directory(argv[2]);
         std::filesystem::create_directories(directory);
         mobile::Image16 image;
