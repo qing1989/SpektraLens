@@ -175,6 +175,44 @@ public final class MainActivity extends Activity {
   private volatile int thumbGeneration;
   private boolean thumbBusy;
   private ThumbnailDiskCache filmDiskCache;
+  /** Per-border live thumbnails of the current photo, keyed by FrameStyle id. */
+  private final java.util.LinkedHashMap<String, Bitmap> edgeThumbs = new java.util.LinkedHashMap<>();
+  private final java.util.HashMap<String, String> edgeThumbPrints = new java.util.HashMap<>();
+  private final java.util.ArrayList<EdgeSlot> edgeSlots = new java.util.ArrayList<>();
+  private final java.util.Set<String> edgeFailed =
+      java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+  private ThumbnailDiskCache edgeDiskCache;
+  private Bitmap edgeBaseBitmap;
+  private String edgeBasePrint = "";
+  private volatile String edgePhotoKey = "";
+  private volatile String edgePrint = "";
+  private volatile boolean edgeBusy;
+  private final Runnable edgeRefreshRunnable = this::pumpEdgeThumbs;
+  private TextView frameCurrentStyleView;
+  private View frameWidthSection, frameNumberSection, frameCaptionSection;
+  /** Last border-sample batch timing, surfaced in 处理诊断 so it can be read on device. */
+  private volatile String edgeTiming = "边框样张：尚无记录";
+
+  private static final class EdgeSlot {
+    final FrameStyle style;
+    final LinearLayout tile;
+    final FrameLayout tray;
+    final FrameSampleView sample;
+    final TextView label;
+
+    EdgeSlot(
+        FrameStyle style,
+        LinearLayout tile,
+        FrameLayout tray,
+        FrameSampleView sample,
+        TextView label) {
+      this.style = style;
+      this.tile = tile;
+      this.tray = tray;
+      this.sample = sample;
+      this.label = label;
+    }
+  }
   private String filmCacheResources = "";
   private final Set<String> thumbDiskChecked = new HashSet<>();
   private final Map<String, Integer> thumbDiskPending = new HashMap<>();
@@ -408,6 +446,8 @@ public final class MainActivity extends Activity {
     filmDiskCache = new ThumbnailDiskCache(new File(getCacheDir(), "film-thumbs-v1"),
         64L * 1024 * 1024);
     thumbnailIo.execute(filmDiskCache::sweepPending);
+    edgeDiskCache = new ThumbnailDiskCache(new File(getCacheDir(), "edge-thumbs-v1"),
+        32L * 1024 * 1024);
     updates = new UpdateController(this);
     prefs = getSharedPreferences("darkroom", MODE_PRIVATE);
     AppStyle.loadTheme(this);
@@ -504,6 +544,7 @@ public final class MainActivity extends Activity {
                   }
                   filmCacheResources = resourceKey;
                   ready = true;
+                  pumpEdgeThumbs();
                   refillThumbs();
                   pumpHomeThumbnails();
                   homeImages.setRenderer(next);
@@ -2527,6 +2568,11 @@ public final class MainActivity extends Activity {
     filmGridScrollRef = null;
     filmGridRef = null;
     thumbTargets.clear();
+    edgeSlots.clear();
+    frameCurrentStyleView = null;
+    frameWidthSection = null;
+    frameNumberSection = null;
+    frameCaptionSection = null;
     thumbViewsRef = new ArrayList<>();
     thumbStocksRef = new ArrayList<>();
     sliders.clear();
@@ -3321,14 +3367,19 @@ public final class MainActivity extends Activity {
   }
 
   private void choice(String title, String[] names, String[] ids, String key) {
+    choice(editor, title, names, ids, key);
+  }
+
+  private void choice(
+      LinearLayout parent, String title, String[] names, String[] ids, String key) {
     String current = settings.optString(key, ids[0]);
     int index = Arrays.asList(ids).indexOf(current);
     TextView pick =
         button(title + "   " + names[Math.max(0, index)] + "", GOLD, AppStyle.CONTROL);
     pick.setTextSize(AppStyle.TYPE_LABEL);
     pick.setMinHeight(0);
-    add(editor, pick, -1, 39);
-    gap(editor, 10);
+    add(parent, pick, -1, 39);
+    gap(parent, 10);
     pick.setOnClickListener(
         v ->
             new Haptics.DialogBuilder(this)
@@ -3337,8 +3388,8 @@ public final class MainActivity extends Activity {
                     names,
                     (d, n) -> {
                       set(key, ids[n]);
+                      pick.setText(title + "   " + names[n]);
                       scheduleRender();
-                      buildPanel();
                     })
                 .setNegativeButton("取消", null)
                 .show());
@@ -3796,34 +3847,44 @@ public final class MainActivity extends Activity {
     LinearLayout.LayoutParams familyLayout = new LinearLayout.LayoutParams(0, -2, 1);
     familyLayout.setMarginStart(dp(8));
     header.addView(currentStyle, familyLayout);
+    frameCurrentStyleView = currentStyle;
     add(editor, header, -1, -2);
-    gap(editor, 12);
+    gap(editor, 11);
     addFrameStyleCards(editor, style);
-    boolean resizableFrame = style != FrameStyle.NONE && !style.filmCard();
-    if (resizableFrame) {
-      gap(editor, 14);
-      slider("edge_amount", "边框宽度", 2, 15, .5, " %");
-    }
-    gap(editor, resizableFrame ? 4 : 12);
+
+    // Border-specific controls sit inside toggleable containers so tapping a style updates in
+    // place with zero panel rebuild flicker or scroll jump.
+    LinearLayout widthSection = vertical();
+    gap(widthSection, 14);
+    slider(widthSection, "edge_amount", "边框宽度", 2, 15, .5, " %");
+    frameWidthSection = widthSection;
+    add(editor, widthSection, -1, -2);
+
+    LinearLayout numberSection = vertical();
+    slider(numberSection, "edge_frame_number", "底片编号", 1, 99, 1, "");
+    frameNumberSection = numberSection;
+    add(editor, numberSection, -1, -2);
+
+    LinearLayout captionSection = vertical();
+    TextView caption =
+        button("相纸文字  " + settings.optString("edge_caption", "添加英文或数字"), INK, AppStyle.CONTROL);
+    add(captionSection, caption, -1, 39);
+    gap(captionSection, 10);
+    caption.setOnClickListener(
+        v -> editTextValue("edge_caption", "相纸文字", 42, "支持英文、数字、空格及 - . /，最多 42 字符"));
+    frameCaptionSection = captionSection;
+    add(editor, captionSection, -1, -2);
+
+    syncFrameControlVisibility(style);
+
+    gap(editor, 10);
     View sep = new View(this);
     sep.setBackgroundColor(AppStyle.DIVIDER);
     add(editor, sep, -1, 1);
     gap(editor, 10);
     addDateWatermarkRow(editor);
 
-    gap(editor, 12);
-    if (style != FrameStyle.NONE) {
-      if (style.film())
-        slider("edge_frame_number", "底片编号", 1, 99, 1, "");
-      if (style == FrameStyle.INSTANT) {
-        TextView caption =
-            button("相纸文字  " + settings.optString("edge_caption", "添加英文或数字"), INK, AppStyle.CONTROL);
-        add(editor, caption, -1, 39);
-        gap(editor, 10);
-        caption.setOnClickListener(
-            v -> editTextValue("edge_caption", "相纸文字", 42, "支持英文、数字、空格及 - . /，最多 42 字符"));
-      }
-    }
+    gap(editor, 10);
     TextView date = button("日期文字  " + settings.optString("date_text"), INK, AppStyle.CONTROL);
     add(editor, date, -1, 39);
     gap(editor, 10);
@@ -3843,220 +3904,744 @@ public final class MainActivity extends Activity {
           });
     }
     choice(
+        editor,
         "日期位置",
         new String[] {"右下", "左下", "右上", "左上"},
         new String[] {"bottom_right", "bottom_left", "top_right", "top_left"},
         "date_corner");
-    choice("日期颜色", new String[] {"琥珀橙", "暖白"}, new String[] {"orange", "white"}, "date_color");
+    choice(
+        editor,
+        "日期颜色",
+        new String[] {"琥珀橙", "暖白"},
+        new String[] {"orange", "white"},
+        "date_color");
     gap(editor, 4);
-    slider("date_size", "日期字号", .5, 3, .1, " ×");
-    slider("date_intensity", "日期亮度", .1, 2, .05, " ×");
+    slider(editor, "date_size", "日期字号", .5, 3, .1, " ×");
+    slider(editor, "date_intensity", "日期亮度", .1, 2, .05, " ×");
+  }
+
+  private void syncFrameControlVisibility(FrameStyle style) {
+    boolean resizable = style != FrameStyle.NONE && !style.filmCard();
+    if (frameWidthSection != null) {
+      frameWidthSection.setVisibility(resizable ? View.VISIBLE : View.GONE);
+    }
+    if (frameNumberSection != null) {
+      frameNumberSection.setVisibility(style.film() ? View.VISIBLE : View.GONE);
+    }
+    if (frameCaptionSection != null) {
+      frameCaptionSection.setVisibility(style == FrameStyle.INSTANT ? View.VISIBLE : View.GONE);
+    }
   }
 
   private void addFrameStyleCards(LinearLayout parent, FrameStyle selected) {
+    // Ordered by darkroom mental model: None -> Paper/Instant (free export) -> 35mm ->
+    // Medium/Large format -> Archive cards.
     FrameStyle[] styles = {
-      FrameStyle.NONE, FrameStyle.BLACK_135, FrameStyle.SLIDE, FrameStyle.SHEET,
-      FrameStyle.WARM_135, FrameStyle.SILVER_135, FrameStyle.MEDIUM_120,
-      FrameStyle.WHITE, FrameStyle.INSTANT, FrameStyle.FILM_CARD_WHITE, FrameStyle.FILM_CARD_BLACK
+      FrameStyle.NONE,
+      FrameStyle.WHITE,
+      FrameStyle.INSTANT,
+      FrameStyle.BLACK_135,
+      FrameStyle.WARM_135,
+      FrameStyle.SILVER_135,
+      FrameStyle.SLIDE,
+      FrameStyle.MEDIUM_120,
+      FrameStyle.SHEET,
+      FrameStyle.FILM_CARD_WHITE,
+      FrameStyle.FILM_CARD_BLACK
     };
+    edgeSlots.clear();
+
+    // Orientation-aware compact darkroom tray dimensions: leaves border width & date switch
+    // comfortably above the fold across landscape, portrait, and square sources.
+    int trayWDp, trayHDp;
+    if (source != null && source.getHeight() > source.getWidth() * 1.08f) {
+      trayWDp = 92;
+      trayHDp = 102;
+    } else if (source != null && source.getWidth() > source.getHeight() * 1.08f) {
+      trayWDp = 112;
+      trayHDp = 86;
+    } else {
+      trayWDp = 98;
+      trayHDp = 94;
+    }
+    int tileW = dp(trayWDp);
+    int tileH = dp(trayHDp);
+
     int widthDp = FoldableUi.windowWidthDp(this);
     int borderGridCols =
         wideEditor() && !panelCollapsed ? FoldableLayout.editorBorderGridColumns(widthDp) : 0;
-    boolean expandedGrid =
-        borderGridCols > 0 && FoldableLayout.tier(widthDp) == FoldableLayout.Tier.EXPANDED;
-    int glyphW = expandedGrid ? 56 : 52;
-    int glyphH = expandedGrid ? 38 : 36;
-    int minTileHeight = expandedGrid ? 76 : 72;
     if (borderGridCols > 0) {
+      int panelWidthDp = FoldableLayout.editorPanelWidthDp(widthDp);
+      int panelInnerDp = Math.max(216, (panelWidthDp > 0 ? panelWidthDp : Math.min(336, widthDp / 2)) - 32);
+      int cellGapDp = 8;
+      int gridTileWDp = Math.max(68, (panelInnerDp - cellGapDp * (borderGridCols - 1)) / borderGridCols);
+      int gridTileHDp = Math.round(gridTileWDp * ((float) trayHDp / trayWDp));
+      int gridTileW = dp(gridTileWDp);
+      int gridTileH = dp(gridTileHDp);
       LinearLayout grid = vertical();
       grid.setTag("editor.frame.styles");
       for (int rowStart = 0; rowStart < styles.length; rowStart += borderGridCols) {
         LinearLayout row = horizontal();
-        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setGravity(Gravity.TOP);
         for (int c = 0; c < borderGridCols; c++) {
           int idx = rowStart + c;
+          LinearLayout.LayoutParams cellLp = new LinearLayout.LayoutParams(0, -2, 1f);
+          if (c > 0) cellLp.leftMargin = dp(cellGapDp);
           if (idx >= styles.length) {
-            // Keep MATCH_PARENT height so horizontal LinearLayout keeps allFillParent=true;
-            // a 1px non-MATCH_PARENT spacer collapses the entire trailing row to 1px tall.
-            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(0, -1, 1f);
-            if (c > 0) sp.leftMargin = dp(7);
-            row.addView(new View(this), sp);
+            row.addView(new View(this), cellLp);
             continue;
           }
+          FrameStyle style = styles[idx];
           LinearLayout tile =
-              buildFrameStyleTile(styles[idx], selected, glyphW, glyphH, minTileHeight, null);
-          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1f);
-          if (c > 0) lp.leftMargin = dp(7);
-          row.addView(tile, lp);
+              buildFrameStyleTile(
+                  style,
+                  selected,
+                  gridTileW,
+                  gridTileH,
+                  true,
+                  () -> applyFrameSelection(style, null, null, -1));
+          row.addView(tile, cellLp);
         }
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
-        if (rowStart > 0) rowLp.topMargin = dp(7);
+        if (rowStart > 0) rowLp.topMargin = dp(12);
         grid.addView(row, rowLp);
       }
       add(parent, grid, -1, -2);
+      pumpEdgeThumbs();
       return;
     }
+
+    // Full-bleed horizontal gallery extending to the panel card edges with soft edge fade scrims.
     HorizontalScrollView scroll = new HorizontalScrollView(this);
     scroll.setTag("editor.frame.styles");
     AppStyle.hideScrollBars(scroll);
+    scroll.setClipToPadding(false);
+    scroll.setPadding(dp(16), dp(2), dp(16), dp(4));
+
+    // Lock FrameLayout height to the scroll strip's natural height so MATCH_PARENT fade overlays
+    // cannot expand to fill the ScrollView viewport when fillViewport=true triggers on shorter
+    // panels (e.g. border styles without extra sliders).
+    FrameLayout galleryShell =
+        new FrameLayout(this) {
+          @Override
+          protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            measureChildWithMargins(scroll, widthMeasureSpec, 0, MeasureSpec.UNSPECIFIED, 0);
+            int stripHeight = scroll.getMeasuredHeight();
+            super.onMeasure(
+                widthMeasureSpec, MeasureSpec.makeMeasureSpec(stripHeight, MeasureSpec.EXACTLY));
+          }
+        };
+    galleryShell.setClipChildren(false);
+    galleryShell.setClipToPadding(false);
+
     LinearLayout row = horizontal();
     row.setGravity(Gravity.CENTER_VERTICAL);
     scroll.addView(row, new FrameLayout.LayoutParams(-2, -2));
+
     int selectedIndex = 0;
     for (int i = 0; i < styles.length; i++) {
       final int index = i;
-      FrameStyle style = styles[i];
+      final FrameStyle style = styles[i];
       if (style == selected) selectedIndex = i;
-      Runnable beforeRebuild =
-          () -> {
-            int viewport = scroll.getWidth();
-            int total = row.getChildCount();
-            if (viewport <= 0 || index < 0 || index >= total) return;
-            int base = scroll.getScrollX();
-            int first = 0;
-            for (int c = 0; c < total; c++) {
-              if (row.getChildAt(c).getRight() > base + 1) {
-                first = c;
-                break;
-              }
-            }
-            int last = total - 1;
-            int rightEdge = base + viewport;
-            for (int c = total - 1; c >= 0; c--) {
-              if (row.getChildAt(c).getLeft() < rightEdge - 1) {
-                last = c;
-                break;
-              }
-            }
-            int target = base;
-            if (index == first && index > 0) {
-              target = Math.min(base, row.getChildAt(index - 1).getLeft());
-            } else if (index == last && index < total - 1) {
-              target = Math.max(base, row.getChildAt(index + 1).getRight() - viewport);
-            }
-            View clicked = row.getChildAt(index);
-            if (clicked.getLeft() < target) target = clicked.getLeft();
-            else if (clicked.getRight() > target + viewport) target = clicked.getRight() - viewport;
-            int maxScroll = Math.max(0, row.getWidth() - viewport);
-            frameStyleScrollX = Math.max(0, Math.min(target, maxScroll));
-          };
       LinearLayout tile =
-          buildFrameStyleTile(style, selected, glyphW, glyphH, minTileHeight, beforeRebuild);
-      LinearLayout.LayoutParams tileLayout = new LinearLayout.LayoutParams(dp(72), -1);
-      if (row.getChildCount() > 0) tileLayout.setMarginStart(dp(7));
+          buildFrameStyleTile(
+              style,
+              selected,
+              tileW,
+              tileH,
+              false,
+              () -> applyFrameSelection(style, scroll, row, index));
+      LinearLayout.LayoutParams tileLayout = new LinearLayout.LayoutParams(tileW, -2);
+      if (i > 0) tileLayout.setMarginStart(dp(10));
       row.addView(tile, tileLayout);
     }
-    final int currentIndex = selectedIndex;
-    final int[] expectedFirstWidth = {0};
-    final boolean[] restored = {false};
-    final Runnable restoreNow =
+
+    galleryShell.addView(scroll, new FrameLayout.LayoutParams(-1, -2));
+
+    int fadeW = dp(18);
+    View leftFade = new View(this);
+    leftFade.setBackground(
+        new GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            new int[] {AppStyle.withAlpha(AppStyle.SURFACE, .94f), Color.TRANSPARENT}));
+    leftFade.setClickable(false);
+    leftFade.setFocusable(false);
+    leftFade.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    leftFade.setAlpha(0f);
+    galleryShell.addView(leftFade, new FrameLayout.LayoutParams(fadeW, -1, Gravity.START));
+
+    View rightFade = new View(this);
+    rightFade.setBackground(
+        new GradientDrawable(
+            GradientDrawable.Orientation.RIGHT_LEFT,
+            new int[] {AppStyle.withAlpha(AppStyle.SURFACE, .94f), Color.TRANSPARENT}));
+    rightFade.setClickable(false);
+    rightFade.setFocusable(false);
+    rightFade.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    rightFade.setAlpha(0f);
+    galleryShell.addView(rightFade, new FrameLayout.LayoutParams(fadeW, -1, Gravity.END));
+
+    final float rampPx = Math.max(1f, dp(24));
+    final Runnable updateFades =
         () -> {
-          if (scroll.getWidth() <= 0 || row.getWidth() <= 0) return;
-          restoreFrameStylePosition(scroll, row, currentIndex);
-          restored[0] = true;
+          int x = scroll.getScrollX();
+          int maxScroll =
+              Math.max(
+                  0,
+                  row.getWidth()
+                      + scroll.getPaddingLeft()
+                      + scroll.getPaddingRight()
+                      - scroll.getWidth());
+          float la = Math.min(1f, Math.max(0f, x / rampPx));
+          float ra = Math.min(1f, Math.max(0f, (maxScroll - x) / rampPx));
+          leftFade.setAlpha(la);
+          rightFade.setAlpha(ra);
         };
+
+    final int currentIndex = selectedIndex;
+    final boolean[] restored = {false};
     scroll.setOnScrollChangeListener(
         (v, x, y, oldX, oldY) -> {
           if (restored[0]) frameStyleScrollX = x;
+          updateFades.run();
         });
-    row.addOnLayoutChangeListener(
-        (v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
-          if (!restored[0]
-              && expectedFirstWidth[0] > 0
-              && row.getChildCount() > 0
-              && row.getChildAt(0).getWidth() == expectedFirstWidth[0]) {
-            restoreNow.run();
+    scroll.post(
+        () -> {
+          if (destroyed) return;
+          restoreFrameStylePosition(scroll, row, currentIndex);
+          restored[0] = true;
+          updateFades.run();
+        });
+
+    LinearLayout.LayoutParams shellLp = new LinearLayout.LayoutParams(-1, -2);
+    shellLp.leftMargin = -dp(16);
+    shellLp.rightMargin = -dp(16);
+    parent.addView(galleryShell, shellLp);
+    pumpEdgeThumbs();
+  }
+
+  private void applyFrameSelection(
+      FrameStyle style, HorizontalScrollView scroll, LinearLayout row, int index) {
+    FrameStyle current = FrameStyle.fromId(settings.optString("edge_style"));
+    if (style == current || exporting || activeImport != null) return;
+
+    if (scroll != null && row != null && index >= 0 && index < row.getChildCount()) {
+      int viewport = scroll.getWidth();
+      int padLeft = scroll.getPaddingLeft();
+      int padRight = scroll.getPaddingRight();
+      int total = row.getChildCount();
+      if (viewport > 0) {
+        int base = scroll.getScrollX();
+        int first = 0;
+        for (int c = 0; c < total; c++) {
+          if (padLeft + row.getChildAt(c).getRight() > base + padLeft + 1) {
+            first = c;
+            break;
           }
-        });
-    scroll.addOnLayoutChangeListener((v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
-      int width = r - l;
-      if (width <= 0 || width == oldR - oldL) return;
-      int gap = dp(7);
-      int minimumWidth = Math.round(dp(64) * Math.max(1f, getResources().getConfiguration().fontScale));
-      int perPage = Math.max(1, Math.min(4, (width + gap) / (minimumWidth + gap)));
-      int available = width - gap * (perPage - 1);
-      boolean widthChanged = false;
-      for (int index = 0; index < row.getChildCount(); index++) {
-        View child = row.getChildAt(index);
-        ViewGroup.LayoutParams params = child.getLayoutParams();
-        int targetW = available / perPage + (index % perPage < available % perPage ? 1 : 0);
-        if (index == 0) expectedFirstWidth[0] = targetW;
-        if (params.width != targetW) {
-          params.width = targetW;
-          child.setLayoutParams(params);
-          widthChanged = true;
         }
+        int last = total - 1;
+        int rightEdge = base + viewport - padRight;
+        for (int c = total - 1; c >= 0; c--) {
+          if (padLeft + row.getChildAt(c).getLeft() < rightEdge - 1) {
+            last = c;
+            break;
+          }
+        }
+        int target = base;
+        if (index == first && index > 0) {
+          target = Math.min(base, row.getChildAt(index - 1).getLeft());
+        } else if (index == last && index < total - 1) {
+          target =
+              Math.max(
+                  base,
+                  padLeft + row.getChildAt(index + 1).getRight() + padRight - viewport);
+        }
+        View clicked = row.getChildAt(index);
+        if (clicked.getLeft() < target) target = clicked.getLeft();
+        else if (padLeft + clicked.getRight() + padRight > target + viewport) {
+          target = padLeft + clicked.getRight() + padRight - viewport;
+        }
+        int maxScroll = Math.max(0, row.getWidth() + padLeft + padRight - viewport);
+        frameStyleScrollX = Math.max(0, Math.min(target, maxScroll));
+        if (frameStyleScrollX != base) scroll.smoothScrollTo(frameStyleScrollX, 0);
       }
-      restored[0] = false;
-      if (!widthChanged && row.getChildCount() > 0 && row.getChildAt(0).getWidth() == expectedFirstWidth[0]) {
-        restoreNow.run();
-      } else {
-        scroll.post(() -> { if (!restored[0]) restoreNow.run(); });
-      }
-    });
-    add(parent, scroll, -1, -2);
+    }
+
+    set("edge_style", style.id);
+    for (EdgeSlot slot : edgeSlots) {
+      boolean active = slot.style == style;
+      slot.tile.setSelected(active);
+      styleFrameTray(slot.tray, active);
+      slot.label.setTextColor(active ? GOLD : MUTED);
+      AppStyle.setTypeface(slot.label, active ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_REGULAR);
+    }
+    if (frameCurrentStyleView != null) {
+      frameCurrentStyleView.setText(style.label);
+      frameCurrentStyleView.setTextColor(style == FrameStyle.NONE ? MUTED : GOLD);
+      AppStyle.setTypeface(
+          frameCurrentStyleView,
+          style == FrameStyle.NONE ? AppStyle.FONT_REGULAR : AppStyle.FONT_SEMIBOLD);
+    }
+    syncFrameControlVisibility(style);
+    if (panel != null) panel.post(this::updatePanelFade);
+    scheduleRender();
   }
 
   private void restoreFrameStylePosition(
       HorizontalScrollView scroll, LinearLayout row, int selectedIndex) {
     if (selectedIndex < 0 || selectedIndex >= row.getChildCount()) return;
     int viewport = scroll.getWidth();
-    int maximum = Math.max(0, row.getWidth() - viewport);
+    if (viewport <= 0) return;
+    int padLeft = scroll.getPaddingLeft();
+    int padRight = scroll.getPaddingRight();
+    int maximum = Math.max(0, row.getWidth() + padLeft + padRight - viewport);
     int target = Math.max(0, Math.min(frameStyleScrollX, maximum));
     View chip = row.getChildAt(selectedIndex);
-    if (chip.getLeft() < target) target = chip.getLeft();
-    else if (chip.getRight() > target + viewport) target = chip.getRight() - viewport;
+    int chipLeft = chip.getLeft();
+    int chipRight = padLeft + chip.getRight() + padRight;
+    if (chipLeft < target) target = chipLeft;
+    else if (chipRight > target + viewport) target = chipRight - viewport;
     frameStyleScrollX = Math.max(0, Math.min(target, maximum));
     scroll.scrollTo(frameStyleScrollX, 0);
   }
 
+  private void styleFrameTray(FrameLayout tray, boolean active) {
+    boolean light = AppStyle.isLight();
+    int wellColor = light ? 0xffebebf0 : 0xff19191d;
+    GradientDrawable bg = AppStyle.shape(this, wellColor, AppStyle.R_MEDIUM, false);
+    if (active) {
+      bg.setStroke(Math.max(2, dp(1.75f)), GOLD);
+    } else {
+      bg.setStroke(Math.max(1, dp(.75f)), light ? 0x10111113 : 0x10ffffff);
+    }
+    tray.setBackground(bg);
+  }
+
+  /**
+   * One darkroom tray tile: a clean R12 well with centered, true-aspect floating border sample and
+   * concise caption beneath. Unselected tiles stay quiet (zero heavy boxes); only the active tile
+   * shows a crisp vermilion outer stroke and vermilion caption, matching the film strip language.
+   */
   private LinearLayout buildFrameStyleTile(
       FrameStyle style,
       FrameStyle selected,
-      int glyphW,
-      int glyphH,
-      int minHeightDp,
-      Runnable beforeSelect) {
+      int tileW,
+      int tileH,
+      boolean matchParentWidth,
+      Runnable onPick) {
     boolean active = style == selected;
+
     LinearLayout tile = vertical();
     tile.setTag("editor.frame.style." + style.id);
-    tile.setGravity(Gravity.CENTER);
-    tile.setMinimumHeight(dp(minHeightDp));
-    tile.setPadding(dp(3), dp(8), dp(3), dp(7));
+    tile.setGravity(Gravity.CENTER_HORIZONTAL);
     tile.setFocusable(true);
     tile.setSelected(active);
     tile.setContentDescription(style.label);
-    GradientDrawable background =
-        AppStyle.shape(this, active ? AppStyle.ACCENT_SOFT : AppStyle.CONTROL, 11, true);
-    if (active) background.setStroke(Math.max(1, dp(1.25f)), GOLD);
     tile.setBackground(
         new android.graphics.drawable.RippleDrawable(
-            ColorStateList.valueOf(AppStyle.RIPPLE), background, null));
-    add(tile, frameStyleGlyph(style, active), glyphW, glyphH);
-    gap(tile, 5);
+            ColorStateList.valueOf(AppStyle.RIPPLE),
+            null,
+            AppStyle.shape(this, Color.WHITE, AppStyle.R_MEDIUM, false)));
+
+    FrameLayout tray = new FrameLayout(this);
+    styleFrameTray(tray, active);
+    int pad = tileW < dp(88) ? dp(6) : dp(8);
+    tray.setPadding(pad, pad, pad, pad);
+
+    FrameSampleView sample = new FrameSampleView(this, style);
+    tray.addView(sample, new FrameLayout.LayoutParams(-1, -1));
+    int widthParam = matchParentWidth ? -1 : tileW;
+    tile.addView(tray, new LinearLayout.LayoutParams(widthParam, tileH));
+
     TextView label = text(style.cardLabel, AppStyle.TYPE_MICRO, active ? GOLD : MUTED);
-    AppStyle.setTypeface(label, AppStyle.FONT_SEMIBOLD);
+    AppStyle.setTypeface(label, active ? AppStyle.FONT_SEMIBOLD : AppStyle.FONT_REGULAR);
     label.setGravity(Gravity.CENTER);
-    label.setMaxLines(2);
+    label.setSingleLine(true);
+    label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    label.setPadding(dp(2), 0, dp(2), 0);
     label.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-    add(tile, label, -1, -2);
+    LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(widthParam, -2);
+    labelLp.topMargin = dp(6);
+    tile.addView(label, labelLp);
+
     tile.setOnClickListener(
         v -> {
-          if (style == selected || exporting || activeImport != null) return;
-          if (beforeSelect != null) beforeSelect.run();
-          set("edge_style", style.id);
-          scheduleRender();
-          buildPanel();
+          if (onPick != null) onPick.run();
         });
     controls.add(tile);
+    edgeSlots.add(new EdgeSlot(style, tile, tray, sample, label));
     return tile;
   }
 
-  private View frameStyleGlyph(FrameStyle style, boolean active) {
-    View glyph = new View(this);
-    glyph.setBackground(new FrameStyleGlyphDrawable(style, AppStyle.isLight(), active));
-    glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-    return glyph;
+  /**
+   * Fills the gallery from memory, then asks the worker for stale or missing samples.
+   *
+   * <p>When only tuning or border width changes on the same photo, stale bitmaps stay visible on
+   * screen until their fresh replacements arrive (stale-while-revalidate) instead of flashing gray.
+   */
+  private void pumpEdgeThumbs() {
+    if (destroyed || !ready || renderer == null || edgeSlots.isEmpty()) return;
+    String photo = currentEdgePhotoKey();
+    String print = edgeFingerprint();
+    String basePrint = edgeBaseFingerprint();
+    boolean photoChanged = !photo.equals(edgePhotoKey);
+    if (photoChanged) {
+      edgePhotoKey = photo;
+      edgePrint = print;
+      edgeBasePrint = "";
+      Bitmaps.release(edgeBaseBitmap);
+      edgeBaseBitmap = null;
+      for (EdgeSlot slot : new java.util.ArrayList<>(edgeSlots)) slot.sample.clearSample();
+      for (Bitmap cached : edgeThumbs.values()) Bitmaps.release(cached);
+      edgeThumbs.clear();
+      edgeThumbPrints.clear();
+      edgeFailed.clear();
+    } else if (!print.equals(edgePrint)) {
+      edgePrint = print;
+      edgeFailed.clear();
+      if (!basePrint.equals(edgeBasePrint)) {
+        edgeBasePrint = "";
+        Bitmaps.release(edgeBaseBitmap);
+        edgeBaseBitmap = null;
+      }
+    }
+
+    java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+    for (EdgeSlot slot : new java.util.ArrayList<>(edgeSlots)) {
+      String id = slot.style.id;
+      Bitmap cached = edgeThumbs.get(id);
+      if (cached != null && !cached.isRecycled()) {
+        slot.sample.setSampleBitmap(cached, false);
+        if (print.equals(edgeThumbPrints.get(id))) continue;
+      }
+      if (edgeFailed.contains(id) || missing.contains(id)) continue;
+      missing.add(id);
+    }
+    if (missing.isEmpty()) return;
+    // Always render strictly in gallery display order starting from the first tile.
+    requestEdgeThumbs(missing, print, basePrint);
+  }
+
+  private Bitmap scaleEdgeBase(Bitmap src, int maxEdge) {
+    if (src == null || src.isRecycled()) return null;
+    int w = src.getWidth(), h = src.getHeight();
+    if (w <= 0 || h <= 0) return null;
+    int longEdge = Math.max(w, h);
+    if (longEdge <= maxEdge) return src.copy(Bitmap.Config.ARGB_8888, false);
+    float scale = (float) maxEdge / longEdge;
+    int tw = Math.max(1, Math.round(w * scale));
+    int th = Math.max(1, Math.round(h * scale));
+    return Bitmap.createScaledBitmap(src, tw, th, true);
+  }
+
+  private boolean canReuseDevelopedAsEdgeBase(String expectedBasePrint) {
+    if (developed == null || developed.isRecycled()) return false;
+    if (activeId == null || !activeId.equals(developedPhotoId)) return false;
+    if (developedRecipe == null || developedRecipe.isEmpty()) return false;
+    try {
+      JSONObject dev = new JSONObject(developedRecipe);
+      if (FrameStyle.fromId(dev.optString("edge_style")) != FrameStyle.NONE) return false;
+      if (dev.optBoolean("date_enabled", false)) return false;
+      return expectedBasePrint.equals(edgeBaseFingerprintFor(dev));
+    } catch (JSONException ex) {
+      return false;
+    }
+  }
+
+  /**
+   * Fast border-gallery pipeline: obtain one small borderless developed base image (reusing the
+   * cached base or live borderless preview in ~2ms, or running a single engine render when needed),
+   * then stamp every missing border via CPU-only {@code editBitmap} strictly in gallery order.
+   */
+  private void requestEdgeThumbs(
+      java.util.List<String> styleIds, String print, String basePrint) {
+    if (edgeBusy || thumbBusy || exporting || activeImport != null || mainPreviewPending()) return;
+    if (styleIds.isEmpty()) return;
+    edgeBusy = true;
+    final java.util.List<String> ids = new java.util.ArrayList<>(styleIds);
+    final Bitmap input = source;
+    final File file = sourceFile;
+    final boolean raw = sourceRaw;
+    final SpectralRenderer activeRenderer = renderer;
+    final int baseEdge = Math.min(340, Math.max(240, dp(116)));
+    final String photoKey = file == null ? null : ThumbnailDiskCache.key(file.getAbsolutePath());
+
+    // Prepare an isolated bitmap copy on the UI thread when we already have a matching borderless
+    // developed image, avoiding any cross-thread bitmap recycling hazard or redundant engine pass.
+    Bitmap prebuiltBase = null;
+    String prebuiltSource = "显影1次";
+    if (edgeBaseBitmap != null
+        && !edgeBaseBitmap.isRecycled()
+        && basePrint.equals(edgeBasePrint)) {
+      prebuiltBase = edgeBaseBitmap.copy(Bitmap.Config.ARGB_8888, false);
+      prebuiltSource = "底图缓存";
+    } else if (canReuseDevelopedAsEdgeBase(basePrint)) {
+      prebuiltBase = scaleEdgeBase(developed, baseEdge);
+      if (prebuiltBase != null) prebuiltSource = "复用主图";
+    }
+    final Bitmap seedBase = prebuiltBase;
+    final String seedSource = prebuiltSource;
+
+    worker.execute(
+        () -> {
+          long batchStart = android.os.SystemClock.elapsedRealtime();
+          long baseMs = 0, borderMs = 0;
+          int rendered = 0, diskHits = 0, failed = 0;
+          String renderParams = null, baseEdits = null;
+          JSONObject baseEditsJson = null;
+          try {
+            renderParams = params();
+            baseEdits = editParams(settings, sourceMetadata);
+            baseEditsJson = new JSONObject(baseEdits);
+          } catch (Throwable ex) {
+            renderParams = null;
+          }
+          Bitmap localBase = seedBase;
+          boolean baseNewlyBuilt = false;
+          boolean touchedEngine = false;
+          try {
+            for (String id : ids) {
+              if (destroyed || !print.equals(edgePrint)) break;
+              String diskKey = edgeDiskKey(photoKey, file, renderParams, baseEdits, id, baseEdge);
+              Bitmap made = null;
+              if (diskKey != null && edgeDiskCache != null) {
+                File entry = edgeDiskCache.get(diskKey);
+                if (entry != null) {
+                  BitmapFactory.Options bounds = new BitmapFactory.Options();
+                  bounds.inJustDecodeBounds = true;
+                  BitmapFactory.decodeFile(entry.getAbsolutePath(), bounds);
+                  if (bounds.outWidth > 0 && Math.max(bounds.outWidth, bounds.outHeight) <= 640) {
+                    made = BitmapFactory.decodeFile(entry.getAbsolutePath());
+                  }
+                  if (made != null) ++diskHits;
+                  else edgeDiskCache.remove(diskKey);
+                }
+              }
+              if (made == null && baseEditsJson != null) {
+                if (localBase == null && renderParams != null) {
+                  long t0 = android.os.SystemClock.elapsedRealtime();
+                  openedSource = null;
+                  touchedEngine = true;
+                  if (raw && file != null)
+                    activeRenderer.openRaw(file.getAbsolutePath(), openParams(renderParams), 800);
+                  else if (file != null)
+                    activeRenderer.openFile(
+                        file.getAbsolutePath(), openParams(renderParams), Math.max(800, baseEdge * 3));
+                  else activeRenderer.open(input, openParams(renderParams));
+                  JSONObject noBorderEdits = new JSONObject(baseEdits);
+                  noBorderEdits.put("edge_style", "none");
+                  noBorderEdits.put("date_enabled", false);
+                  localBase =
+                      activeRenderer.render(renderParams, noBorderEdits.toString(), false, baseEdge);
+                  baseMs = android.os.SystemClock.elapsedRealtime() - t0;
+                  baseNewlyBuilt = localBase != null;
+                }
+                if (localBase != null) {
+                  long t1 = android.os.SystemClock.elapsedRealtime();
+                  if ("none".equals(id)) {
+                    made = localBase.copy(Bitmap.Config.ARGB_8888, false);
+                  } else {
+                    String borderOnly = buildBorderOnlyEdits(baseEditsJson, id);
+                    made = activeRenderer.editBitmap(localBase, borderOnly);
+                  }
+                  borderMs += android.os.SystemClock.elapsedRealtime() - t1;
+                  ++rendered;
+                  if (diskKey != null && made != null && edgeDiskCache != null) {
+                    Bitmap diskCopy = made.copy(Bitmap.Config.ARGB_8888, false);
+                    if (diskCopy != null) {
+                      try {
+                        edgeDiskCache.put(
+                            diskKey, out -> diskCopy.compress(Bitmap.CompressFormat.PNG, 100, out));
+                      } catch (IOException ignored) {
+                      } finally {
+                        Bitmaps.release(diskCopy);
+                      }
+                    }
+                  }
+                }
+              }
+              if (made != null) deliverEdgeThumb(id, made, print);
+              else {
+                ++failed;
+                edgeFailed.add(id);
+                android.util.Log.w("EdgeThumb", "no sample for " + id);
+              }
+            }
+            if (localBase != null
+                && (baseNewlyBuilt || "复用主图".equals(seedSource))
+                && !destroyed
+                && print.equals(edgePrint)) {
+              Bitmap cachedCopy = localBase.copy(Bitmap.Config.ARGB_8888, false);
+              if (cachedCopy != null) {
+                ui(
+                    () -> {
+                      if (destroyed || !print.equals(edgePrint)) {
+                        Bitmaps.release(cachedCopy);
+                        return;
+                      }
+                      Bitmaps.release(edgeBaseBitmap);
+                      edgeBaseBitmap = cachedCopy;
+                      edgeBasePrint = basePrint;
+                    });
+              }
+            }
+          } catch (Throwable ex) {
+            android.util.Log.w("EdgeThumb", "batch failed", ex);
+          } finally {
+            Bitmaps.release(localBase);
+            if (touchedEngine) openedSource = null;
+          }
+          long total = android.os.SystemClock.elapsedRealtime() - batchStart;
+          String modeLabel = rendered == 0 && diskHits > 0 ? "磁盘缓存" : seedSource;
+          edgeTiming =
+              String.format(
+                  java.util.Locale.US,
+                  "边框样张：%d 张(%s) · 底图 %.0fms · 单张贴框 %.0fms · 合计 %.0fms · 磁盘命中 %d · 失败 %d",
+                  ids.size(),
+                  modeLabel,
+                  (double) baseMs,
+                  rendered == 0 ? 0d : (double) borderMs / rendered,
+                  (double) total,
+                  diskHits,
+                  failed);
+          android.util.Log.i(
+              "EdgeThumb",
+              "batch n="
+                  + ids.size()
+                  + " mode="
+                  + modeLabel
+                  + " rendered="
+                  + rendered
+                  + " disk="
+                  + diskHits
+                  + " failed="
+                  + failed
+                  + " base="
+                  + baseMs
+                  + "ms border="
+                  + borderMs
+                  + "ms total="
+                  + total
+                  + "ms");
+          ui(
+              () -> {
+                edgeBusy = false;
+                pumpEdgeThumbs();
+              });
+        });
+  }
+
+  /** Builds minimal edits JSON containing only border metadata so editBitmap runs the memcpy fast path. */
+  private String buildBorderOnlyEdits(JSONObject baseEdits, String styleId) throws JSONException {
+    JSONObject b = new JSONObject();
+    b.put("edge_style", styleId);
+    b.put("edge_amount", baseEdits.optDouble("edge_amount", 6.0));
+    b.put("edge_frame_number", baseEdits.optInt("edge_frame_number", 36));
+    b.put("edge_caption", "");
+    b.put("date_enabled", false);
+    String[] passthrough = {
+      "film_stock",
+      "film_label",
+      "card_brand",
+      "card_model",
+      "card_full",
+      "brand_name",
+      "brand_mark",
+      "card_date",
+      "source_datetime"
+    };
+    for (String k : passthrough) {
+      if (baseEdits.has(k)) b.put(k, baseEdits.opt(k));
+    }
+    return b.toString();
+  }
+
+  private void deliverEdgeThumb(String id, Bitmap bitmap, String print) {
+    ui(
+        () -> {
+          if (destroyed || !print.equals(edgePrint)) {
+            Bitmaps.release(bitmap);
+            return;
+          }
+          Bitmap previous = edgeThumbs.put(id, bitmap);
+          edgeThumbPrints.put(id, print);
+          boolean firstReveal = previous == null;
+          for (EdgeSlot live : edgeSlots) {
+            if (live.style.id.equals(id)) live.sample.setSampleBitmap(bitmap, firstReveal);
+          }
+          if (previous != null && previous != bitmap) Bitmaps.release(previous);
+        });
+  }
+
+  private String edgeDiskKey(
+      String photoKey,
+      File file,
+      String renderParams,
+      String baseEdits,
+      String styleId,
+      int postEdge) {
+    if (photoKey == null || file == null || renderParams == null || baseEdits == null) return null;
+    String edits;
+    try {
+      JSONObject cleaned = new JSONObject(baseEdits);
+      cleaned.put("edge_style", styleId);
+      cleaned.put("date_enabled", false);
+      cleaned.remove("edge_frame_number");
+      cleaned.remove("edge_caption");
+      cleaned.remove("date_text");
+      cleaned.remove("date_corner");
+      cleaned.remove("date_color");
+      cleaned.remove("date_size");
+      cleaned.remove("date_intensity");
+      edits = cleaned.toString();
+    } catch (JSONException ex) {
+      return null;
+    }
+    return ThumbnailDiskCache.key(
+        "edge-v3",
+        photoKey,
+        file.getAbsolutePath(),
+        Long.toString(file.length()),
+        Long.toString(file.lastModified()),
+        galleryBackendKey(),
+        Integer.toString(postEdge),
+        renderParams,
+        edits);
+  }
+
+  private String currentEdgePhotoKey() {
+    return sourceFile == null ? "mem" : ThumbnailDiskCache.key(sourceFile.getAbsolutePath());
+  }
+
+  private String edgeBaseFingerprint() {
+    return edgeBaseFingerprintFor(settings);
+  }
+
+  private String edgeBaseFingerprintFor(JSONObject recipe) {
+    String photo = currentEdgePhotoKey();
+    JSONObject copy;
+    try {
+      copy = new JSONObject(recipe.toString());
+    } catch (JSONException ex) {
+      copy = new JSONObject();
+    }
+    copy.remove("edge_style");
+    copy.remove("edge_amount");
+    copy.remove("edge_frame_number");
+    copy.remove("edge_caption");
+    copy.remove("date_enabled");
+    copy.remove("date_text");
+    copy.remove("date_corner");
+    copy.remove("date_color");
+    copy.remove("date_size");
+    copy.remove("date_intensity");
+    return photo + "|" + thumbPrint + "|" + galleryBackendKey() + "|" + copy;
+  }
+
+  private String edgeFingerprint() {
+    return edgeBaseFingerprint()
+        + "|edge_amount="
+        + String.format(Locale.US, "%.1f", settings.optDouble("edge_amount", 6.0));
   }
 
   private void addDateWatermarkRow(LinearLayout parent) {
@@ -4325,6 +4910,12 @@ public final class MainActivity extends Activity {
     if (LIGHT_LEAK_AMOUNT.equals(key) && settings.optInt(LIGHT_LEAK_AMOUNT) > 0
         && settings.optInt(LIGHT_LEAK_SEED) == 0) rollLightLeakSeed();
     scheduleRender();
+    if ("edge_amount".equals(key)) scheduleEdgeThumbRefresh();
+  }
+
+  private void scheduleEdgeThumbRefresh() {
+    main.removeCallbacks(edgeRefreshRunnable);
+    main.postDelayed(edgeRefreshRunnable, 180L);
   }
 
   private void slider(
@@ -4379,6 +4970,7 @@ public final class MainActivity extends Activity {
             bar.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
           }
           scheduleRender();
+          if ("edge_amount".equals(key)) scheduleEdgeThumbRefresh();
         });
     bar.setOnSeekBarChangeListener(
         new SeekBar.OnSeekBarChangeListener() {
@@ -4900,6 +5492,8 @@ public final class MainActivity extends Activity {
         || activeImport != null
         || mainPreviewPending()
         || thumbBusy
+        || edgeBusy
+        || selectedTab == 4
         || galleryVisible()
         || editorScreen.getVisibility() != View.VISIBLE
         || thumbStocksRef.isEmpty()) return;
@@ -5140,8 +5734,12 @@ public final class MainActivity extends Activity {
                 } else Bitmaps.release(result);
                 if (current && error) thumbFailed.add(stock);
                 if (!destroyed) {
-                  refillThumbs();
-                  warmGalleryThumbs();
+                  if (selectedTab == 4) {
+                    pumpEdgeThumbs();
+                  } else {
+                    refillThumbs();
+                    warmGalleryThumbs();
+                  }
                 }
               });
         });
@@ -5315,6 +5913,8 @@ public final class MainActivity extends Activity {
                         previewWorkTicket = -1;
                         mainPreviewRevision = -1;
                         refillThumbs();
+                        // The main preview just released the engine slot: border samples can go now.
+                        pumpEdgeThumbs();
                         main.postDelayed(this::warmGalleryThumbs, 350);
                         if (homeScreen != null && homeScreen.getVisibility() == View.VISIBLE)
                           saveDevelopedLook();
@@ -6726,6 +7326,8 @@ public final class MainActivity extends Activity {
             + Build.VERSION.SDK_INT
             + "\n显影引擎："
             + (ready ? "已初始化" : "准备中或不可用")
+            + "\n"
+            + edgeTiming
             + "\n\n";
     File file = new File(getFilesDir(), "last_import.json");
     try (InputStream in = new FileInputStream(file);
@@ -9154,6 +9756,13 @@ public final class MainActivity extends Activity {
 
   @Override
   protected void onDestroy() {
+    main.removeCallbacks(edgeRefreshRunnable);
+    Bitmaps.release(edgeBaseBitmap);
+    edgeBaseBitmap = null;
+    edgeBasePrint = "";
+    for (Bitmap cached : edgeThumbs.values()) Bitmaps.release(cached);
+    edgeThumbs.clear();
+    edgeThumbPrints.clear();
     if (photo != null) photo.cancelPendingSingleTap();
     if (editorStrip != null) editorStrip.close();
     if (batchImportRunning) cancelBatchImport();

@@ -2,8 +2,8 @@
 
 **把一间光谱胶片实验室装进口袋。**
 
-[![版本](https://img.shields.io/badge/version-0.6.2-f0523d?style=flat-square)](CHANGELOG.md)
-[![下载](https://img.shields.io/badge/download-APK%20v0.6.2-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
+[![版本](https://img.shields.io/badge/version-0.6.3-f0523d?style=flat-square)](CHANGELOG.md)
+[![下载](https://img.shields.io/badge/download-APK%20v0.6.3-2ea44f?style=flat-square&logo=android&logoColor=white)](https://github.com/qing1989/SpektraLens/releases/latest)
 [![平台](https://img.shields.io/badge/Android-10%2B-3ddc84?style=flat-square&logo=android&logoColor=white)](#兼容性)
 [![渲染](https://img.shields.io/badge/Vulkan-GPU%20%2B%20CPU%20%E5%9B%9E%E9%80%80-4a90d9?style=flat-square)](#工作原理)
 [![离线](https://img.shields.io/badge/100%25-%E6%9C%AC%E5%9C%B0%E6%98%BE%E5%BD%B1-8a8a8a?style=flat-square)](#为什么不是滤镜)
@@ -115,7 +115,7 @@ RAW 解码、光谱显影、相纸印相、裁切调色、颗粒与光晕合成�
 - 银盐颗粒、高光光晕、光晕曝光增益、乳剂散射、防光晕层、显影耦合、密度曲线、镜头 / 扫描柔化、相纸炫光与预闪
 - 物理画幅（135 / 120 等）、自动测光（默认关闭，可手动开启）
 - 「彩光」与「开卷」两种随机漏光样式，支持调节强度与一键「换一个」随机分布，并可自然延伸到 135 胶片片基
-- 10 款拟真胶片边框：135 齿孔（黑色 / 暖色）、135 银盐黑白、35mm 档案正片夹、120 中画幅、4×5 大画幅、白色留边、即时相纸，以及全新「胶片白卡 / 胶片黑卡」（内置 25 款胶片暗盒图标与规格排印）；附带经典暖橙双层光晕七段数码日期水印（位置、颜色、字号与亮度可调）
+- 10 款拟真胶片边框：全新「暗房托盘」实景边框画廊，以当前照片现场顺序生成 135 齿孔（黑色 / 暖色）、135 银盐黑白、35mm 档案正片夹、120 中画幅、4×5 大画幅、白色留边、即时相纸及「胶片白卡 / 胶片黑卡」（内置 25 款胶片暗盒图标与规格排印）的真实比例悬浮预览，支持零闪烁原地切换；附带经典暖橙双层光晕七段数码日期水印（位置、颜色、字号与亮度可调）
 
 **输入与输出**
 
@@ -164,7 +164,7 @@ flowchart LR
 
 ## 下载安装
 
-从 [Releases](https://github.com/qing1989/SpektraLens/releases/latest) 下载最新 `SpektraLens-v0.6.2.apk`（约 23.4 MB）：
+从 [Releases](https://github.com/qing1989/SpektraLens/releases/latest) 下载最新 `SpektraLens-v0.6.3.apk`（约 23.4 MB）：
 
 - 要求 Android 10+、arm64 设备；允许「安装未知来源应用」后直接安装
 - 装好之后可以直接在应用内更新：「设置 → 关于 SpektraLens → 检查更新」，不必再访问网页

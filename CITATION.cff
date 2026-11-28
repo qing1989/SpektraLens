@@ -4,7 +4,7 @@ message: "Credit the original model and native engine authors as well as this An
 type: software
 authors:
   - name: "SpektraLens contributors"
-version: 0.6.2
+version: 0.6.3
 license: GPL-3.0-or-later
 repository-code: "https://github.com/qing1989/SpektraLens"
 url: "https://github.com/qing1989/SpektraLens"
